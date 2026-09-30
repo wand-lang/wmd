@@ -6,8 +6,8 @@ import List
 import Shared
 
 let {test, group} = import Test
-let log = import ./log
-let world = import ./world
+let log = import ../log
+let world = import ../world
 
 let at = "2026-10-02T14:03:11Z"
 

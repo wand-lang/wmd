@@ -11,10 +11,10 @@ import Shared
 import String
 
 let {test, group} = import Test
-let blueprints = import ./blueprints
-let core = import ../lib/std/core
-let engine = import ./engine
-let world = import ./world
+let blueprints = import ../blueprints
+let core = import ../../lib/std/core
+let engine = import ../engine
+let world = import ../world
 
 let at = "2026-09-30T12:00:00Z"
 

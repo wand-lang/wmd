@@ -1,7 +1,7 @@
 uses {FS.Read, FS.Write, Random, Shared}
 
 -- The editor through the driver: /edit, the ed commands, and the checks
--- and saves they ask for. Each test works on a copy of ../lib in a
+-- and saves they ask for. Each test works on a copy of lib/ in a
 -- temporary directory, so a save never touches the real mudlib.
 
 import FS
@@ -12,11 +12,11 @@ import Shared
 import String
 
 let {test, group} = import Test
-let blueprints = import ./blueprints
-let core = import ../lib/std/core
-let engine = import ./engine
-let snapshot = import ./snapshot
-let world = import ./world
+let blueprints = import ../blueprints
+let core = import ../../lib/std/core
+let engine = import ../engine
+let snapshot = import ../snapshot
+let world = import ../world
 
 let at = "2026-09-30T12:00:00Z"
 

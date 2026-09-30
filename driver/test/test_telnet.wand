@@ -1,5 +1,5 @@
 let {test, group} = import Test
-let telnet = import ./telnet
+let telnet = import ../telnet
 
 group "clean" (fn () -> [
   test "keeps plain text" (fn t -> t.eq "say hello" (telnet.clean "say hello")),

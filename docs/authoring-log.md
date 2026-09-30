@@ -570,3 +570,6 @@ Worked best
 
 Proposed wand issues: `Wand.load` with the effect gate, as the design
 plans for milestone 4. #65, #66 and #67 are fixed in wand 0.95.3.
+- Later: the test files moved into `test/` beside the code they test. Each
+  import went up one more level (`./engine` to `../engine`), and `wand s`
+  found the files in their new places with no change. 109 tests pass.

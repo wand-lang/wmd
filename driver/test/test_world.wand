@@ -6,7 +6,7 @@ import List
 import Map
 
 let {test, group} = import Test
-let world = import ./world
+let world = import ../world
 
 let at = "2026-09-30T12:00:00Z"
 

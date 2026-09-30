@@ -13,6 +13,8 @@ with the docs tools before you change the design.
   general, propose a wand change.
 - `wand t` typechecks. `wand s` runs the `test_*.wand` files. `wand f`
   formats. Run all three before you commit.
+- A test file goes in a `test/` directory beside the code it tests, as
+  `driver/test/test_engine.wand` for `driver/engine.wand`.
 - `wand = ...` in `wand.pkg` is the oldest wand that wmd accepts. Change it
   only when wmd starts to use a newer feature.
 
