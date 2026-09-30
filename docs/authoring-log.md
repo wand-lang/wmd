@@ -96,3 +96,129 @@ Candidate wand issues
 - `Wand.check_at path src`: check source as if it were the file at `path`,
   so its relative imports resolve.
 - `Checked.effects`: the inferred effect set as data.
+
+## 2026-09-30 · milestone 1 · Talk
+
+Files: wmd, driver/telnet.wand, driver/world.wand, driver/session.wand,
+driver/log.wand, driver/main.wand, and a test file for each of the first four.
+
+Observed
+- Checker errors hit: 7
+  - `did you forget to import the standard library Map?` in session.wand.
+    Fixed with `import Map`.
+  - `this value needs its type before '.outboxes' can be read: bind it to a
+    name that carries its type, 'let (x: World) = ...'`. I wrote
+    `(Shared.get state).outboxes`. Fixed with a function `world.outbox` that
+    takes a typed `World`. Later, in log.wand, the suggested
+    `let (w: world.World) = Shared.get state` worked at once.
+  - `performs Proc, which the manifest does not allow` in wmd, with the
+    exact line to write. Fixed by pasting it.
+  - `'flushed!' performs FS.Write, which the manifest does not allow` in
+    test_log.wand. The test handles `FS!append` only, so `FS.Write` stays,
+    as the reference says ("What a handler discharges"). Declared it.
+  - `parse error: expected ->, got |` for an or-pattern
+    (`| "look" | "l" -> ...`), in a probe. Wrote two arms.
+  - `lex error: unknown escape \x` for `"\xff"`, in a probe.
+  - `invalid regex` for `[\xfb-\xfe]`. `\xff` works in a regex outside a
+    character class but not inside one. Fixed with an alternation,
+    `(\xfb|\xfc|\xfd|\xfe)`.
+- Lint warnings: 3 × V-BANG1, 1 × V-PRED3 (`_drain` returns `Bool`; now
+  `_drained?`), 2 × V-USES2 (no manifest in log.wand and session.wand). All
+  fixed as the message said.
+- Test failures: 2 of 23 in test_world.wand on the first run. Both were my
+  expectations, not the code: one test moved both players, and one counted
+  a line that is not there.
+- First runs: world.wand (about 250 lines) typechecked with no error. The 8
+  session tests and the 3 log tests passed on their first run.
+- `wand t` and `wand s` take a directory; `wand f driver/` gives
+  `Error loading 'driver/': Is a directory`.
+- A real run with two `nc` clients worked: an idle client saw the other
+  speak and leave; IAC bytes were dropped; a client that dropped without
+  `/quit` was removed; every event reached the log.
+- On SIGTERM the server prints
+  `Error: eval error: <stdlib>/Shared.wand:24:3: race: no thunk finished`.
+  It prints the same with or without the final-flush bracket, so it comes
+  from wand. The bracket's release still ran: all 4 events were logged.
+- Missing:
+  - `Shared.update` gives back `Unit`, so a fiber cannot get a value out of
+    an atomic change. Three workarounds follow from it:
+    - A session id is `session:` plus `Random.hex 12`, not a counter,
+      because a fiber cannot learn which number an update gave it.
+    - Events queue in the world, and one logger fiber takes them out.
+    - A writer takes its outbox with a get, then an update that drops what
+      it took. This is safe only because it is the one fiber that removes
+      lines.
+  - Strings have no byte escapes. Test input with IAC bytes is written in
+    Base64.
+  - No or-patterns in `match`.
+- Docs: `wand d` answered every signature question (List, Map, String,
+  Option, Path, FS.mkdir, Random.hex, Resource.make) without opening the
+  reference.
+
+Easy, and why
+- A pure world with the world as the last argument made every command a
+  pipeline, such as `w |> tell ... |> _put ... |> look s.id`, and every test
+  a pipeline too.
+- Handler tests covered what a unit test usually cannot: the goodbye that
+  arrives after `/quit`, a connection whose writes fail, two sessions at
+  once. None needed a socket (see the 2026-09-29 entry).
+- Derived codecs. `Opts.decoder` made the flags, with the error
+  `.port: expected Port, got "bad"`. `Event.encoder` made each log line and
+  left out every field that is `None`.
+- The manifest errors give the exact line to write.
+
+Hard, and why
+- Deciding where a value comes out of a `Shared.update` (see Missing). This
+  shaped the design more than any other single fact.
+- Bytes: see the three checker errors about `\x`.
+
+Candidate wand issues
+- `Shared.modify : Shared 'a -> ('a -> ('a, 'b)) -> 'b`: an update that
+  gives a value back.
+- Byte escapes in strings, and `\xNN` inside a regex character class.
+- A clear message on SIGTERM, not `race: no thunk finished` at
+  `Shared.wand:24`. Fixed on 2026-09-30; see the entry below.
+- `wand f` should take a directory, as `wand t` and `wand s` do.
+
+### Milestone 1 summary
+
+Friction
+1. `Shared.update` gives back nothing, which forced random session ids, an
+   event queue, and a single-remover rule for each outbox.
+2. Bytes in source: no string escapes, and `\x` not allowed in regex
+   character classes.
+3. A field needs a known type, and a handler removes an effect only when it
+   handles every operation of it. Both are right, and both cost a round
+   trip.
+
+Worked best
+1. Effect handlers over `Par`: whole sessions tested with no socket.
+2. Pure code with the world last, plus record update syntax.
+3. Messages that say the fix: manifest lines, `!` and `?` names, the
+   `List.concat` hint for `++` on lists.
+
+Proposed wand issues: `Shared.modify`; byte escapes; the SIGTERM message;
+`wand f` on a directory; the `Net!listen` docs; `Wand.check_at`;
+`Checked.effects`. None is filed yet.
+
+## 2026-09-30 · milestone 1 · the SIGTERM message, fixed in wand
+
+Files: ../wand lib/evaluator.ml, test/test_signals.ml, CHANGELOG.md
+(branch `par-all-stops` in wand)
+
+Observed
+- Cause: `Par.all!` is a race. On SIGTERM every branch raised
+  `Interrupted 143`. The race counted that as neither a result nor a
+  failure, so no branch won, and `Par.all!` raised `race: no thunk
+  finished` as an ordinary error: exit 1, not 143.
+- A second bug with the same cause: `Proc.exit 3` in one branch was lost.
+  The race waited for the other branch (2 s in the reproduction), then the
+  script went on and exited 0.
+- Fix: the race tells a stop (a signal code, or an `Interrupted` in an item
+  whose cancel flag is not set) from a lost race (flag set, code 0). A stop
+  cancels the other items and is raised again after they are joined.
+- Two new tests in test_signals.ml. Both failed before the fix and pass
+  after it. The full wand suite, 1,951 wand-level tests, the format and
+  docs checks, and every demo pass.
+- wmd with the fixed wand: SIGTERM exits 143 with no message, and the last
+  events are logged.

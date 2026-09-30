@@ -1,0 +1,285 @@
+-- The world for milestone 1: two rooms, the sessions in them, the outbox of
+-- each session, and the events not yet logged.
+--
+-- Every function here is pure and takes the world last, so a change is a
+-- pipeline. The session code applies each change in one Shared.update.
+
+import List
+import Map
+import Option
+import Regex
+import String
+
+type Room(name: String, desc: String, exits: Map String)
+
+-- One connection. `name` is None until login. `closing` asks the fibers of
+-- the session to end.
+type Session(
+  id: String,
+  name: Option String = None,
+  room: String = "/rooms/commons",
+  closing: Bool = false
+)
+
+-- One line of the event log. A field that does not apply is None, and the
+-- log line leaves it out.
+type Event(
+  at: String,
+  event: String,
+  actor: String,
+  name: Option String = None,
+  verb: Option String = None,
+  room: Option String = None,
+  text: Option String = None
+)
+
+-- Outboxes are kept apart from sessions because the writer fiber of each
+-- session takes lines out of its own outbox, and nothing else does.
+type World(
+  sessions: Map Session,
+  outboxes: Map (List String),
+  rooms: Map Room,
+  events: List Event
+)
+
+-- The most lines an outbox holds. A session whose outbox is full is closed.
+let outbox_cap = 1000
+
+let _rooms = Map.from_list [
+  (
+    "/rooms/commons",
+    Room(
+      name = "The Commons",
+      desc = "A wide, quiet square. Doors of every size stand along its edges, all of them shut for now.",
+      exits = Map.from_list [("north", "/rooms/garden")]
+    )
+  ),
+  (
+    "/rooms/garden",
+    Room(
+      name = "The Garden",
+      desc = "A small walled garden. A path leads back south to the Commons.",
+      exits = Map.from_list [("south", "/rooms/commons")]
+    )
+  )
+]
+
+let empty = World(sessions = Map.empty, outboxes = Map.empty, rooms = _rooms, events = [])
+
+-- ── Reading ────────────────────────────────────────────────────────────
+
+let session sid (w: World) = Map.get sid w.sessions
+
+-- True when the session should end, or is gone already.
+let closing? sid (w: World) =
+  match session sid w with
+  | Some s -> s.closing
+  | None -> true
+
+-- The lines waiting in a session's outbox.
+let outbox sid (w: World) = Option.default [] (Map.get sid w.outboxes)
+
+let _name (s: Session) = Option.default "someone" s.name
+
+-- The sessions in `room` that have logged in.
+let _in_room room (w: World) =
+  List.filter
+    (fn (s: Session) -> s.room == room && Option.some? s.name)
+    (Map.values w.sessions)
+
+-- ── Changing ───────────────────────────────────────────────────────────
+
+let emit ev (w: World) = World(w, events = List.concat w.events [ev])
+
+let _put (s: Session) (w: World) = World(w, sessions = Map.set s.id s w.sessions)
+
+-- Add a line to one session's outbox. A full outbox closes the session
+-- instead, so one session that does not read cannot grow without bound.
+let tell sid line (w: World) =
+  match (session sid w, Map.get sid w.outboxes) with
+  | (Some s, Some lines) -> if List.length lines >= outbox_cap then _put Session(s, closing = true) w
+    else World(w, outboxes = Map.set sid (List.concat lines [line]) w.outboxes)
+  | _ -> w
+
+-- Remove the first `n` lines of an outbox: the ones its writer took. A
+-- session that closed in the meantime stays closed.
+let taken sid n (w: World) =
+  match Map.get sid w.outboxes with
+  | Some lines -> World(w, outboxes = Map.set sid (List.drop n lines) w.outboxes)
+  | None -> w
+
+-- Remove the first `n` events: the ones the logger wrote.
+let logged n (w: World) = World(w, events = List.drop n w.events)
+
+-- Tell everyone in `room` except the session `except`.
+let tell_room room except line (w: World) =
+  List.fold_left
+    (fn acc (s: Session) -> if s.id == except then acc else tell s.id line acc)
+    w
+    (_in_room room w)
+
+-- ── Connections ────────────────────────────────────────────────────────
+
+let open sid at (w: World) =
+  World(
+    w,
+    sessions = Map.set sid Session(id = sid) w.sessions,
+    outboxes = Map.set sid [] w.outboxes
+  )
+  |> tell sid "Welcome to WMD, the World of Many Doors."
+  |> tell sid "What is your name?"
+  |> emit Event(at = at, event = "connect", actor = sid)
+
+-- Remove a session and its outbox. The session drains its outbox before it
+-- calls this.
+let close sid at (w: World) =
+  match session sid w with
+  | None -> w
+  | Some s -> (
+    let told =
+      (match s.name with
+       | Some n -> tell_room s.room sid "%{n} leaves." w
+       | None -> w);
+    World(
+      told,
+      sessions = Map.delete sid told.sessions,
+      outboxes = Map.delete sid told.outboxes
+    )
+    |> emit Event(at = at, event = "disconnect", actor = sid, name = s.name)
+  )
+
+-- ── Commands ───────────────────────────────────────────────────────────
+
+let look sid (w: World) =
+  match session sid w with
+  | None -> w
+  | Some s -> (
+    match Map.get s.room w.rooms with
+    | None -> tell sid "You are nowhere." w
+    | Some r -> (
+      let exits = Map.keys r.exits;
+      let others = List.filter (fn (o: Session) -> o.id != sid) (_in_room s.room w);
+      let told =
+        w
+        |> tell sid r.name
+        |> tell sid r.desc
+        |> tell
+          sid
+          (if exits == [] then "There are no exits." else "Exits: %{String.join ", " exits}.");
+      List.fold_left (fn acc (o: Session) -> tell sid "%{_name o} is here." acc) told others
+    )
+  )
+
+let _opposites = Map.from_list [
+  ("north", "the south"),
+  ("south", "the north"),
+  ("east", "the west"),
+  ("west", "the east"),
+  ("up", "below"),
+  ("down", "above")
+]
+
+let _arrival name dir =
+  match Map.get dir _opposites with
+  | Some from -> "%{name} arrives from %{from}."
+  | None -> "%{name} arrives."
+
+let _exit (s: Session) dir (w: World) =
+  Option.and_then (fn (r: Room) -> Map.get dir r.exits) (Map.get s.room w.rooms)
+
+let _go (s: Session) name dir (w: World) =
+  match _exit s dir w with
+  | None -> tell s.id "You can't go that way." w
+  | Some dest ->
+    w
+    |> tell_room s.room s.id "%{name} leaves %{dir}."
+    |> _put Session(s, room = dest)
+    |> tell_room dest s.id (_arrival name dir)
+    |> look s.id
+
+let _say (s: Session) name text (w: World) =
+  if text == "" then tell s.id "Say what?" w
+  else w |> tell s.id `You say "%{text}"` |> tell_room s.room s.id `%{name} says "%{text}"`
+
+let _who sid (w: World) =
+  let names =
+    List.sort (List.filter_map (fn (s: Session) -> s.name) (Map.values w.sessions));
+  tell sid "%{List.length names} connected: %{String.join ", " names}." w
+
+let _command (s: Session) name verb rest (w: World) =
+  match verb with
+  | "say" -> _say s name rest w
+  | "look" -> look s.id w
+  | "l" -> look s.id w
+  | "go" -> _go s name rest w
+  | "/who" -> _who s.id w
+  | "/quit" -> w |> tell s.id "Goodbye." |> _put Session(s, closing = true)
+  | _ -> if Option.some? (_exit s verb w) then _go s name verb w
+    else tell s.id `I don't know how to "%{verb}".` w
+
+-- `"Hello.` is `say Hello.`: the driver rewrites the prefix and nothing
+-- else.
+let _expand line =
+  if String.starts_with? `"` line then "say " ++ String.slice 1 (String.length line) line
+  else line
+
+let _play (s: Session) name at line (w: World) =
+  if line == "" then w
+  else (
+    let full = _expand line;
+    let verb = String.lower (Option.default "" (String.word 0 full));
+    let rest = String.trim (String.slice (String.length verb) (String.length full) full);
+    let text = if verb == "say" then Some rest else None;
+    w
+    |> emit Event(
+      at = at,
+      event = "command",
+      actor = s.id,
+      name = s.name,
+      verb = Some verb,
+      room = Some s.room,
+      text = text
+    )
+    |> _command s name verb rest
+  )
+
+-- ── Login ──────────────────────────────────────────────────────────────
+
+let _valid_name? name = Regex.match? r/^[A-Za-z]{2,16}$/ name
+
+let _capitalize name =
+  String.upper (String.slice 0 1 name) ++ String.lower (String.slice 1 (String.length name) name)
+
+let _in_use? name (w: World) =
+  List.any? (fn (s: Session) -> s.name == Some name) (Map.values w.sessions)
+
+-- Milestone 1 logs in by name only. What is typed here is not logged.
+let _login (s: Session) at line (w: World) =
+  if !(_valid_name? line) then tell s.id "A name is 2 to 16 letters. What is your name?" w
+  else (
+    let name = _capitalize line;
+    if _in_use? name w then tell s.id "%{name} is here already. What is your name?" w
+    else
+      w
+      |> _put Session(s, name = Some name)
+      |> emit Event(
+        at = at,
+        event = "login",
+        actor = s.id,
+        name = Some name,
+        room = Some s.room
+      )
+      |> tell s.id "Hello, %{name}."
+      |> tell_room s.room s.id "%{name} arrives."
+      |> look s.id
+  )
+
+-- One line from a session, already cleaned of telnet bytes.
+let input sid at line (w: World) =
+  match session sid w with
+  | None -> w
+  | Some s -> (
+    match s.name with
+    | None -> _login s at (String.trim line) w
+    | Some name -> _play s name at (String.trim line) w
+  )

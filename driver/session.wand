@@ -1,0 +1,65 @@
+uses {Clock, Net.Listen, Random, Shared}
+
+-- Each connection gets two fibers: a reader that runs the command loop, and
+-- a writer that drains the session's outbox. Only the writer writes to the
+-- socket.
+--
+-- `state` is the one Shared World. A fiber changes it only with a pure
+-- function from ./world, in one Shared.update.
+
+import Clock
+import List
+import Net
+import Par
+import Random
+import Result
+import Shared
+import String
+
+let telnet = import ./telnet
+let world = import ./world
+
+let _now () = "%{Clock.now ()}"
+
+-- Take the lines in a session's outbox. Only the writer of that session
+-- takes lines out, so dropping the ones it took loses none added since.
+let _take state sid = (
+  let lines = world.outbox sid (Shared.get state);
+  Shared.update state (world.taken sid (List.length lines));
+  lines
+)
+
+-- Send what is in the outbox now. True when it went, or there was nothing
+-- to send; false when the connection is gone.
+let _drained? state sid conn =
+  let lines = _take state sid;
+  if lines == [] then true
+  else Result.ok? (Net.write (String.join "" (List.map (fn l -> "%{l}\r\n") lines)) conn)
+
+-- Until Shared.wait exists, the writer looks at the outbox every 50ms.
+let _writer state sid conn =
+  if !(_drained? state sid conn) then ()
+  else if world.closing? sid (Shared.get state) then ()
+  else (Clock.sleep 50ms; _writer state sid conn)
+
+let _reader state sid conn =
+  match Net.read_line conn with
+  | None -> ()
+  | Some raw -> (
+    Shared.update state (world.input sid (_now ()) (telnet.clean raw));
+    if world.closing? sid (Shared.get state) then () else _reader state sid conn
+  )
+
+-- Serve one connection until the player quits or the connection drops.
+--
+-- Par.all! stops the writer as soon as the reader ends, so the outbox is
+-- drained once more after it: that is how the goodbye gets out. A failure
+-- inside the session is caught here, because a raise from one element of
+-- Par.each_stream would stop every other session too.
+let serve state conn = (
+  let sid = "session:%{Random.hex 12}";
+  Shared.update state (world.open sid (_now ()));
+  let _ = try Par.all! [fn () -> _reader state sid conn, fn () -> _writer state sid conn];
+  let _ = try _drained? state sid conn;
+  Shared.update state (world.close sid (_now ()))
+)

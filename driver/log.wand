@@ -1,0 +1,31 @@
+uses {FS.Write, Shared}
+
+-- The event log: append-only JSON Lines, one file per day, written by the
+-- driver alone.
+
+import FS
+import JSON
+import List
+import Path
+import Shared
+import String
+
+let world = import ./world
+
+-- One event as one line of JSON. A field that is None is left out.
+let line (e: world.Event) = "%{JSON.stringify (world.Event.encoder e)}\n"
+
+-- The file for the day of the event, such as logs/2026-10-02.jsonl.
+let file dir (e: world.Event) =
+  Path.join dir (Path.of_string "%{String.slice 0 10 e.at}.jsonl")
+
+-- One append is one write, so lines from two events never interleave.
+let append! dir (e: world.Event) = FS.append! (file dir e) (line e)
+
+-- Write the events not yet logged. Only this takes events out of the world,
+-- so dropping the ones it wrote loses none added since.
+let flush! state dir = (
+  let (w: world.World) = Shared.get state;
+  Shared.update state (world.logged (List.length w.events));
+  List.each (fn e -> append! dir e) w.events
+)

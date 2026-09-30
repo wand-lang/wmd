@@ -1,0 +1,135 @@
+import List
+import Map
+import Option
+
+let {test, group} = import Test
+let world = import ./world
+
+let at = "2026-09-30T12:00:00Z"
+
+let outbox sid (w: world.World) = Option.default [] (Map.get sid w.outboxes)
+
+-- Empty every outbox, so a test sees only what its own step says.
+let quiet (w: world.World) =
+  world.World(w, outboxes = Map.map (fn _ -> []) w.outboxes, events = [])
+
+let say sid line w = world.input sid at line w
+
+-- Ann and Bo, logged in and standing in the Commons.
+let two =
+  world.empty
+  |> world.open "s1" at
+  |> world.open "s2" at
+  |> say "s1" "ann"
+  |> say "s2" "bo"
+  |> quiet
+
+let events (w: world.World) = List.map (fn (e: world.Event) -> e.event) w.events
+
+group "login" (fn () -> [
+  test "a new connection is asked for a name" (fn t ->
+    t.eq
+      ["Welcome to WMD, the World of Many Doors.", "What is your name?"]
+      (outbox "s1" (world.open "s1" at world.empty))),
+  test "a name that is not 2 to 16 letters is refused" (fn t ->
+    t.eq
+      ["A name is 2 to 16 letters. What is your name?"]
+      (world.empty |> world.open "s1" at |> quiet |> say "s1" "x1" |> outbox "s1")),
+  test "a good name logs in and looks" (fn t ->
+    t.eq
+      [
+        "Hello, Ann.",
+        "The Commons",
+        "A wide, quiet square. Doors of every size stand along its edges, all of them shut for now.",
+        "Exits: north."
+      ]
+      (world.empty |> world.open "s1" at |> quiet |> say "s1" "ann" |> outbox "s1")),
+  test "others in the room see the arrival" (fn t ->
+    t.eq
+      ["Bo arrives."]
+      (world.empty
+      |> world.open "s1" at
+      |> say "s1" "ann"
+      |> world.open "s2" at
+      |> quiet
+      |> say "s2" "bo"
+      |> outbox "s1")),
+  test "a name already here is refused, whatever its case" (fn t ->
+    t.eq
+      ["Ann is here already. What is your name?"]
+      (two |> world.open "s3" at |> quiet |> say "s3" "ANN" |> outbox "s3")),
+  test "a refused name is not logged" (fn t ->
+    t.eq [] (world.empty |> world.open "s1" at |> quiet |> say "s1" "x" |> events))
+])
+
+group "talk" (fn () -> [
+  test "say" (fn t ->
+    let w = two |> say "s1" "say Hello.";
+    t.eq ([`You say "Hello."`], [`Ann says "Hello."`]) (outbox "s1" w, outbox "s2" w)),
+  test "a quote is say" (fn t ->
+    t.eq [`Ann says "Hi."`] (two |> say "s1" `"Hi.` |> outbox "s2")),
+  test "say with nothing to say" (fn t ->
+    t.eq ["Say what?"] (two |> say "s1" "say" |> outbox "s1")),
+  test "people in another room do not hear" (fn t ->
+    t.eq [] (two |> say "s2" "north" |> quiet |> say "s1" "say Hello." |> outbox "s2")),
+  test "the log keeps what was said" (fn t ->
+    t.eq
+      [Some "Hello."]
+      (List.map (fn (e: world.Event) -> e.text) (two |> say "s1" "say Hello.").events))
+])
+
+group "moving" (fn () -> [
+  test "go north" (fn t ->
+    let w = two |> say "s1" "go north";
+    t.eq (Some "/rooms/garden", ["Ann leaves north."]) (
+      Option.map (fn (s: world.Session) -> s.room) (world.session "s1" w),
+      outbox "s2" w
+    )),
+  test "an exit name alone is go" (fn t ->
+    t.eq
+      "The Garden"
+      (Option.default "" (List.head (two |> say "s1" "north" |> outbox "s1")))),
+  test "arriving says where from" (fn t ->
+    t.eq
+      ["Ann arrives from the north."]
+      (two |> say "s1" "north" |> quiet |> say "s1" "south" |> outbox "s2")),
+  test "no such exit" (fn t ->
+    t.eq ["You can't go that way."] (two |> say "s1" "go west" |> outbox "s1")),
+  test "look shows who is here" (fn t ->
+    t.eq (Some "Bo is here.") (List.get 3 (two |> say "s1" "look" |> outbox "s1")))
+])
+
+group "driver commands" (fn () -> [
+  test "/who" (fn t ->
+    t.eq ["2 connected: Ann, Bo."] (two |> say "s1" "/who" |> outbox "s1")),
+  test "/quit says goodbye and closes" (fn t ->
+    let w = two |> say "s1" "/quit";
+    t.eq (["Goodbye."], true) (outbox "s1" w, world.closing? "s1" w)),
+  test "an unknown verb" (fn t ->
+    t.eq [`I don't know how to "dance".`] (two |> say "s1" "dance" |> outbox "s1"))
+])
+
+group "closing" (fn () -> [
+  test "the room sees the leaving" (fn t ->
+    t.eq ["Ann leaves."] (two |> world.close "s1" at |> outbox "s2")),
+  test "the session and its outbox are gone" (fn t ->
+    let w = two |> world.close "s1" at;
+    t.eq (None, None) (world.session "s1" w, Map.get "s1" w.outboxes)),
+  test "a full outbox closes the session" (fn t ->
+    let full =
+      List.fold_left (fn w _ -> world.tell "s1" "x" w) two (List.range 1 world.outbox_cap);
+    t.eq (false, true, world.outbox_cap) (
+      world.closing? "s1" full,
+      world.closing? "s1" (world.tell "s1" "one more" full),
+      List.length (outbox "s1" (world.tell "s1" "one more" full))
+    )),
+  test "connect, login, command and disconnect are logged" (fn t ->
+    t.eq
+      ["connect", "login", "command", "disconnect"]
+      (world.empty
+      |> world.open "s1" at
+      |> say "s1" "ann"
+      |> say "s1" "look"
+      |> world.close "s1" at
+      |> events))
+])

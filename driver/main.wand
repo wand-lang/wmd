@@ -1,0 +1,32 @@
+uses {Clock, FS.Write, IO, Net.Listen, Random, Shared}
+
+-- The server: the telnet listener and the event logger, side by side, over
+-- one Shared World.
+
+import Clock
+import FS
+import IO
+import Net
+import Par
+import Resource
+import Shared
+
+let log = import ./log
+let session = import ./session
+let world = import ./world
+
+-- The flags of `wmd`. Each field is a flag: --port 4000 --logs ./logs.
+type Opts(port: Port = :4000, logs: Path = ./logs)
+
+let run! (o: Opts) = (
+  FS.mkdir! o.logs;
+  IO.println "wmd listening on %{o.port}, logging to %{o.logs}";
+  with Shared.make world.empty as state ->
+  -- On the way out, SIGTERM included, the events not yet written are
+  -- written. The release runs before the Shared above is closed.
+  with Resource.make (fn () -> ()) (fn () -> log.flush! state o.logs) as _ ->
+  Par.all! [
+    fn () -> Net.listen o.port |> Par.each_stream 256 (session.serve state),
+    fn () -> Clock.every 1s (fn () -> log.flush! state o.logs)
+  ]
+)

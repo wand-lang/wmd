@@ -1,0 +1,99 @@
+uses {Clock, Net.Listen, Random, Shared}
+
+-- Sessions run with no socket. A handler answers Net!listen with fake
+-- connections, one per name in the script, feeds each its own lines, and
+-- keeps what the session writes. "%{conn}" is the name of a fake connection.
+
+import Base64
+import List
+import Map
+import Net
+import Option
+import Par
+import Shared
+import String
+
+let {test, group} = import Test
+let session = import ./session
+let world = import ./world
+
+-- What each connection was sent, as lines, and the world after every
+-- session has ended.
+type Run(sent: Map (List String), after: world.World)
+
+let _lines text = List.filter (fn l -> l != "") (String.split "\r\n" text)
+
+-- Serve one fake connection per script. `write_ok` false makes every write
+-- fail, as when the other end has gone.
+let run! scripts write_ok =
+  with Shared.make world.empty as state ->
+  with Shared.make scripts as input ->
+  with Shared.make Map.empty as sent -> (
+    handle Net.listen :4000 |> Par.each_stream 8 (session.serve state) with
+    | Net!listen _ k -> k (Map.keys scripts)
+    | Net!read_line conn k -> (
+      let name = "%{conn}";
+      match Map.get name (Shared.get input) with
+      | Some [l :: rest] -> (Shared.update input (Map.set name rest); k (Some l))
+      | _ -> k None
+    )
+    | Net!write (conn, text) k -> (
+      Shared.update sent (Map.update "%{conn}" [] (fn o -> List.concat o (_lines text)));
+      k (if write_ok then Ok() else Error "connection closed")
+    );
+    Run(sent = Shared.get sent, after = Shared.get state)
+  )
+
+let sent name (r: Run) = Option.default [] (Map.get name r.sent)
+
+let one! lines = run! (Map.from_list [("ann", lines)]) true
+
+group "one session" (fn () -> [
+  test "logs in and looks" (fn t ->
+    t.ok (List.any? (fn l -> l == "Hello, Ann.") (sent "ann" (one! ["ann", "look"])))),
+  test "the goodbye is sent before the connection closes" (fn t ->
+    t.eq (Some "Goodbye.") (List.head (List.reverse (sent "ann" (one! ["ann", "/quit"]))))),
+  test "nothing is read after /quit" (fn t ->
+    t.not_ok
+      (List.any?
+        (fn l -> String.contains? "dance" l)
+        (sent "ann" (one! ["ann", "/quit", "dance"])))),
+  -- ff fb 01 "ann" 0d
+  test "telnet bytes are dropped before the line is read" (fn t ->
+    t.ok
+      (List.any?
+        (fn l -> l == "Hello, Ann.")
+        (sent "ann" (one! [Base64.decode! "//sBYW5uDQ=="])))),
+  test "the session is gone once the connection ends" (fn t ->
+    let w = (one! ["ann", "look"]).after;
+    t.eq (true, true) (Map.empty? w.sessions, Map.empty? w.outboxes)),
+  test "every step is logged" (fn t ->
+    t.eq
+      ["connect", "login", "command", "disconnect"]
+      (List.map (fn (e: world.Event) -> e.event) (one! ["ann", "look"]).after.events))
+])
+
+group "two sessions" (fn () -> [
+  test "each is served" (fn t ->
+    let r = run! (Map.from_list [("ann", ["ann"]), ("bo", ["bo"])]) true;
+    t.eq (true, true) (
+      List.any? (fn l -> l == "Hello, Ann.") (sent "ann" r),
+      List.any? (fn l -> l == "Hello, Bo.") (sent "bo" r)
+    ))
+])
+
+-- A reader that never runs out of lines, and writes that always fail: only
+-- the writer can see that the connection is gone. If it did not end the
+-- session, this would never finish, so a deadline guards it.
+let dropped! () =
+  with Shared.make world.empty as state -> (
+    let _ =
+      Par.timeout 5s (fn () ->
+        handle Net.listen :4000 |> Par.each_stream 1 (session.serve state) with
+        | Net!listen _ k -> k ["ann"]
+        | Net!read_line _ k -> k (Some "look")
+        | Net!write _ k -> k (Error "connection closed"));
+    Map.empty? (Shared.get state).sessions
+  )
+
+test "a connection that cannot be written to is closed" (fn t -> t.ok (dropped! ()))

@@ -1,0 +1,44 @@
+uses {FS.Write, Shared}
+
+-- The log is tested with no files: a handler keeps each append.
+
+import List
+import Shared
+
+let {test, group} = import Test
+let log = import ./log
+let world = import ./world
+
+let at = "2026-10-02T14:03:11Z"
+
+let login = world.Event(at = at, event = "login", actor = "session:1", name = Some "Ann")
+
+group "a line" (fn () -> [
+  test "is one JSON object, with no field that is None" (fn t ->
+    t.eq
+      "{\"at\":\"2026-10-02T14:03:11Z\",\"event\":\"login\",\"actor\":\"session:1\",\"name\":\"Ann\"}\n"
+      (log.line login)),
+  test "goes in the file for its day" (fn t ->
+    t.eq ./logs/2026-10-02.jsonl (log.file ./logs login))
+])
+
+-- Log what the world holds, and give back each (path, text) appended and
+-- the events left in the world.
+let flushed! (w: world.World) =
+  with Shared.make w as state ->
+  with Shared.make [] as appended -> (
+    handle log.flush! state ./logs with
+    | FS!append (path, text) k -> (
+      Shared.update appended (fn a -> List.concat a [(path, text)]);
+      k ()
+    );
+    (Shared.get appended, List.length (Shared.get state).events)
+  )
+
+test "flush writes each event once and takes it out of the world" (fn t ->
+  let w = world.empty |> world.open "session:1" at |> world.input "session:1" at "ann";
+  let (appended, left) = flushed! w;
+  t.eq ([./logs/2026-10-02.jsonl, ./logs/2026-10-02.jsonl], 0) (
+    List.map (fn (p, _) -> p) appended,
+    left
+  ))
