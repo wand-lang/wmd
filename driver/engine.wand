@@ -38,7 +38,14 @@ let arrival = "/realm/commons/square#0"
 -- change made to it, newest first. The changes are made again, in order,
 -- on the shared world, where the sessions may have added lines or input in
 -- the meantime: the two kinds of change do not touch the same things.
-type Tx(w: world.World, changes: List (world.World -> world.World ! {}), at: String)
+-- `hooks` is false while a hook runs, so the moves it makes call no more
+-- hooks.
+type Tx(
+  w: world.World,
+  changes: List (world.World -> world.World ! {}),
+  at: String,
+  hooks: Bool = true
+)
 
 -- Work that starts at `at`, the time its input arrived. The working copy
 -- carries that time, for `ctx.time`.
@@ -89,6 +96,12 @@ let players_in room (w: world.World) = List.filter player? (world.contents room 
 let _players (w: world.World) =
   List.filter player? (List.map (fn (i: world.Instance) -> i.id) (Map.values w.instances))
 
+-- Where a body goes home to: its account's home, or the arrival room.
+let home_of body (w: world.World) =
+  match world.account_of body w with
+  | Some a -> Option.default arrival a.home
+  | None -> arrival
+
 -- The world as `viewer` sees it now. Each function answers from this one
 -- moment.
 let view (w: world.World) viewer =
@@ -102,22 +115,24 @@ let view (w: world.World) viewer =
       | None -> Map.empty,
     player? = player?,
     players = fn () -> _players w,
-    account? = fn name -> Option.some? (world.account name w)
+    account? = fn name -> Option.some? (world.account name w),
+    detail_of = fn id name -> match world.instance id w with
+      | Some i ->
+        Option.map (fn f -> f (_seen w viewer i.id)) (Map.get (String.lower name) i.object.details)
+      | None -> None,
+    prop = fn id key -> match world.instance id w with
+      | Some i -> Option.and_then (fn f -> Map.get key (f (_seen w viewer i.id))) i.object.props
+      | None -> None,
+    awake? = fn id -> Option.some? (world.session_of id w),
+    home_of = fn id -> home_of id w
   )
+-- The context of an object being looked at by `viewer`.
+and _seen (w: world.World) viewer id =
+  core.Ctx(self = id, actor = viewer, here = room_of id w, world = view w viewer, time = w.now)
 and _text (w: world.World) viewer id short =
   match world.instance id w with
   | None -> "nothing"
-  | Some i -> (
-    let ctx =
-      core.Ctx(
-        self = i.id,
-        actor = viewer,
-        here = room_of i.id w,
-        world = view w viewer,
-        time = w.now
-      );
-    if short then i.object.short ctx else i.object.long ctx
-  )
+  | Some i -> if short then i.object.short (_seen w viewer i.id) else i.object.long (_seen w viewer i.id)
 
 let short_of id (w: world.World) = _text w id id true
 
@@ -129,6 +144,37 @@ let ctx_for (w: world.World) self actor =
     world = view w actor,
     time = w.now
   )
+
+-- ── The action policy ──────────────────────────────────────────────────
+
+-- An object may move itself, the player whose command it is running, or
+-- something it holds.
+let _may_move? (ctx: core.Ctx) obj (w: world.World) =
+  obj == ctx.self || obj == ctx.actor || world.env_of obj w == Some ctx.self
+
+let _from_login? (ctx: core.Ctx) = world.blueprint_of ctx.self == "/std/login"
+
+-- Whether `ctx.self` may ask for action `a`, and why not. Every rule on
+-- what mudlib code may do is here, in one place.
+let allowed (ctx: core.Ctx) (a: core.Action) (w: world.World) =
+  match a with
+  | core.Say _ -> Ok()
+  | core.Tell target _ -> if world.session? target && !(_from_login? ctx) then
+      Error "only /std/login may tell a session"
+    else Ok()
+  | core.Move obj dest -> (
+    let o = world.resolve obj;
+    if world.session? dest then Error "may not move %{o} into a session"
+    else if !(_may_move? ctx o w) then Error "may not move %{o}"
+    else Ok()
+  )
+  | core.Spawn bp _ -> if bp == player_bp || bp == "/std/login" then Error "may not spawn %{bp}"
+    else Ok()
+  | core.Login _ _ _ -> if _from_login? ctx then Ok()
+    else Error "only /std/login may log in"
+  | core.Register _ _ _ -> if _from_login? ctx then Ok()
+    else Error "only /std/login may register"
+  | core.Hangup _ -> if _from_login? ctx then Ok() else Error "only /std/login may hang up"
 
 -- ── Spawning ───────────────────────────────────────────────────────────
 
@@ -143,7 +189,9 @@ let _create (lib: Lib) id bp saved dest (tx: Tx) =
     | Error why -> _event (world.Event(at = "", event = "fault", actor = id, text = Some why)) tx
     | Ok init ->
       tx
-      |> change (world.put (world.Instance(id = id, blueprint = bp, object = init.object, env = dest)))
+      |> change
+        (world.put
+          (world.Instance(id = id, blueprint = bp, object = init.object, env = dest, created = Some tx.at)))
       |> _apply_actions lib (ctx_for tx.w id id) init.actions
   )
 
@@ -154,8 +202,31 @@ and _ensure (lib: Lib) id (tx: Tx) =
   if Option.some? (world.instance full tx.w) then tx
   else _create lib full (world.blueprint_of full) None None tx
 
-and spawn (lib: Lib) bp dest saved (tx: Tx) =
-  _create lib "%{bp}#%{world.next_number bp tx.w}" bp saved dest tx
+-- A new instance of `bp` in `dest`, made by `actor`'s command.
+and spawn (lib: Lib) bp dest actor (tx: Tx) =
+  let id = "%{bp}#%{world.next_number bp tx.w}";
+  tx
+  |> _ensure lib dest
+  |> _create lib id bp None (Some (world.resolve dest))
+  |> change (fn w -> world.set_made id (Some actor) (Some tx.at) None w)
+  |> _hook lib "enter" dest id actor
+
+-- ── Hooks ──────────────────────────────────────────────────────────────
+
+-- Call `container`'s on_enter or on_leave for `mover`. The hook's own
+-- moves call no hooks.
+and _hook (lib: Lib) which container mover actor (tx: Tx) =
+  match (tx.hooks, world.instance container tx.w) with
+  | (true, Some i) -> (
+    let f = if which == "enter" then i.object.on_enter else i.object.on_leave;
+    match f with
+    | None -> tx
+    | Some h -> (
+      let ctx = ctx_for tx.w i.id actor;
+      Tx(run lib ctx (fn () -> h ctx mover) Tx(tx, hooks = false), hooks = true)
+    )
+  )
+  | _ -> tx
 
 -- ── Actions ────────────────────────────────────────────────────────────
 
@@ -168,36 +239,31 @@ and _say (ctx: core.Ctx) text (tx: Tx) =
     tx
     (players_in (room_of ctx.self tx.w) tx.w)
 
--- An object may move itself, the player whose command it is running, or
--- something it holds.
-and _may_move? (ctx: core.Ctx) obj (w: world.World) =
-  obj == ctx.self || obj == ctx.actor || world.env_of obj w == Some ctx.self
+-- Move `obj` into `dest`. A player who moves looks around, and then the
+-- place left and the place entered hear of it.
+and _move (lib: Lib) (ctx: core.Ctx) obj dest (tx: Tx) =
+  let from = world.env_of obj tx.w;
+  let moved = tx |> _ensure lib dest |> change (world.move obj dest);
+  let looked = if player? obj then look lib obj moved else moved;
+  let left =
+    match from with
+    | Some f -> _hook lib "leave" f obj ctx.actor looked
+    | None -> looked;
+  _hook lib "enter" (world.resolve dest) obj ctx.actor left
 
 and _act (lib: Lib) (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
-  match a with
-  | core.Say text -> _say ctx text tx
-  | core.Tell target text ->
-    if world.session? target && world.blueprint_of ctx.self != "/std/login" then
-      _refuse ctx "only /std/login may tell a session" tx
-    else change (world.tell target text) tx
-  | core.Move obj dest -> (
-    let o = world.resolve obj;
-    if !(_may_move? ctx o tx.w) then _refuse ctx "may not move %{o}" tx
-    else (
-      let moved = tx |> _ensure lib dest |> change (world.move o dest);
-      if player? o then look lib o moved else moved
-    )
+  match allowed ctx a tx.w with
+  | Error why -> _refuse ctx why tx
+  | Ok _ -> (
+    match a with
+    | core.Say text -> _say ctx text tx
+    | core.Tell target text -> change (world.tell target text) tx
+    | core.Move obj dest -> _move lib ctx (world.resolve obj) dest tx
+    | core.Spawn bp dest -> spawn lib bp dest ctx.actor tx
+    | core.Login sid name typed -> login lib sid name typed tx
+    | core.Register sid name typed -> register lib sid name typed tx
+    | core.Hangup sid -> change (world.close_soon sid) tx
   )
-  | core.Spawn bp dest -> tx |> _ensure lib dest |> spawn lib bp (Some (world.resolve dest)) None
-  | core.Login sid name typed ->
-    if world.blueprint_of ctx.self != "/std/login" then _refuse ctx "only /std/login may log in" tx
-    else login lib sid name typed tx
-  | core.Register sid name typed ->
-    if world.blueprint_of ctx.self != "/std/login" then _refuse ctx "only /std/login may register" tx
-    else register lib sid name typed tx
-  | core.Hangup sid ->
-    if world.blueprint_of ctx.self != "/std/login" then _refuse ctx "only /std/login may hang up" tx
-    else change (world.close_soon sid) tx
 
 and _apply_actions (lib: Lib) (ctx: core.Ctx) actions (tx: Tx) =
   List.fold_left (fn acc a -> _act lib ctx a acc) tx actions
@@ -206,7 +272,7 @@ and _apply_actions (lib: Lib) (ctx: core.Ctx) actions (tx: Tx) =
 and apply (lib: Lib) (ctx: core.Ctx) (r: core.Reply) (tx: Tx) = (
   let kept =
     match r.next with
-    | Some o -> change (world.set_object ctx.self o) tx
+    | Some o -> change (world.set_object ctx.self o tx.at) tx
     | None -> tx;
   _apply_actions lib ctx r.actions kept
 )
@@ -266,6 +332,7 @@ and register (lib: Lib) sid name typed (tx: Tx) =
     |> _ensure lib arrival
     |> _create lib body player_bp (Some saved) (Some arrival)
     |> change (world.add_account (world.Account(name = name, body = body, password = hashed)))
+    |> _hook lib "enter" arrival body body
     |> _event (world.Event(at = "", event = "signup", actor = sid, name = Some name, object = Some body))
     |> _wake lib sid name body "%{name} arrives."
   )
@@ -377,6 +444,65 @@ let _who body (w: world.World) =
         (Map.values w.sessions));
   world.tell body "%{List.length names} connected: %{String.join ", " names}." w
 
+let _after_verb line =
+  String.trim
+    (String.slice
+      (String.length (Option.default "" (String.word 0 line)))
+      (String.length line)
+      line)
+
+-- One player, by account name: awake or when last seen, and what they
+-- look like.
+let _who_is body name (w: world.World) =
+  match world.account name w with
+  | None -> world.tell body "There is no one called %{name}." w
+  | Some a -> (
+    let seen =
+      (if Option.some? (world.session_of a.body w) then "%{a.name} is awake."
+       else match a.last_seen with
+         | Some at -> "%{a.name} was last seen %{at}."
+         | None -> "%{a.name} has not been seen yet.");
+    world.tell body "%{seen}\n%{_text w body a.body false}" w
+  )
+
+let _or_none xs = if xs == [] then "nothing" else String.join ", " xs
+
+-- What the driver knows of an object: for builders, who need to see what
+-- the text of a room does not say.
+let _examine body words (w: world.World) = (
+  let here = room_of body w;
+  let found =
+    if words == "" then parse.Found here else parse.resolve w body here (String.words words);
+  match found with
+  | parse.Found id -> (
+    match world.instance id w with
+    | None -> world.tell body "There is no %{id}." w
+    | Some i -> (
+      let props =
+        (match i.object.props with
+         | Some f ->
+           List.map
+             (fn (k, v) -> "%{k} = %{JSON.stringify v}")
+             (Map.to_list (f (_seen w body i.id)))
+         | None -> []);
+      let lines =
+        [
+          "%{i.id}: %{short_of i.id w}",
+          "  in: %{Option.default "nothing" i.env}",
+          "  holds: %{_or_none (world.contents i.id w)}",
+          "  made by: %{Option.default "the driver" i.creator}, %{Option.default "at boot" i.created}",
+          "  changed: %{Option.default "never" i.modified}",
+          "  props: %{_or_none props}",
+          "  verbs: %{_or_none (List.flatten (List.map (fn (v: core.Verb) -> v.names) i.object.verbs))}",
+          "  exits: %{_or_none (Map.keys i.object.exits)}",
+          "  details: %{_or_none (Map.keys i.object.details)}"
+        ];
+      world.tell body (String.join "\n" lines) w
+    )
+  )
+  | _ -> world.tell body "You don't see a '%{words}' here." w
+)
+
 -- A line from a session that is logged in.
 let _play (lib: Lib) sid body at line (tx: Tx) =
   if line == "" then tx
@@ -400,7 +526,18 @@ let _play (lib: Lib) sid body at line (tx: Tx) =
     match verb with
     | "/quit" ->
       logged |> change (world.tell body "Goodbye.") |> change (world.close_soon sid)
-    | "/who" -> change (_who body) logged
+    | "/who" -> (
+      match String.word 1 full with
+      | Some name -> change (_who_is body name) logged
+      | None -> change (_who body) logged
+    )
+    | "/examine" -> change (_examine body (_after_verb full)) logged
+    | "/sethome" -> (
+      let room = room_of body tx.w;
+      logged
+      |> change (world.set_home body room)
+      |> change (world.tell body "%{short_of room tx.w} is your home now.")
+    )
     | _ -> command lib body full logged
   )
 
@@ -441,7 +578,10 @@ let run_input (lib: Lib) (i: world.Input) (tx: Tx) =
   )
   | world.Gone sid _ body -> (
     match body with
-    | Some b -> _tell_room (room_of b tx.w) b "%{short_of b tx.w} falls asleep." tx
+    | Some b ->
+      tx
+      |> _tell_room (room_of b tx.w) b "%{short_of b tx.w} falls asleep."
+      |> change (world.seen b tx.at)
     | None -> verb lib login_id sid "done" tx
   )
 
@@ -506,6 +646,7 @@ let restore (lib: Lib) state (f: snapshot.File) at =
     List.fold_left
       (fn t (s: snapshot.Saved) -> t
       |> _create lib s.id s.blueprint (Some s.state) s.env
+      |> change (world.set_made s.id s.creator s.created s.modified)
       |> change (world.keep_saved s.id s.state))
       accounts
       f.instances;

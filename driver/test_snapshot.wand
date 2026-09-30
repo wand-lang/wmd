@@ -111,3 +111,33 @@ group "a snapshot" (fn () -> [
       )
     ))
 ])
+
+test "brings back who made each object and when, and each account's home" (fn t ->
+  with FS.temp_dir "wmd_snap_" as d -> (
+    let path = Path.join d ./world.json;
+    let before = saved! path;
+    let after = restored! path;
+    let made (w: world.World) =
+      Option.map
+        (fn (i: world.Instance) -> (i.creator, i.created, i.modified))
+        (world.instance "/realm/commons/lever#0" w);
+    t.eq (made before, Map.values before.accounts) (made after, Map.values after.accounts)
+  ))
+
+-- A file written before a field was added still reads: the field gets its
+-- default.
+test "a file without the newer fields still reads" (fn t ->
+  with FS.temp_dir "wmd_snap_" as d -> (
+    let path = Path.join d ./world.json;
+    FS.write_file!
+      path
+      `{"version": 1, "accounts": [{"name": "Ann", "body": "/std/player#0", "password": "x", "role": "admin"}], "instances": [{"id": "/std/player#0", "blueprint": "/std/player", "env": "/realm/commons/square#0", "state": {"name": "Ann"}}]}`;
+    t.eq
+      (Some (None, None))
+      (Option.map
+        (fn (f: snapshot.File) -> (
+          Option.and_then (fn (a: world.Account) -> a.home) (List.head f.accounts),
+          Option.and_then (fn (s: snapshot.Saved) -> s.created) (List.head f.instances)
+        ))
+        (snapshot.read! path))
+  ))

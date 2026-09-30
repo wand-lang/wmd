@@ -6,7 +6,15 @@ let room = import ../../std/room
 let garden =
   core.Object(
     room.room "The Garden" "A small walled garden. A path leads back south to the Commons.",
-    exits = {south = room.exit "/realm/commons/square"}
+    exits = {south = room.exit "/realm/commons/square"},
+    details = {
+      wall = room.text "Old brick, warm from the sun, with moss in the joints.",
+      path = room.text "Gravel, raked smooth."
+    },
+    -- A robin looks up at whoever comes in.
+    on_enter = Some (fn (ctx: core.Ctx) who ->
+      if ctx.world.player? who then core.Reply(actions = [core.Tell who "A robin looks up at you from the path."])
+      else core.nothing)
   )
 
 implement core.Blueprint =

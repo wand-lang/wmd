@@ -344,3 +344,88 @@ Candidate wand issues
   record update through a module, `core.World(base, n = v)`, built the
   other module's `World`. It had never been reachable, because such code
   did not typecheck before.
+
+## 2026-09-30 · milestone 2 · part 3: details, props, hooks, socials, home
+
+What happened
+- The contract gained four Object fields (`details`, `props`, `on_enter`,
+  `on_leave`) and four view functions (`detail_of`, `prop`, `awake?`,
+  `home_of`). A field default must be a value, so the function fields are
+  `Option`s and `details` is a map that defaults to `{}`.
+- The rules on what mudlib code may ask for moved into one pure function,
+  `engine.allowed`, which returns `Result String Unit`. Tests call it
+  directly. New rules: no Move into a session, no Spawn of a body or of
+  /std/login.
+- Hooks run after any Move, and after a Spawn or a sign-up puts something
+  into a room. A `hooks` flag on the Tx stops a hook's own moves from
+  calling hooks again.
+- Instances now keep `creator`, `created` and `modified`, and accounts keep
+  `home` and `last_seen`. All are `Option`s with a default of None, so a
+  world.json written before this change still reads. A test checks that.
+- Driver commands: `/examine`, `/sethome`, `/who <name>`. Player verbs:
+  `look at`, `home`, and ten socials in one table.
+- Checker errors hit: 6
+  - `constructor 'World' is missing fields 'detail_of', 'prop', 'awake?',
+    'home_of'`. This was expected after the contract change. Fixed by
+    adding the four functions to `engine.view`.
+  - `type error: 224:17: expected World, got String`. `world.set_object`
+    now takes the time, and the call in `apply` did not pass it yet. Fixed
+    by passing `tx.at`.
+  - `parse error: 277:1: unexpected token: )`. A splice of the new actions
+    section left one `)` too many. Fixed by deleting it.
+  - `namespace 'List' has no member 'flat_map' -- 'wand d List' lists its
+    members`. Fixed with `List.flatten (List.map ...)`.
+  - `type error: 526:21: the type allows {}, but the body performs Random`.
+    A `change` body (`_examine`) called `_call`, whose guard handles
+    Random. A change must be pure. Props are pure, so the call to them is
+    now direct.
+  - `type error: 16:10: 'ctx' needs its type before '.world' can be read:
+    write '(ctx: Ctx)'`. The garden's `on_enter` lambda. Fixed with
+    `(ctx: core.Ctx)`.
+- wand s runs until green: 3.
+- Test mistakes: 3. Each output line is its own outbox entry, and two tests
+  expected one entry with "\n" in it. One test expected the lever's creator
+  to be the driver, but the square spawns the lever, so the square is the
+  creator. The comment on `creator` now says so.
+- A real run over telnet: look at a detail, a social, the garden's hook,
+  /sethome, home, /examine and /who. After SIGTERM, world.json has the home
+  and the creator.
+- Tests: 82 pass, 3 runs of 3.
+
+Easy, and why
+- Derived decoders filled in the new fields' defaults when the fields were
+  not in the file, so the old snapshots need no migration.
+- Putting the policy in one function made each rule one match arm, and a
+  refusal a Result that a test can compare.
+
+Hard, and why
+- Nothing was hard in the language this session.
+
+Candidate wand issues
+- None new. `List.flat_map` is a common name that people will try first.
+
+### Milestone 2 summary
+
+Friction
+1. Names resolved in the wrong module's scope: #50, #51, #63 and #64. Each
+   mudlib file has its own `State`, as the design asks, and each time this
+   found a new place in the checker or evaluator with the bug.
+2. Stored functions and effects: #54 (a false V-BANG1) and #61 (a stored
+   function ran effects that no manifest saw). The contract is records of
+   closures, so this area was used on every object.
+3. Map equality by insertion order (#62) made a test fail about once in
+   eight runs, and it took a probe to see why.
+
+Worked best
+1. Derived encoders and decoders. Save, restore and world.json are one
+   type each, and new `Option` fields with defaults read old files with no
+   migration.
+2. Effects as the gate on mudlib code. One handler guards Random, and a
+   mudlib file cannot do IO because its manifest does not say so.
+3. Pure world changes, applied in one `Shared.update`. The driver is one
+   fiber, and the engine tests need no socket and no sleeps.
+
+Proposed wand issues: `IO.read_secret` for the password prompt in `wmd
+init`. Two quirks, not filed: two modules that claim no interface can share
+a list, and `wand d --load` resolves imports from the working directory.
+#50 to #64 are fixed and released in wand 0.95.0 to 0.95.2.

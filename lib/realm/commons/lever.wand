@@ -19,6 +19,7 @@ let make (s: State) =
     names = ["lever", "brass lever"],
     short = fn _ -> "brass lever",
     long = fn _ -> "It has been pulled %{s.pulls} times.",
+    props = Some (fn _ -> {pulls = JSON.of_int s.pulls}),
     verbs = [
       core.Verb(
         names = ["pull", "yank"],

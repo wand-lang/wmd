@@ -16,9 +16,12 @@ let text = import ./text
 
 type State(name: String = "someone")
 
+-- The people already in `room`, who see someone arrive.
+let _in (ctx: core.Ctx) room = List.filter ctx.world.player? (ctx.world.contents room)
+
 -- ── look ───────────────────────────────────────────────────────────────
 
-let _look (ctx: core.Ctx) _ =
+let _room (ctx: core.Ctx) =
   let w = ctx.world;
   let here = List.filter (fn o -> o != ctx.actor) (w.contents ctx.here);
   let people = List.filter w.player? here;
@@ -30,9 +33,46 @@ let _look (ctx: core.Ctx) _ =
       if things == [] then []
       else ["You see %{text.listing (List.map (fn o -> text.a (w.short_of o)) things)}."],
       [if exits == [] then "There is no way out." else "Exits: %{String.join ", " exits}."],
-      List.map (fn p -> "%{w.short_of p} is here.") people
+      List.map
+        (fn p -> if w.awake? p then "%{w.short_of p} is here."
+          else "%{w.short_of p} is here, asleep.")
+        people
     ];
   core.tell ctx (String.join "\n" lines)
+
+-- `look at window`: a detail of the room, or of something in it or held.
+let _detail (ctx: core.Ctx) words = (
+  let w = ctx.world;
+  let places = List.flatten [[ctx.here], w.contents ctx.here, w.contents ctx.actor];
+  match List.head (List.filter_map (fn o -> w.detail_of o words) places) with
+  | Some d -> core.tell ctx d
+  | None -> core.tell ctx "You don't see a '%{words}' here."
+)
+
+-- `look`, `look lever`, `look at lever`, `look at window`.
+let _look (ctx: core.Ctx) (p: core.Parsed) = (
+  let words =
+    String.trim
+      (if String.starts_with? "at " p.rest then String.slice 3 (String.length p.rest) p.rest
+      else p.rest);
+  match (p.dobj, p.iobj) with
+  | (Some o, _) -> core.tell ctx (ctx.world.long_of o)
+  | (None, Some o) -> core.tell ctx (ctx.world.long_of o)
+  | _ -> if words == "" || words == "here" then _room ctx else _detail ctx words
+)
+
+-- ── home ───────────────────────────────────────────────────────────────
+
+let _home (s: State) (ctx: core.Ctx) _ =
+  let home = ctx.world.home_of ctx.actor;
+  if home == ctx.here then core.tell ctx "You are home already."
+  else core.Reply(
+    actions = List.flatten [
+      List.map (fn o -> core.Tell o "%{s.name} goes home.") (text.others ctx),
+      List.map (fn o -> core.Tell o "%{s.name} comes home.") (_in ctx home),
+      [core.Move ctx.actor home]
+    ]
+  )
 
 -- ── go ─────────────────────────────────────────────────────────────────
 
@@ -49,9 +89,6 @@ let _arrival name dir =
   match Map.get dir _opposites with
   | Some from -> "%{name} arrives from %{from}."
   | None -> "%{name} arrives."
-
--- The people already in `room`, who see someone arrive.
-let _in (ctx: core.Ctx) room = List.filter ctx.world.player? (ctx.world.contents room)
 
 let _go (s: State) (ctx: core.Ctx) (p: core.Parsed) = (
   let dir = String.lower (String.trim p.rest);
@@ -91,6 +128,58 @@ let _semipose (s: State) (ctx: core.Ctx) (p: core.Parsed) =
   if p.rest == "" then core.tell ctx "Semipose what?"
   else core.Reply(actions = text.act ctx "%{s.name}%{p.rest}" "%{s.name}%{p.rest}")
 
+-- ── socials ────────────────────────────────────────────────────────────
+
+-- A social is a short action with a fixed text: what the actor sees, what
+-- the room sees, and, `at` someone, what that one sees.
+type Social(you: String, them: String)
+
+let _socials = Map.from_list [
+  ("smile", Social(you = "smile", them = "smiles")),
+  ("grin", Social(you = "grin", them = "grins")),
+  ("laugh", Social(you = "laugh", them = "laughs")),
+  ("nod", Social(you = "nod", them = "nods")),
+  ("wave", Social(you = "wave", them = "waves")),
+  ("bow", Social(you = "bow", them = "bows")),
+  ("shrug", Social(you = "shrug", them = "shrugs")),
+  ("sigh", Social(you = "sigh", them = "sighs")),
+  ("frown", Social(you = "frown", them = "frowns")),
+  ("wink", Social(you = "wink", them = "winks"))
+]
+
+-- `wave` or `wave at Bo`. Bo sees "Ann waves at you.".
+let _social (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+  match Map.get p.verb _socials with
+  | None -> core.nothing
+  | Some so -> (
+    let target =
+      (match p.iobj with
+       | Some o -> Some o
+       | None -> p.dobj);
+    match target with
+    | None when p.prep == Some "at" ->
+      core.tell
+        ctx
+        "You don't see a '%{String.trim (String.slice 3 (String.length p.rest) p.rest)}' here."
+    | None -> core.Reply(actions = text.act ctx "You %{so.you}." "%{s.name} %{so.them}.")
+    | Some t when t == ctx.actor -> core.Reply(
+      actions =
+        text.act ctx "You %{so.you} at yourself." "%{s.name} %{so.them} at themself."
+    )
+    | Some t -> (
+      let name = ctx.world.short_of t;
+      core.Reply(
+        actions =
+          core.Tell ctx.actor "You %{so.you} at %{name}." :: List.map
+            (fn o -> core.Tell
+              o
+              (if o == t then "%{s.name} %{so.them} at you."
+              else "%{s.name} %{so.them} at %{name}."))
+            (text.others ctx)
+      )
+    )
+  )
+
 -- ── the body ───────────────────────────────────────────────────────────
 
 let _verb names run = core.Verb(names, run)
@@ -105,7 +194,9 @@ let make (s: State) =
       _verb ["go"] (_go s),
       _verb ["say"] (_say s),
       _verb ["pose"] (_pose s),
-      _verb ["semipose"] (_semipose s)
+      _verb ["semipose"] (_semipose s),
+      _verb ["home"] (_home s),
+      _verb (Map.keys _socials) (_social s)
     ],
     save = fn () -> State.encoder s
   )

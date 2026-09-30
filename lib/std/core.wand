@@ -37,7 +37,17 @@ type World(
   players: Unit -> List ObjId,
   -- Whether an account of this name exists. Nothing else about an account
   -- is readable: no mudlib code sees a password hash.
-  account?: String -> Bool
+  account?: String -> Bool,
+  -- A detail of an object: scenery to look at that is not an object of its
+  -- own, as "window" in a room.
+  detail_of: ObjId -> String -> Option String,
+  -- A value an object shows the world, as a lamp shows whether it is lit.
+  -- Objects can only look: changing another object is still an action.
+  prop: ObjId -> String -> Option JSON,
+  -- Whether a body has a session. One without is asleep.
+  awake?: ObjId -> Bool,
+  -- Where a body goes home to.
+  home_of: ObjId -> ObjId
 )
 
 -- Who is asking, about what, where and when. `self` is the object the call
@@ -90,6 +100,15 @@ type Object(
   long: Ctx -> String,
   verbs: List Verb = [],
   exits: Map Exit = {},
+  -- Scenery by name: `look at window` reads `details.window`.
+  details: Map (Ctx -> String) = {},
+  -- What the object shows the world, read by others with `prop`.
+  props: Option (Ctx -> Map JSON) = None,
+  -- Called after something arrives in the object, or leaves it, by any
+  -- route: an exit, a spawn, being picked up. A move a hook makes does not
+  -- call hooks again in the same step, so hooks cannot loop.
+  on_enter: Option (Ctx -> ObjId -> Reply ! {Random, Raise}) = None,
+  on_leave: Option (Ctx -> ObjId -> Reply ! {Random, Raise}) = None,
   -- While the room a player is in has one, the player's lines come here
   -- unparsed.
   input: Option (Ctx -> String -> Reply ! {Random, Raise}) = None,

@@ -12,6 +12,7 @@ import String
 
 let {test, group} = import Test
 let blueprints = import ./blueprints
+let core = import ../lib/std/core
 let engine = import ./engine
 let world = import ./world
 
@@ -244,3 +245,128 @@ test "a Random.seed inside a mudlib call does not change the driver's next draw"
   let draw () = engine.guarded (fn () -> (Random.seed 1; Random.int 1 1000000000));
   let seeded = (Random.seed 1; Random.int 1 1000000000);
   t.ok (List.any? (fn d -> d != seeded) [draw (), draw (), draw ()]))
+
+group "looking" (fn () -> [
+  test "look at a thing reads its long text" (fn t ->
+    t.eq
+      ["It has been pulled 0 times."]
+      (heard ann (played (List.concat ann_in [line ann "look at lever"])))),
+  test "look at a detail of the room" (fn t ->
+    t.eq
+      [
+        "Doors of wood, of iron, of glass; one is no taller than your knee. None will open."
+      ]
+      (heard ann (played (List.concat ann_in [line ann "look at doors"])))),
+  test "look at something that is not here" (fn t ->
+    t.eq
+      ["You don't see a 'moon' here."]
+      (heard ann (played (List.concat ann_in [line ann "look at moon"])))),
+  test "a body with no session is asleep" (fn t ->
+    t.ok
+      (heard?
+        bo
+        "Ann is here, asleep."
+        (played (List.concat both_in [world.close ann at, line bo "look"]))))
+])
+
+group "hooks" (fn () -> [
+  test "the garden's on_enter runs when a player comes in" (fn t ->
+    t.ok
+      (heard?
+        ann
+        "A robin looks up at you from the path."
+        (played (List.concat ann_in [line ann "north"])))),
+  test "and not for anyone already there" (fn t ->
+    t.not_ok
+      (heard?
+        bo
+        "A robin looks up at you from the path."
+        (played (List.concat both_in [line bo "north", world.emptied bo, line ann "north"]))))
+])
+
+group "socials" (fn () -> [
+  test "alone, the room sees it" (fn t ->
+    let w = played (List.concat both_in [line ann "smile"]);
+    t.eq (["You smile."], ["Ann smiles."]) (heard ann w, heard bo w)),
+  test "at someone, they see it at them" (fn t ->
+    let w = played (List.concat both_in [line ann "wave at bo"]);
+    t.eq (["You wave at Bo."], ["Ann waves at you."]) (heard ann w, heard bo w)),
+  test "at someone not here" (fn t ->
+    t.eq
+      ["You don't see a 'cy' here."]
+      (heard ann (played (List.concat ann_in [line ann "nod at cy"]))))
+])
+
+group "home" (fn () -> [
+  test "home goes to the arrival room by default" (fn t ->
+    let w = played (List.concat ann_in [line ann "north", line ann "home"]);
+    t.eq (Some "/realm/commons/square#0") (world.env_of "/std/player#0" w)),
+  test "/sethome makes this room home" (fn t ->
+    let w =
+      played
+        (List.concat ann_in [
+          line ann "north",
+          line ann "/sethome",
+          line ann "south",
+          line ann "home"
+        ]);
+    t.eq (Some "/realm/commons/garden#0", true) (
+      world.env_of "/std/player#0" w,
+      heard? ann "The Garden is your home now." w
+    ))
+])
+
+group "the action policy" (fn () -> [
+  test "no one but /std/login may tell a session" (fn t ->
+    let ctx = engine.ctx_for (played []) "/realm/commons/lever#0" "/realm/commons/lever#0";
+    t.eq
+      (Error "only /std/login may tell a session")
+      (engine.allowed ctx (core.Tell ann "hi") (played []))),
+  test "no object may spawn a body" (fn t ->
+    let w = played [];
+    let ctx = engine.ctx_for w "/realm/commons/lever#0" "/realm/commons/lever#0";
+    t.eq
+      (Error "may not spawn /std/player")
+      (engine.allowed ctx (core.Spawn "/std/player" "/realm/commons/square") w)),
+  test "an object may not move what it does not hold" (fn t ->
+    let w = played [];
+    let ctx = engine.ctx_for w "/realm/commons/garden#0" "/realm/commons/garden#0";
+    t.eq
+      (Error "may not move /realm/commons/lever#0")
+      (engine.allowed ctx (core.Move "/realm/commons/lever" "/realm/commons/garden") w))
+])
+
+group "more driver commands" (fn () -> [
+  test "/who with a name says when they were last seen" (fn t ->
+    t.ok
+      (heard?
+        bo
+        "Ann was last seen %{at}."
+        (played (List.concat both_in [world.close ann at, line bo "/who ann"])))),
+  test "/who with a name that is awake" (fn t ->
+    t.ok (heard? bo "Ann is awake." (played (List.concat both_in [line bo "/who ann"])))),
+  test "/examine shows the driver's own record of an object" (fn t ->
+    let lines =
+      heard
+        ann
+        (played
+          (List.concat ann_in [
+            line ann "pull lever",
+            world.emptied ann,
+            line ann "/examine lever"
+          ]));
+    t.eq
+      [
+        "/realm/commons/lever#0: brass lever",
+        "  in: /realm/commons/square#0",
+        "  made by: /realm/commons/square#0, %{at}",
+        "  changed: %{at}",
+        "  props: pulls = 1"
+      ]
+      (List.filter
+        (fn l -> !(String.starts_with? "  holds" l
+        || String.starts_with? "  verbs" l
+        || String.starts_with? "  exits" l
+        || String.starts_with? "  details" l))
+        lines))
+])

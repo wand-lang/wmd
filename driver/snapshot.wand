@@ -15,7 +15,15 @@ import Result
 let world = import ./world
 
 -- One object as the file keeps it.
-type Saved(id: String, blueprint: String, env: Option String = None, state: JSON)
+type Saved(
+  id: String,
+  blueprint: String,
+  env: Option String = None,
+  state: JSON,
+  creator: Option String = None,
+  created: Option String = None,
+  modified: Option String = None
+)
 
 type File(version: Int = 1, accounts: List world.Account, instances: List Saved)
 
@@ -28,7 +36,15 @@ let of_world (w: world.World) =
     instances =
       List.filter_map
         (fn (i: world.Instance) -> Option.map
-          (fn s -> Saved(id = i.id, blueprint = i.blueprint, env = i.env, state = s))
+          (fn s -> Saved(
+            id = i.id,
+            blueprint = i.blueprint,
+            env = i.env,
+            state = s,
+            creator = i.creator,
+            created = i.created,
+            modified = i.modified
+          ))
           i.saved)
         (Map.values w.instances)
   )
