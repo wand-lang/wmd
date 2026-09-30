@@ -31,7 +31,7 @@ let _head core_path = [
   "import String",
   "let core = import %{core_path}",
   "",
-  "let run (ctx: core.Ctx) = ("
+  "let run (ctx: core.Context) = ("
 ]
 
 let _indent expr = String.join "\n" (List.map (fn l -> "  %{l}") (String.lines expr))
@@ -39,12 +39,15 @@ let _indent expr = String.join "\n" (List.map (fn l -> "  %{l}") (String.lines e
 -- `run` itself, and nothing that uses it: what the check reads.
 let _body core_path expr = "%{String.join "\n" (_head core_path)}\n%{_indent expr}\n)\n"
 
--- The type an /eval shows: `run`'s result, without the `Ctx -> ` before it,
+-- The type an /eval shows: `run`'s result, without the `Context -> ` before it,
 -- and without what `run` performs, which a type writes at its end. When
 -- the result is a function, the effects at the end are the function's own.
 let result_type t =
+  let before = "Context -> ";
   let shown =
-    if String.starts_with? "Ctx -> " t then String.slice 7 (String.length t) t else t;
+    if String.starts_with? before t then
+      String.slice (String.length before) (String.length t) t
+    else t;
   if String.contains? "->" shown then shown
   else String.trim (Regex.replace r/ ! \{[^}]*\}$/ "" shown)
 

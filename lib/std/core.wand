@@ -54,7 +54,7 @@ type World(
 -- is on. `actor` is the player who typed the command, or `self` when the
 -- driver calls an object on its own. `time` is when the command arrived:
 -- mudlib code reads no clock of its own.
-type Ctx(self: ObjId, actor: ObjId, here: ObjId, world: World, time: DateTime)
+type Context(self: ObjId, actor: ObjId, here: ObjId, world: World, time: DateTime)
 
 -- A way out of a room. A message left as None gets the driver's default.
 -- `check` refuses with the message the mover sees, as in
@@ -63,7 +63,7 @@ type Exit(
   to: ObjId,
   leave: Option String = None,
   arrive: Option String = None,
-  check: Option (Ctx -> Result String Unit) = None
+  check: Option (Context -> Result String Unit) = None
 )
 
 -- Everything an object can ask of the world.
@@ -109,29 +109,29 @@ type Verb(
   names: List String,
   dobj: Arg = NoArg,
   iobj: Arg = NoArg,
-  run: Ctx -> Parsed -> Reply ! {Random, Raise}
+  run: Context -> Parsed -> Reply ! {Random, Raise}
 )
 
 type Object(
   names: List String,
-  short: Ctx -> String,
-  long: Ctx -> String,
+  short: Context -> String,
+  long: Context -> String,
   verbs: List Verb = [],
   exits: Map Exit = {},
   -- Scenery by name: `look at window` reads `details.window`.
-  details: Map (Ctx -> String) = {},
+  details: Map (Context -> String) = {},
   -- What the object shows the world, read by others with `prop`. A room
   -- with an `exits` prop, a string, shows it where `look` would list its
   -- exits.
-  props: Option (Ctx -> Map JSON) = None,
+  props: Option (Context -> Map JSON) = None,
   -- Called after something arrives in the object, or leaves it, by any
   -- route: an exit, a spawn, being picked up. A move a hook makes does not
   -- call hooks again in the same step, so hooks cannot loop.
-  on_enter: Option (Ctx -> ObjId -> Reply ! {Random, Raise}) = None,
-  on_leave: Option (Ctx -> ObjId -> Reply ! {Random, Raise}) = None,
+  on_enter: Option (Context -> ObjId -> Reply ! {Random, Raise}) = None,
+  on_leave: Option (Context -> ObjId -> Reply ! {Random, Raise}) = None,
   -- While the room a player is in has one, the player's lines come here
   -- unparsed.
-  input: Option (Ctx -> String -> Reply ! {Random, Raise}) = None,
+  input: Option (Context -> String -> Reply ! {Random, Raise}) = None,
   -- The state to keep: what `create` gets back as `saved`.
   save: Unit -> JSON
 )
@@ -159,7 +159,7 @@ type Evaluated = Shown String | Acts (List Action)
 -- What /eval runs. The driver writes a module for each expression, which
 -- implements this, and loads it as a mudlib file loads: checked, and held
 -- to the effects `evaluate` allows.
-interface Evaluation(evaluate: Ctx -> Evaluated ! {Random, Raise})
+interface Evaluation(evaluate: Context -> Evaluated ! {Random, Raise})
 
 -- What a verb gives back: actions for the driver, and the next version of
 -- the object, when it changed.
@@ -179,4 +179,4 @@ interface Blueprint(create: ObjId -> Option JSON -> Init ! {Random, Raise})
 let nothing = Reply()
 
 -- A reply that only shows the actor a line.
-let tell (ctx: Ctx) line = Reply(actions = [Tell ctx.actor line])
+let tell (ctx: Context) line = Reply(actions = [Tell ctx.actor line])

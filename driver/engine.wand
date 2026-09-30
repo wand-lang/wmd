@@ -164,7 +164,7 @@ let view (w: world.World) viewer =
   )
 -- The context of an object being looked at by `viewer`.
 and _seen (w: world.World) viewer id =
-  core.Ctx(self = id, actor = viewer, here = room_of id w, world = view w viewer, time = w.now)
+  core.Context(self = id, actor = viewer, here = room_of id w, world = view w viewer, time = w.now)
 and _text (w: world.World) viewer id short =
   match world.instance id w with
   | None -> "nothing"
@@ -176,7 +176,7 @@ and _text (w: world.World) viewer id short =
 let short_of id (w: world.World) = _text w id id true
 
 let ctx_for (w: world.World) self actor =
-  core.Ctx(
+  core.Context(
     self = world.resolve self,
     actor = actor,
     here = room_of actor w,
@@ -188,10 +188,10 @@ let ctx_for (w: world.World) self actor =
 
 -- An object may move itself, the player whose command it is running, or
 -- something it holds.
-let _may_move? (ctx: core.Ctx) obj (w: world.World) =
+let _may_move? (ctx: core.Context) obj (w: world.World) =
   obj == ctx.self || obj == ctx.actor || world.env_of obj w == Some ctx.self
 
-let _from_login? (ctx: core.Ctx) = world.blueprint_of ctx.self == "/std/login"
+let _from_login? (ctx: core.Context) = world.blueprint_of ctx.self == "/std/login"
 
 let editor_bp = "/realm/editor/room"
 
@@ -221,14 +221,14 @@ let may_edit? body path (w: world.World) =
 
 -- Only the editor may check or save a file, and only one its actor may
 -- edit.
-let _may_file (ctx: core.Ctx) path (w: world.World) =
+let _may_file (ctx: core.Context) path (w: world.World) =
   if !(_editor? ctx.self) then Error "only %{editor_bp} may check or save a file"
   else if !(may_edit? ctx.actor path w) then Error "%{ctx.actor} may not edit %{path}"
   else Ok()
 
 -- Whether `ctx.self` may ask for action `a`, and why not. Every rule on
 -- what mudlib code may do is here, in one place.
-let allowed (ctx: core.Ctx) (a: core.Action) (w: world.World) =
+let allowed (ctx: core.Context) (a: core.Action) (w: world.World) =
   match a with
   | core.Say text -> _too_long text
   | core.Tell target text -> if world.session? target && !(_from_login? ctx) then
@@ -318,10 +318,10 @@ and _hook which container mover actor (tx: Tx) =
 
 -- ── Actions ────────────────────────────────────────────────────────────
 
-and _refuse (ctx: core.Ctx) why (tx: Tx) =
+and _refuse (ctx: core.Context) why (tx: Tx) =
   _event (world.Event(at = "", event = "refused", actor = ctx.self, text = Some why)) tx
 
-and _say (ctx: core.Ctx) text (tx: Tx) =
+and _say (ctx: core.Context) text (tx: Tx) =
   List.fold_left
     (fn acc p -> change (world.tell p text) acc)
     tx
@@ -329,7 +329,7 @@ and _say (ctx: core.Ctx) text (tx: Tx) =
 
 -- Move `obj` into `dest`. A player who moves looks around, and then the
 -- place left and the place entered hear of it.
-and _move (ctx: core.Ctx) obj dest (tx: Tx) =
+and _move (ctx: core.Context) obj dest (tx: Tx) =
   let from = world.env_of obj tx.w;
   let ensured = _ensure dest tx;
   -- A room that is gone, or cannot be made, is no place to go: a body goes
@@ -351,7 +351,7 @@ and _move (ctx: core.Ctx) obj dest (tx: Tx) =
   | Some t -> _hook "enter" (world.resolve t) obj ctx.actor left
   | None -> left
 
-and _act (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
+and _act (ctx: core.Context) (a: core.Action) (tx: Tx) =
   match allowed ctx a tx.w with
   | Error why -> _refuse ctx why tx
   | Ok _ -> (
@@ -376,7 +376,7 @@ and _act (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
 -- Save, and write the list of blueprints again, so a new one loads at
 -- the next start.
 -- A save that passes loads the new code at once, as /update does.
-and _save (ctx: core.Ctx) path source (tx: Tx) =
+and _save (ctx: core.Context) path source (tx: Tx) =
   let o = files.save tx.w.lib_root path source;
   let answered = _answer ctx o tx;
   if o.ok && _blueprint? source then update ctx.actor path answered else answered
@@ -467,7 +467,7 @@ and eval body expr (tx: Tx) =
 
 -- Log the driver's answer to a check or a save, with the errors or the
 -- effects, and give it to the editor through its `result` verb.
-and _answer (ctx: core.Ctx) (o: core.Outcome) (tx: Tx) =
+and _answer (ctx: core.Context) (o: core.Outcome) (tx: Tx) =
   let errors =
     List.map
       (fn (p: core.Problem) -> "%{p.line}:%{p.col}: %{p.message}")
@@ -486,17 +486,17 @@ and _answer (ctx: core.Ctx) (o: core.Outcome) (tx: Tx) =
     ))
   |> verb_with ctx.self ctx.actor (core.Parsed(verb = "result", rest = JSON.stringify (core.Outcome.encoder o)))
 
-and _apply_actions (ctx: core.Ctx) actions (tx: Tx) =
+and _apply_actions (ctx: core.Context) actions (tx: Tx) =
   List.fold_left (fn acc a -> _act ctx a acc) tx actions
 
 -- Apply what a call on `ctx.self` gave back. A reply with more actions
 -- than `max_actions` is refused whole: its object keeps its old version.
-and apply (ctx: core.Ctx) (r: core.Reply) (tx: Tx) =
+and apply (ctx: core.Context) (r: core.Reply) (tx: Tx) =
   if List.length r.actions > max_actions then
     _refuse ctx "%{List.length r.actions} actions in one reply, and the most is %{max_actions}" tx
   else _apply ctx r tx
 
-and _apply (ctx: core.Ctx) (r: core.Reply) (tx: Tx) = (
+and _apply (ctx: core.Context) (r: core.Reply) (tx: Tx) = (
   let kept =
     match r.next with
     | Some o -> change (world.set_object ctx.self o tx.at) tx
@@ -508,7 +508,7 @@ and _apply (ctx: core.Ctx) (r: core.Reply) (tx: Tx) = (
 -- the actor is told, and the event log keeps why.
 -- An object that has faulted `fault_limit` times in a row runs no more
 -- code until /update or /reset gives it a new start.
-and run (ctx: core.Ctx) body (tx: Tx) =
+and run (ctx: core.Context) body (tx: Tx) =
   if _broken? ctx.self tx.w then
     change (world.tell ctx.actor "%{short_of ctx.self tx.w} is not working.") tx
   else match _call body with
@@ -966,7 +966,7 @@ let _to_login sid line (tx: Tx) =
     | None -> tx
     | Some f -> (
       let ctx =
-        core.Ctx(
+        core.Context(
           self = login_id,
           actor = sid,
           here = login_id,

@@ -20,10 +20,10 @@ let listing names =
   | [last :: before] -> "%{String.join ", " (List.reverse before)} and %{last}"
 
 -- The other players in the room of the actor.
-let others (ctx: core.Ctx) =
+let others (ctx: core.Context) =
   List.filter (fn p -> p != ctx.actor && ctx.world.player? p) (ctx.world.contents ctx.here)
 
 -- An action reads differently to the one doing it and to everyone else:
 -- "You say" to the actor, "Ann says" to the rest of the room.
-let act (ctx: core.Ctx) you them =
+let act (ctx: core.Context) you them =
   core.Tell ctx.actor you :: List.map (fn p -> core.Tell p them) (others ctx)

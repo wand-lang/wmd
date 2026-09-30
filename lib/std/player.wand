@@ -17,7 +17,7 @@ let text = import ./text
 type State(name: String = "someone")
 
 -- The people already in `room`, who see someone arrive.
-let _in (ctx: core.Ctx) room = List.filter ctx.world.player? (ctx.world.contents room)
+let _in (ctx: core.Context) room = List.filter ctx.world.player? (ctx.world.contents room)
 
 -- ── look ───────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ let _way_out (w: core.World) room exits =
   | None -> if exits == [] then "There is no way out."
     else "Exits: %{String.join ", " exits}."
 
-let _room (ctx: core.Ctx) =
+let _room (ctx: core.Context) =
   let w = ctx.world;
   let here = List.filter (fn o -> o != ctx.actor) (w.contents ctx.here);
   let people = List.filter w.player? here;
@@ -49,7 +49,7 @@ let _room (ctx: core.Ctx) =
   core.tell ctx (String.join "\n" lines)
 
 -- `look at window`: a detail of the room, or of something in it or held.
-let _detail (ctx: core.Ctx) words = (
+let _detail (ctx: core.Context) words = (
   let w = ctx.world;
   let places = List.flatten [[ctx.here], w.contents ctx.here, w.contents ctx.actor];
   match List.head (List.filter_map (fn o -> w.detail_of o words) places) with
@@ -58,7 +58,7 @@ let _detail (ctx: core.Ctx) words = (
 )
 
 -- `look`, `look lever`, `look at lever`, `look at window`.
-let _look (ctx: core.Ctx) (p: core.Parsed) = (
+let _look (ctx: core.Context) (p: core.Parsed) = (
   let words =
     String.trim
       (if String.starts_with? "at " p.rest then String.slice 3 (String.length p.rest) p.rest
@@ -71,7 +71,7 @@ let _look (ctx: core.Ctx) (p: core.Parsed) = (
 
 -- ── home ───────────────────────────────────────────────────────────────
 
-let _home (s: State) (ctx: core.Ctx) _ =
+let _home (s: State) (ctx: core.Context) _ =
   let home = ctx.world.home_of ctx.actor;
   if home == ctx.here then core.tell ctx "You are home already."
   else core.Reply(
@@ -98,7 +98,7 @@ let _arrival name dir =
   | Some from -> "%{name} arrives from %{from}."
   | None -> "%{name} arrives."
 
-let _go (s: State) (ctx: core.Ctx) (p: core.Parsed) = (
+let _go (s: State) (ctx: core.Context) (p: core.Parsed) = (
   let dir = String.lower (String.trim p.rest);
   match Map.get dir (ctx.world.exits_of ctx.here) with
   | None -> core.tell ctx (if dir == "" then "Go where?" else "You can't go that way.")
@@ -122,17 +122,17 @@ let _go (s: State) (ctx: core.Ctx) (p: core.Parsed) = (
 
 -- ── talk ───────────────────────────────────────────────────────────────
 
-let _say (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+let _say (s: State) (ctx: core.Context) (p: core.Parsed) =
   if p.rest == "" then core.tell ctx "Say what?"
   else core.Reply(actions = text.act ctx `You say "%{p.rest}"` `%{s.name} says "%{p.rest}"`)
 
 -- `pose sits down.` shows "Ann sits down." to everyone, Ann too.
-let _pose (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+let _pose (s: State) (ctx: core.Context) (p: core.Parsed) =
   if p.rest == "" then core.tell ctx "Pose what?"
   else core.Reply(actions = text.act ctx "%{s.name} %{p.rest}" "%{s.name} %{p.rest}")
 
 -- `semipose 's cat purrs.` shows "Ann's cat purrs.": no space after the name.
-let _semipose (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+let _semipose (s: State) (ctx: core.Context) (p: core.Parsed) =
   if p.rest == "" then core.tell ctx "Semipose what?"
   else core.Reply(actions = text.act ctx "%{s.name}%{p.rest}" "%{s.name}%{p.rest}")
 
@@ -156,7 +156,7 @@ let _socials = Map.from_list [
 ]
 
 -- `wave` or `wave at Bo`. Bo sees "Ann waves at you.".
-let _social (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+let _social (s: State) (ctx: core.Context) (p: core.Parsed) =
   match Map.get p.verb _socials with
   | None -> core.nothing
   | Some so -> (

@@ -124,14 +124,14 @@ let _in_buffer (s: State) (from, to) =
 -- What a command does: the next state, when there is one, and actions.
 type Step(state: Option State = None, actions: List core.Action = [])
 
-let _tell (ctx: core.Ctx) text = Step(actions = [core.Tell ctx.actor text])
+let _tell (ctx: core.Context) text = Step(actions = [core.Tell ctx.actor text])
 
-let _to (s: State) (ctx: core.Ctx) text =
+let _to (s: State) (ctx: core.Context) text =
   Step(state = Some s, actions = [core.Tell ctx.actor text])
 
 let _nothing = Step()
 
-let _print (s: State) (ctx: core.Ctx) here numbered =
+let _print (s: State) (ctx: core.Context) here numbered =
   match _in_buffer s here with
   | Error why -> _tell ctx why
   | Ok(from, to) -> (
@@ -142,7 +142,7 @@ let _print (s: State) (ctx: core.Ctx) here numbered =
       (String.join "\n" (if numbered then _numbered from lines else lines))
   )
 
-let _substitute (s: State) (ctx: core.Ctx) here cmd =
+let _substitute (s: State) (ctx: core.Context) here cmd =
   match (_in_buffer s here, Regex.capture r/^s\/([^\/]+)\/([^\/]*)\/(g?)$/ cmd) with
   | (Error why, _) -> _tell ctx why
   | (_, [_, old, new, g]) -> (
@@ -168,7 +168,7 @@ let _substitute (s: State) (ctx: core.Ctx) here cmd =
 
 -- Back to where the editor was opened from. The driver sends the body home
 -- when that room is gone.
-let _quit (s: State) (ctx: core.Ctx) =
+let _quit (s: State) (ctx: core.Context) =
   let name = ctx.world.short_of ctx.actor;
   Step(
     actions = List.flatten [
@@ -181,7 +181,7 @@ let _quit (s: State) (ctx: core.Ctx) =
   )
 
 -- The driver's answer to t, w or w!.
-let _result (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+let _result (s: State) (ctx: core.Context) (p: core.Parsed) =
   match JSON.decode core.Outcome.decoder (Result.default JSON.null (JSON.parse p.rest)) with
   | Error why -> _tell ctx "The driver's answer did not read: %{why}"
   | Ok o -> (
@@ -218,7 +218,7 @@ let _result (s: State) (ctx: core.Ctx) (p: core.Parsed) =
 
 -- /edit spawns the editor with its state: the file's path and lines, and
 -- the room to go back to.
-let _run (s: State) (ctx: core.Ctx) r cmd = (
+let _run (s: State) (ctx: core.Context) r cmd = (
   let here = Option.default (s.cur, s.cur) r;
   let (from, to) = here;
   match cmd with
@@ -283,7 +283,7 @@ let _run (s: State) (ctx: core.Ctx) r cmd = (
     else _tell ctx "'%{cmd}' is not a command. Type h for help."
 )
 
-let _input (s: State) (ctx: core.Ctx) line =
+let _input (s: State) (ctx: core.Context) line =
   match s.adding with
   | Some n -> if line == "." then _to State(s, adding = None, cur = n) ctx "%{n}"
     else Step(
@@ -307,7 +307,7 @@ let _input (s: State) (ctx: core.Ctx) line =
 -- /edit from inside the editor: the same editor on another file. The
 -- driver sends the new file's state as JSON in `rest`; the room to go back
 -- to stays the one the editor was first opened from.
-let _open (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+let _open (s: State) (ctx: core.Context) (p: core.Parsed) =
   if s.dirty then
     _tell
       ctx

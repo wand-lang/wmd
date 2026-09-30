@@ -9,7 +9,7 @@ import JSON
 let core = import ./core
 
 -- A description that never changes.
-let text s = fn (_: core.Ctx) -> s
+let text s = fn (_: core.Context) -> s
 
 -- An exit with the default messages and no check.
 let exit to = core.Exit(to = to)

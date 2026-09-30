@@ -12,7 +12,7 @@ let garden =
       path = room.text "Gravel, raked smooth."
     },
     -- A robin looks up at whoever comes in.
-    on_enter = Some (fn (ctx: core.Ctx) who ->
+    on_enter = Some (fn (ctx: core.Context) who ->
       if ctx.world.player? who then core.Reply(actions = [core.Tell who "A robin looks up at you from the path."])
       else core.nothing)
   )

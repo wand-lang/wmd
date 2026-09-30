@@ -57,10 +57,10 @@ let _thirteen? (y, m, d) now =
 
 -- The dialogue, over where each session is in it.
 let make (stages: Map Stage) = (
-  let at (ctx: core.Ctx) stage = make (Map.set ctx.actor stage stages);
-  let tell (ctx: core.Ctx) text next =
+  let at (ctx: core.Context) stage = make (Map.set ctx.actor stage stages);
+  let tell (ctx: core.Context) text next =
     core.Reply(actions = [core.Tell ctx.actor text], next = Some next);
-  let line (ctx: core.Ctx) typed = (
+  let line (ctx: core.Context) typed = (
     let text = String.trim typed;
     match Option.default AskName (Map.get ctx.actor stages) with
     | AskName ->
@@ -109,9 +109,9 @@ let make (stages: Map Stage) = (
   );
   -- The driver runs `connect` when a session connects, and `done` when it
   -- logs in or goes away, so no stage outlives its session.
-  let connect (ctx: core.Ctx) _ =
+  let connect (ctx: core.Context) _ =
     tell ctx "Welcome to WMD, the World of Many Doors.\n%{_ask}" (at ctx AskName);
-  let done (ctx: core.Ctx) _ = core.Reply(next = Some (make (Map.delete ctx.actor stages)));
+  let done (ctx: core.Context) _ = core.Reply(next = Some (make (Map.delete ctx.actor stages)));
   core.Object(
     names = [],
     short = fn _ -> "the login",
