@@ -21,14 +21,16 @@ let core = import ../../std/core
 
 -- The file, the buffer and the current line. `adding` is the number of
 -- lines above where typed text goes while the editor takes text, and None
--- while it takes commands. `origin` is the room to go back to.
+-- while it takes commands. `origin` is the room to go back to. `eval` is
+-- true for an /eval buffer, which has no file: `w` runs it.
 type State(
   path: String = "",
   lines: List String = [],
   cur: Int = 0,
   dirty: Bool = false,
   adding: Option Int = None,
-  origin: String = ""
+  origin: String = "",
+  eval: Bool = false
 )
 
 let _help = String.join "\n" [
@@ -263,10 +265,13 @@ let _run (s: State) (ctx: core.Ctx) r cmd = (
         "Deleted %{to - from + 1} lines."
     )
   )
-  | "t" -> Step(actions = [core.Check s.path (_source s)])
-  | "w" -> Step(actions = [core.Save s.path (_source s)])
-  | "w!" -> Step(actions = [core.Draft s.path (_source s)])
-  | "q" -> if s.dirty then
+  | "t" -> if s.eval then _tell ctx "An /eval buffer is checked when w runs it."
+    else Step(actions = [core.Check s.path (_source s)])
+  | "w" -> if s.eval then Step(actions = [core.Run(String.join "\n" s.lines)])
+    else Step(actions = [core.Save s.path (_source s)])
+  | "w!" -> if s.eval then _tell ctx "An /eval buffer has no file. w runs it."
+    else Step(actions = [core.Draft s.path (_source s)])
+  | "q" -> if s.dirty && !s.eval then
       _tell
         ctx
         "You have unsaved changes. Save them with w or w!, or leave without them with Q."
@@ -322,7 +327,9 @@ let make (s: State) =
   core.Object(
     names = [],
     short = fn _ -> "The editor",
-    long = fn _ -> "Editing %{s.path}: %{List.length s.lines} lines, at line %{s.cur}. Type h for help.",
+    long = fn _ -> if s.eval then
+        "An /eval buffer: %{List.length s.lines} lines. w runs it; type h for help."
+      else "Editing %{s.path}: %{List.length s.lines} lines, at line %{s.cur}. Type h for help.",
     verbs = [
       core.Verb(names = ["result"], run = fn ctx p -> reply (_result s ctx p)),
       core.Verb(names = ["open"], run = fn ctx p -> reply (_open s ctx p))

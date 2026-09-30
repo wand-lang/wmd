@@ -98,6 +98,10 @@ type Action =
   -- Save the source as it is, checked or not, to keep unfinished work. It
   -- is formatted when it parses. The same rules and answer as Check.
   | Draft String String
+  -- Run source as /eval runs an expression: the editor's buffer, when it
+  -- was opened with /eval and no expression. Only /realm/editor may ask
+  -- this.
+  | Run String
 
 -- A command the object answers to. `run` gets the parsed command, with
 -- dobj and iobj already matched to objects.
@@ -145,6 +149,15 @@ type Outcome(
   effects: List String = [],
   text: Option String = None
 )
+
+-- What an /eval gives back: actions for the driver to check and apply, as
+-- any object's are, or a value to show, written with its type.
+type Evaluated = Shown String | Acts (List Action)
+
+-- What /eval runs. The driver writes a module for each expression, which
+-- implements this, and loads it as a mudlib file loads: checked, and held
+-- to the effects `evaluate` allows.
+interface Evaluation(evaluate: Ctx -> Evaluated ! {Random, Raise})
 
 -- What a verb gives back: actions for the driver, and the next version of
 -- the object, when it changed.
