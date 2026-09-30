@@ -70,6 +70,23 @@ let _changed before after =
     if List.length before > List.length after then List.length before else List.length after;
   List.length (List.filter (fn i -> List.get i before != List.get i after) (List.range 0 n))
 
+-- Where line `cur` of `before` is in `after`, a formatted version of it:
+-- the line with as many lines with text at or above it. Blank lines are
+-- what formatting adds and takes away most, so line numbers still point
+-- at the same code after a save.
+let _same_line before after cur =
+  let k = List.length (List.filter (fn l -> String.trim l != "") (List.take cur before));
+  let (_, found) =
+    List.fold_left
+      (fn (seen, at) (i, l) -> if at != 0 then (seen, at)
+        else (
+          let now = if String.trim l != "" then seen + 1 else seen;
+          (now, if now == k then i + 1 else 0)
+        ))
+      (0, 0)
+      (List.indexed after);
+  if k == 0 then 0 else if found == 0 then List.length after else found
+
 -- ── Addresses ──────────────────────────────────────────────────────────
 
 -- An address part, then the command.
@@ -178,7 +195,7 @@ let _result (s: State) (ctx: core.Ctx) (p: core.Parsed) =
     | (_, true, Some text) -> (
       let lines = String.lines text;
       let changed = _changed s.lines lines;
-      let cur = if s.cur > List.length lines then List.length lines else s.cur;
+      let cur = _same_line s.lines lines s.cur;
       let saved =
         if o.action == "save" then
           "Saved %{s.path}: %{List.length lines} lines. It runs after the next restart."

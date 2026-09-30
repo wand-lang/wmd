@@ -251,6 +251,53 @@ group "checking and saving" (fn () -> [
           (FS.read_file! (Path.join (Path.dirname lib) ./blueprints.wand)))))
 ])
 
+-- Formatting takes out the second blank line, so line 4 is line 3 now,
+-- and . still names `let y = 2`.
+test "after a save, the current line is the same line of code" (fn t ->
+  on_copy! (List.concat
+    editing
+    (List.concat (lines ann ["a", "let x=1", "", "", "let y=2", ".", "w"]) [
+      world.emptied ann,
+      line ann ".n"
+    ])
+  ) (fn w _ ->
+    t.eq ["3\tlet y = 2"] (heard ann w)))
+
+group "the event log" (fn () -> [
+  test "a save logs its effects, and a refused one its errors" (fn t ->
+    on_copy! (List.concat
+      editing
+      (lines ann [
+        "a",
+        `let x: Int = "a"`,
+        ".",
+        "w",
+        "1c",
+        "uses {Random}",
+        "import Random",
+        "let x () = Random.int 1 6",
+        ".",
+        "w"
+      ])
+    ) (fn w _ ->
+      t.eq
+        [("save_refused", "1:14: expected Int, got String"), ("save", "effects: Random")]
+        (List.filter_map
+          (fn (e: world.Event) -> if String.starts_with? "save" e.event then
+              Some (e.event, Option.default "" e.text)
+            else None)
+          w.events))),
+  test "the editor's spawn and removal are logged" (fn t ->
+    on_copy! (List.concat editing [line ann "q"]) (fn w _ ->
+      t.eq
+        [("spawn", Some editor), ("remove", Some editor)]
+        (List.filter_map
+          (fn (e: world.Event) -> if (e.event == "spawn" || e.event == "remove") && e.object == Some editor then
+              Some (e.event, e.object)
+            else None)
+          w.events)))
+])
+
 group "leaving" (fn () -> [
   test "q refuses while there are unsaved changes" (fn t ->
     on_copy! (List.concat

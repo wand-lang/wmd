@@ -87,9 +87,10 @@ group "one session" (fn () -> [
   test "the session is gone once the connection ends" (fn t ->
     let w = (one! ["look"]).after;
     t.eq (true, true) (Map.empty? w.sessions, Map.empty? w.outboxes)),
+  -- The first is the lever the square spawns when the world boots.
   test "every step is logged" (fn t ->
     t.eq
-      ["connect", "signup", "login", "command", "disconnect"]
+      ["spawn", "connect", "signup", "login", "command", "disconnect"]
       (List.map (fn (e: world.Event) -> e.event) (one! ["look"]).after.events))
 ])
 

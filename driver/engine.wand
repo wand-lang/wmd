@@ -241,6 +241,7 @@ and spawn (lib: Lib) bp dest actor (tx: Tx) =
   |> _ensure lib dest
   |> _create lib id bp None (Some (world.resolve dest))
   |> change (fn w -> world.set_made id (Some actor) (Some tx.at) None w)
+  |> _event (world.Event(at = "", event = "spawn", actor = actor, object = Some id))
   |> _hook lib "enter" dest id actor
 
 -- ── Hooks ──────────────────────────────────────────────────────────────
@@ -307,7 +308,10 @@ and _act (lib: Lib) (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
     | core.Login sid name typed -> login lib sid name typed tx
     | core.Register sid name typed -> register lib sid name typed tx
     | core.Hangup sid -> change (world.close_soon sid) tx
-    | core.Remove obj -> change (world.remove obj) tx
+    | core.Remove obj ->
+      tx
+      |> change (world.remove obj)
+      |> _event (world.Event(at = "", event = "remove", actor = ctx.actor, object = Some (world.resolve obj)))
     | core.Check path source -> _answer lib ctx (files.check tx.w.lib_root path source) tx
     | core.Save path source -> _save lib ctx path source tx
     | core.Draft path source -> _answer lib ctx (files.draft tx.w.lib_root path source) tx
@@ -326,14 +330,29 @@ and _save (lib: Lib) (ctx: core.Ctx) path source (tx: Tx) = (
     | Ok _ -> tx
     | Error why ->
       _event (world.Event(at = "", event = "fault", actor = ctx.actor, object = Some path, text = Some "listing: %{why}")) tx;
-  logged
-  |> _event (world.Event(at = "", event = if o.ok then "save" else "save_refused", actor = ctx.actor, object = Some path))
-  |> _answer lib ctx o
+  _answer lib ctx o logged
 )
 
--- Give the editor the driver's answer, through its `result` verb.
+-- Log the driver's answer to a check or a save, with the errors or the
+-- effects, and give it to the editor through its `result` verb.
 and _answer (lib: Lib) (ctx: core.Ctx) (o: core.Outcome) (tx: Tx) =
-  verb_with lib ctx.self ctx.actor (core.Parsed(verb = "result", rest = JSON.stringify (core.Outcome.encoder o))) tx
+  let errors =
+    List.map
+      (fn (p: core.Problem) -> "%{p.line}:%{p.col}: %{p.message}")
+      (List.filter (fn (p: core.Problem) -> p.severity == "error") o.problems);
+  let found =
+    if o.ok then "effects: %{if o.effects == [] then "none" else String.join ", " o.effects}"
+    else String.join "; " errors;
+  tx
+  |> _event
+    (world.Event(
+      at = "",
+      event = if o.ok then o.action else "%{o.action}_refused",
+      actor = ctx.actor,
+      object = Some o.path,
+      text = Some found
+    ))
+  |> verb_with lib ctx.self ctx.actor (core.Parsed(verb = "result", rest = JSON.stringify (core.Outcome.encoder o)))
 
 and _apply_actions (lib: Lib) (ctx: core.Ctx) actions (tx: Tx) =
   List.fold_left (fn acc a -> _act lib ctx a acc) tx actions
@@ -632,6 +651,13 @@ let _edit (lib: Lib) body words (tx: Tx) =
         tx
         |> _create lib id editor_bp (Some state) None
         |> change (world.set_made id (Some body) (Some tx.at) None)
+        |> _event world.Event(
+          at = "",
+          event = "spawn",
+          actor = body,
+          object = Some id,
+          text = Some path
+        )
         |> _tell_room here body "%{short_of body tx.w} leaves for the editor."
         |> change (world.tell body opened)
         |> _move lib (ctx_for tx.w body body) body id

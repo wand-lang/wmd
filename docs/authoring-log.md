@@ -521,3 +521,52 @@ Candidate wand issues
   the part already known, so the member came out pure. The `mkdir` before
   a check and the Bool function for the input hook came out of wmd. The
   editor keeps its step design, because it is simpler to test.
+
+## 2026-09-30 · milestone 3 · events, the current line, and the end of the milestone
+
+Files: driver/engine.wand, lib/realm/editor/room.wand, driver/test_editor.wand,
+driver/test_session.wand.
+
+Observed
+- Checker errors hit: 0.
+- wand s runs until green: 3. The first run had 2 failures, both mine:
+  the spawn of the lever at boot is now an event, and two tests listed
+  events without it. One test now looks at the editor's events only, and
+  the other expects the spawn first.
+- A check, a save or a draft is logged with its errors, or with its effects
+  when it passes, as the design's event log asks. Spawns and removals are
+  logged.
+- After `w`, `.` names the same line of code: the editor counts the lines
+  with text, because blank lines are what formatting adds and takes away
+  most.
+- The design doc now says what changed: the editor keeps its input hook
+  set, `w!` returns Draft, `q` returns Remove, and a save that adds a
+  blueprint writes the generated import list again until hot reload.
+- The generated import list is the weak point, as the user pointed out.
+  It exists because an import is fixed when a file is checked, so new code
+  loads only after a restart, and the driver writes into its own source
+  directory. `Wand.load` in milestone 4 removes it.
+- Tests: 109 pass, 3 runs of 3.
+
+### Milestone 3 summary
+
+Friction
+1. An effect error with no location in a 270-line `and` group (#65).
+   Finding the call took about ten edits that each removed one part.
+2. `Wand.check_at` could not import through a directory that did not exist
+   yet (#66), which is the usual case for a new builder's first file.
+3. The generated import list: new code needs a restart, and the driver
+   writes its own source. There is no way in Wand to load a file at run
+   time yet.
+
+Worked best
+1. `Wand.check_at` and `Checked.effects`: the check and the effect gate
+   are about 30 lines of driver code, and error lines are buffer lines.
+2. The editor as plain steps, State in and Step out: 27 tests through the
+   driver, each on a copy of lib/ in a temporary directory.
+3. Derived encoders and decoders again: the driver's answer to the editor
+   is one type, and the editor's buffer survives a restart with no code
+   for it.
+
+Proposed wand issues: `Wand.load` with the effect gate, as the design
+plans for milestone 4. #65, #66 and #67 are fixed in wand 0.95.3.
