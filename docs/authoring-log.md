@@ -684,3 +684,6 @@ Hard, and why
 
 Candidate wand issues
 - #71, not released yet.
+- Later: spikes/ was deleted. Its one file, the milestone 1 Net test,
+  was covered by driver/test/test_session.wand, which tests the same way
+  against the real session code. The design doc now points at that test.
