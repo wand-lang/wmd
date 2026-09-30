@@ -429,3 +429,95 @@ Proposed wand issues: `IO.read_secret` for the password prompt in `wmd
 init`. Two quirks, not filed: two modules that claim no interface can share
 a list, and `wand d --load` resolves imports from the working directory.
 #50 to #64 are fixed and released in wand 0.95.0 to 0.95.2.
+
+## 2026-09-30 · milestone 3 · the editor room, Check, Save and the gate
+
+Files: lib/realm/editor/room.wand, lib/std/core.wand, driver/{files,engine,
+world,scan,main}.wand, tools/blueprints.wand, driver/test_editor.wand.
+
+Observed
+- Checker errors hit: 11
+  - `type error: these effects do not match: {} and {Raise, Random | ..}`,
+    with no line or column. The editor was one `let make ... and ...` group
+    of eight functions. Finding the call took about ten edits that each
+    removed one part; the cause is a pure function called before its place
+    in the group. Filed as wand #65, with a 9-line repro. Fixed by taking
+    the commands out of the group: each returns a `Step` (the next state
+    and the actions), and only `make` is recursive.
+  - `type error: 206:17: '_run' is defined below, at line 211. Move the
+    definition above its first use`. After the change above, the order of
+    the functions matters. Fixed by moving `_run` up.
+  - `namespace 'Map' has no member 'remove'`. It is `Map.delete`.
+  - `parse error: 325:3: the ';' above ended the definition, so this line
+    is a statement of its own rather than part of it`. An `and` body that
+    sequences with `;` needs parentheses. Fixed with them.
+  - `V-BANG1: 'listing' can raise`. Renamed `listing!`. The same for
+    `_start`, renamed `_start!`.
+  - `V-BANG2: 'check!' cannot raise`, and the same for `save!` and
+    `draft!`. They return an Outcome for every failure. Dropped the `!`.
+  - `V-BANG1: '_input_of' can raise`. It only returns the room's `input`
+    hook, whose type has Raise; it calls nothing. Filed as wand #67. Fixed
+    with `_takes_input?`, which returns a Bool, and a second lookup.
+  - `'played' performs FS.Read, FS.Write, which the manifest does not
+    allow`, in two test files. A step can now read and write mudlib files.
+    Fixed by adding both to their `uses` lines.
+  - `type error: 286:11: expected World, got Unit`. In a test, a `match`
+    arm called `engine.restore`, which returns the old world (Shared.update
+    returns the old value), and the other arm was `()`. Fixed with `let _ =
+    Option.map ...`.
+  - `did you forget to import the standard library FS?`, in a probe.
+- wand s runs until green: 3. The first run of the editor tests had 2
+  failures. One was my expectation: a check shows a warning for a file
+  with no `uses` line. The other was wand #66: `Wand.check_at` could not
+  import `../../std/core` from a new file in `lib/home/ann/`, because that
+  directory did not exist yet. Workaround: the driver makes the directory
+  before the check.
+- A probe before writing the gate: `Checked.effects` is `["Random"]` for
+  the lever and `["FS.Write"]` for a file that writes files. Raise is never
+  in it. The gate is the check plus `effects ⊆ ["Random"]`, with no rewrite
+  of the file's `uses` line.
+- Design changes, each in a comment in the code:
+  - The editor's `input` hook is always set. The design sets it only while
+    lines are text. But ed commands such as `3,5p` are not words that the
+    parser can match to a verb. The driver sends a line that starts with
+    `/` to itself unless the room's `raw` prop is true, so /who and /quit
+    work in the editor.
+  - `Draft path source` is a third action, for `w!`.
+  - `Remove id` is a new action: `q` takes the editor out of the world.
+  - A save of a new blueprint writes driver/blueprints.wand again, or the
+    next start would refuse to run. The code that writes the list moved
+    from tools/blueprints.wand into driver/scan.wand, so the tool and the
+    driver use one copy.
+  - A move to a room that is gone sends a body home.
+- Not done yet: falling back to the last editor that loaded cleanly needs
+  hot reload, and so does the stdlib import allowlist.
+- A real run on a copy of the repo: /edit a new file, `a` with a blank
+  line and an indented line, `,n`, `t`, `w`, /who from inside the editor,
+  and `q`. The file was saved formatted, and the list had the new
+  blueprint. The server then restarted with it.
+- Tests: 106 pass, 3 runs of 3. The 24 editor tests each use a copy of
+  lib/ in a temporary directory.
+
+Easy, and why
+- `Wand.check_at` and `Checked.effects` made the check and the gate about
+  30 lines. Error line numbers are buffer line numbers because the source
+  is checked as typed and formatted only after it passes.
+- The editor as plain steps (State in, Step out) was easy to test through
+  the driver. Each ed command is one match arm.
+- Derived `Outcome.encoder` and `Outcome.decoder`: the driver's answer to
+  the editor is one type in core.wand.
+
+Hard, and why
+- #65. An error with no location in a 270-line file costs as much as any
+  other error in this project. Four small repros written from a guess
+  passed. The one that failed needed the direct `make` call in `_input`,
+  found only by cutting down the real file.
+
+Candidate wand issues
+- #65, #66 and #67, filed today.
+- Later the same day: #65, #66 and #67 were fixed and released in wand
+  0.95.3. The cause of #65: a call to a group member whose body comes later
+  was tied to the part of the caller's effects not yet known, and not to
+  the part already known, so the member came out pure. The `mkdir` before
+  a check and the Bool function for the input hook came out of wmd. The
+  editor keeps its step design, because it is simpler to test.

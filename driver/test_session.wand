@@ -1,4 +1,4 @@
-uses {Clock, Net.Listen, Random, Shared}
+uses {Clock, FS.Read, FS.Write, Net.Listen, Random, Shared}
 
 -- Sessions run with no socket. A handler answers Net!listen with fake
 -- connections, one per name in the script, feeds each its own lines, and

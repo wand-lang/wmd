@@ -85,7 +85,12 @@ type World(
   snapshot_due: Bool = false,
   -- When the input the driver is working on arrived: what `ctx.time` says.
   -- Set on the driver's working copy only; nothing else reads it.
-  now: DateTime = 1970-01-01T00:00:00Z
+  now: DateTime = 1970-01-01T00:00:00Z,
+  -- The mudlib directory, where the editor reads and saves files.
+  lib_root: Path = ./lib,
+  -- The generated list of blueprints, written again when the editor saves
+  -- a new one. None where nothing should be written, as in tests.
+  listing: Option Path = None
 )
 
 let empty =
@@ -136,6 +141,9 @@ let set_made id creator created modified (w: World) =
   match instance id w with
   | Some i -> put Instance(i, creator = creator, created = created, modified = modified) w
   | None -> w
+
+-- Take an object out of the world.
+let remove id (w: World) = World(w, instances = Map.delete (resolve id) w.instances)
 
 let move id dest (w: World) =
   match instance id w with

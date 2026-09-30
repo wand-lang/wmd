@@ -20,6 +20,7 @@ let core = import ../lib/std/core
 let parse = import ./parse
 let password = import ./password
 let snapshot = import ./snapshot
+let files = import ./files
 let world = import ./world
 
 -- Every blueprint the driver can spawn, by path, such as /std/player.
@@ -154,6 +155,23 @@ let _may_move? (ctx: core.Ctx) obj (w: world.World) =
 
 let _from_login? (ctx: core.Ctx) = world.blueprint_of ctx.self == "/std/login"
 
+let editor_bp = "/realm/editor/room"
+
+let _editor? id = world.blueprint_of id == editor_bp
+
+-- Whether the player `body` may edit the file of blueprint path `path`.
+let may_edit? body path (w: world.World) =
+  match world.account_of body w with
+  | Some a -> files.may_edit? a.role a.name path
+  | None -> false
+
+-- Only the editor may check or save a file, and only one its actor may
+-- edit.
+let _may_file (ctx: core.Ctx) path (w: world.World) =
+  if !(_editor? ctx.self) then Error "only %{editor_bp} may check or save a file"
+  else if !(may_edit? ctx.actor path w) then Error "%{ctx.actor} may not edit %{path}"
+  else Ok()
+
 -- Whether `ctx.self` may ask for action `a`, and why not. Every rule on
 -- what mudlib code may do is here, in one place.
 let allowed (ctx: core.Ctx) (a: core.Action) (w: world.World) =
@@ -164,8 +182,12 @@ let allowed (ctx: core.Ctx) (a: core.Action) (w: world.World) =
     else Ok()
   | core.Move obj dest -> (
     let o = world.resolve obj;
+    let d = world.resolve dest;
     if world.session? dest then Error "may not move %{o} into a session"
     else if !(_may_move? ctx o w) then Error "may not move %{o}"
+    -- An editor is private to the one it was opened for.
+    else if _editor? d && Option.and_then (fn (i: world.Instance) -> i.creator) (world.instance d w) != Some o then
+      Error "may not move %{o} into %{d}"
     else Ok()
   )
   | core.Spawn bp _ -> if bp == player_bp || bp == "/std/login" then Error "may not spawn %{bp}"
@@ -175,6 +197,16 @@ let allowed (ctx: core.Ctx) (a: core.Action) (w: world.World) =
   | core.Register _ _ _ -> if _from_login? ctx then Ok()
     else Error "only /std/login may register"
   | core.Hangup _ -> if _from_login? ctx then Ok() else Error "only /std/login may hang up"
+  | core.Remove obj -> (
+    let o = world.resolve obj;
+    if !(o == ctx.self || world.env_of o w == Some ctx.self) then Error "may not remove %{o}"
+    else if player? o || List.any? player? (world.contents o w) then
+      Error "may not remove %{o}: a player is or is in it"
+    else Ok()
+  )
+  | core.Check path _ -> _may_file ctx path w
+  | core.Save path _ -> _may_file ctx path w
+  | core.Draft path _ -> _may_file ctx path w
 
 -- ── Spawning ───────────────────────────────────────────────────────────
 
@@ -243,13 +275,25 @@ and _say (ctx: core.Ctx) text (tx: Tx) =
 -- place left and the place entered hear of it.
 and _move (lib: Lib) (ctx: core.Ctx) obj dest (tx: Tx) =
   let from = world.env_of obj tx.w;
-  let moved = tx |> _ensure lib dest |> change (world.move obj dest);
+  let ensured = _ensure lib dest tx;
+  -- A room that is gone, or cannot be made, is no place to go: a body goes
+  -- home instead, and anything else stays where it is.
+  let target =
+    if Option.some? (world.instance dest ensured.w) then Some dest
+    else if player? obj then Some (home_of obj ensured.w)
+    else None;
+  let moved =
+    match target with
+    | Some t -> ensured |> _ensure lib t |> change (world.move obj t)
+    | None -> ensured;
   let looked = if player? obj then look lib obj moved else moved;
   let left =
     match from with
     | Some f -> _hook lib "leave" f obj ctx.actor looked
     | None -> looked;
-  _hook lib "enter" (world.resolve dest) obj ctx.actor left
+  match target with
+  | Some t -> _hook lib "enter" (world.resolve t) obj ctx.actor left
+  | None -> left
 
 and _act (lib: Lib) (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
   match allowed ctx a tx.w with
@@ -263,7 +307,33 @@ and _act (lib: Lib) (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
     | core.Login sid name typed -> login lib sid name typed tx
     | core.Register sid name typed -> register lib sid name typed tx
     | core.Hangup sid -> change (world.close_soon sid) tx
+    | core.Remove obj -> change (world.remove obj) tx
+    | core.Check path source -> _answer lib ctx (files.check tx.w.lib_root path source) tx
+    | core.Save path source -> _save lib ctx path source tx
+    | core.Draft path source -> _answer lib ctx (files.draft tx.w.lib_root path source) tx
   )
+
+-- Save, and write the list of blueprints again, so a new one loads at
+-- the next start.
+and _save (lib: Lib) (ctx: core.Ctx) path source (tx: Tx) = (
+  let o = files.save tx.w.lib_root path source;
+  let relisted =
+    match (o.ok, tx.w.listing) with
+    | (true, Some out) -> try files.relist! tx.w.lib_root out
+    | _ -> Ok();
+  let logged =
+    match relisted with
+    | Ok _ -> tx
+    | Error why ->
+      _event (world.Event(at = "", event = "fault", actor = ctx.actor, object = Some path, text = Some "listing: %{why}")) tx;
+  logged
+  |> _event (world.Event(at = "", event = if o.ok then "save" else "save_refused", actor = ctx.actor, object = Some path))
+  |> _answer lib ctx o
+)
+
+-- Give the editor the driver's answer, through its `result` verb.
+and _answer (lib: Lib) (ctx: core.Ctx) (o: core.Outcome) (tx: Tx) =
+  verb_with lib ctx.self ctx.actor (core.Parsed(verb = "result", rest = JSON.stringify (core.Outcome.encoder o))) tx
 
 and _apply_actions (lib: Lib) (ctx: core.Ctx) actions (tx: Tx) =
   List.fold_left (fn acc a -> _act lib ctx a acc) tx actions
@@ -288,15 +358,18 @@ and run (lib: Lib) (ctx: core.Ctx) body (tx: Tx) =
     |> _event (world.Event(at = "", event = "fault", actor = ctx.actor, object = Some ctx.self, text = Some why))
 
 -- Run the verb named `name` on `self`, with no arguments.
-and verb (lib: Lib) self actor name (tx: Tx) =
+and verb (lib: Lib) self actor name (tx: Tx) = verb_with lib self actor (core.Parsed(verb = name)) tx
+
+-- Run the verb `p.verb` on `self`, with `p` as its command.
+and verb_with (lib: Lib) self actor (p: core.Parsed) (tx: Tx) =
   match world.instance self tx.w with
   | None -> tx
   | Some i -> (
-    match List.find (fn (v: core.Verb) -> List.any? (fn n -> n == name) v.names) i.object.verbs with
+    match List.find (fn (v: core.Verb) -> List.any? (fn n -> n == p.verb) v.names) i.object.verbs with
     | None -> tx
     | Some v -> (
       let ctx = ctx_for tx.w i.id actor;
-      run lib ctx (fn () -> v.run ctx (core.Parsed(verb = name))) tx
+      run lib ctx (fn () -> v.run ctx p) tx
     )
   )
 
@@ -503,8 +576,70 @@ let _examine body words (w: world.World) = (
   | _ -> world.tell body "You don't see a '%{words}' here." w
 )
 
--- A line from a session that is logged in.
-let _play (lib: Lib) sid body at line (tx: Tx) =
+-- The blueprint path `/edit` names: the room's, an object's by name, or
+-- one written out, as /home/ann/lamp.
+let _edit_target body words (w: world.World) = (
+  let here = room_of body w;
+  if words == "" || words == "here" then Ok (world.blueprint_of here)
+  else if String.starts_with? "/" words then
+    Ok
+      (if String.ends_with? ".wand" words then String.slice 0 (String.length words - 5) words
+      else words)
+  else match parse.resolve w body here (String.words words) with
+    | parse.Found id -> Ok (world.blueprint_of id)
+    | _ -> Error "You don't see a '%{words}' here."
+)
+
+let _editor_state path lines here =
+  JSON.of_map
+    (Map.from_list [
+      ("path", JSON.of_string path),
+      ("lines", JSON.of_list (List.map JSON.of_string lines)),
+      ("cur", JSON.of_int (List.length lines)),
+      ("origin", JSON.of_string here)
+    ])
+
+-- Open the editor on the file of `path` for `body`: a new editor of its
+-- own, or, from inside one, the same editor on another file.
+let _edit (lib: Lib) body words (tx: Tx) =
+  match _edit_target body words tx.w with
+  | Error why -> change (world.tell body why) tx
+  | Ok path -> if !(files.valid? path) then
+      change
+        (world.tell body "'%{path}' is not a mudlib path. One looks like /home/ann/lamp.")
+        tx
+    else if !(may_edit? body path tx.w) then
+      change
+        (world.tell
+          body
+          "You may not edit %{path}. A builder edits the files in /home/<name>/.")
+        tx
+    else (
+      let text = files.read tx.w.lib_root path;
+      let lines =
+        (match text with
+         | Some t -> String.lines t
+         | None -> []);
+      let here = room_of body tx.w;
+      let state = _editor_state path lines here;
+      let opened =
+        if text == None then "%{path} is a new file."
+        else "%{path}: %{List.length lines} lines.";
+      if _editor? here then
+        verb_with lib here body core.Parsed(verb = "open", rest = JSON.stringify state) tx
+      else (
+        let id = "%{editor_bp}#%{world.next_number editor_bp tx.w}";
+        tx
+        |> _create lib id editor_bp (Some state) None
+        |> change (world.set_made id (Some body) (Some tx.at) None)
+        |> _tell_room here body "%{short_of body tx.w} leaves for the editor."
+        |> change (world.tell body opened)
+        |> _move lib (ctx_for tx.w body body) body id
+      )
+    )
+
+-- A command line from a session that is logged in.
+let _command_line (lib: Lib) sid body at line (tx: Tx) =
   if line == "" then tx
   else (
     let full = _expand line;
@@ -532,6 +667,7 @@ let _play (lib: Lib) sid body at line (tx: Tx) =
       | None -> change (_who body) logged
     )
     | "/examine" -> change (_examine body (_after_verb full)) logged
+    | "/edit" -> _edit lib body (_after_verb full) logged
     | "/sethome" -> (
       let room = room_of body tx.w;
       logged
@@ -540,6 +676,38 @@ let _play (lib: Lib) sid body at line (tx: Tx) =
     )
     | _ -> command lib body full logged
   )
+
+-- The input hook of the room `body` is in, when it takes `line`: every
+-- line while the room takes raw text, as the editor does after `a`, and
+-- otherwise every line but a driver command.
+let _input_of body line (w: world.World) =
+  match world.instance (room_of body w) w with
+  | None -> None
+  | Some i -> (
+    match i.object.input with
+    | None -> None
+    | Some f -> (
+      let raw =
+        (match i.object.props with
+         | Some p -> (
+           match Map.get "raw" (p (_seen w body i.id)) with
+           | Some j -> Result.default false (JSON.get_bool j)
+           | None -> false
+         )
+         | None -> false);
+      if raw || !(String.starts_with? "/" (String.trim line)) then Some (i.id, f) else None
+    )
+  )
+
+-- A line from a session that is logged in. A room with an input hook
+-- gets it as typed, spaces and all; anything else is a command.
+let _play (lib: Lib) sid body at line (tx: Tx) =
+  match _input_of body line tx.w with
+  | Some(room, f) -> (
+    let ctx = ctx_for tx.w room body;
+    run lib ctx (fn () -> f ctx line) tx
+  )
+  | None -> _command_line lib sid body at (String.trim line) tx
 
 -- A line from a session that has not logged in goes to /std/login, whole.
 let _to_login (lib: Lib) sid line (tx: Tx) =
@@ -573,7 +741,7 @@ let run_input (lib: Lib) (i: world.Input) (tx: Tx) =
     | Some s -> (
       match s.body with
       | None -> _to_login lib sid line tx
-      | Some body -> _play lib sid body at (String.trim line) tx
+      | Some body -> _play lib sid body at line tx
     )
   )
   | world.Gone sid _ body -> (

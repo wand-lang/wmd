@@ -1,0 +1,325 @@
+uses {Random}
+
+-- The line editor, after ed. Each person who edits gets an instance of
+-- this room: /edit spawns one with the file in it and moves the person in,
+-- and `q` moves them back to where they were and removes the instance.
+--
+-- Every line typed here comes to `input` unparsed, and the commands are
+-- parsed here, so anyone can read how each one works. After `a`, `i` or
+-- `c`, lines are text until a lone `.`. While the editor takes commands,
+-- a line that starts with / goes to the driver, so /who and /quit work.
+
+import JSON
+import List
+import Map
+import Option
+import Regex
+import Result
+import String
+
+let core = import ../../std/core
+
+-- The file, the buffer and the current line. `adding` is the number of
+-- lines above where typed text goes while the editor takes text, and None
+-- while it takes commands. `origin` is the room to go back to.
+type State(
+  path: String = "",
+  lines: List String = [],
+  cur: Int = 0,
+  dirty: Bool = false,
+  adding: Option Int = None,
+  origin: String = ""
+)
+
+let _help = String.join "\n" [
+  "Lines are numbered from 1. A range is n, n,m, . (the current line), $ (the last), or , (all).",
+  "  [range]p      print lines",
+  "  [range]n      print lines with their numbers",
+  "  n             go to line n and print it",
+  "  [n]a          add lines after line n; end with a line that is only .",
+  "  [n]i          add lines before line n; end with .",
+  "  [range]c      change lines: replace them with the lines you type; end with .",
+  "  [range]d      delete lines",
+  "  [range]s/old/new/[g]   replace text: the first on each line, or all with g",
+  "  t             check the file: errors, with line numbers, and its effects",
+  "  w             check and save; the new code runs after the next restart",
+  "  w!            save without a check, to keep unfinished work",
+  "  q             leave; refused while there are unsaved changes",
+  "  Q             leave, and lose unsaved changes"
+]
+
+let _source (s: State) = "%{String.join "\n" s.lines}\n"
+
+-- Lines `from` to `to` of `lines`, counting from 1.
+let _slice from to lines = List.take (to - from + 1) (List.drop (from - 1) lines)
+
+let _without from to lines = List.concat (List.take (from - 1) lines) (List.drop to lines)
+
+let _numbered from lines = List.map (fn (i, l) -> "%{from + i}\t%{l}") (List.indexed lines)
+
+-- The first `old` in `line` as `new`, or every one when `all`.
+let _replace old new all line =
+  if all then String.replace old new line
+  else match String.split old line with
+    | [before :: after] when after != [] -> "%{before}%{new}%{String.join old after}"
+    | _ -> line
+
+-- How many lines differ between two versions of a file.
+let _changed before after =
+  let n =
+    if List.length before > List.length after then List.length before else List.length after;
+  List.length (List.filter (fn i -> List.get i before != List.get i after) (List.range 0 n))
+
+-- ── Addresses ──────────────────────────────────────────────────────────
+
+-- An address part, then the command.
+let _command = r/^(,|([0-9]+|\.|\$)(,([0-9]+|\.|\$))?)?(.*)$/
+
+let _line (s: State) a =
+  match a with
+  | "." -> Ok s.cur
+  | "$" -> Ok (List.length s.lines)
+  | n -> Result.map_error (fn _ -> "'%{n}' is not a line number.") (String.to_int n)
+
+-- The range a command names, or None when it names none.
+let _range (s: State) whole first second =
+  if whole == "," then Ok (Some (1, List.length s.lines))
+  else if first == "" then Ok None
+  else
+    Result.and_then
+      (fn a -> Result.map
+        (fn b -> Some(a, b))
+        (_line s (if second == "" then first else second)))
+      (_line s first)
+
+-- A range of lines that are all in the buffer.
+let _in_buffer (s: State) (from, to) =
+  if List.length s.lines == 0 then Error "The buffer is empty."
+  else if from < 1 || to > List.length s.lines || from > to then
+    Error
+      "There is no line %{if from < 1 || from > List.length s.lines then from else to}; the buffer has %{List.length s.lines}."
+  else Ok(from, to)
+
+-- ── Commands ───────────────────────────────────────────────────────────
+
+-- What a command does: the next state, when there is one, and actions.
+type Step(state: Option State = None, actions: List core.Action = [])
+
+let _tell (ctx: core.Ctx) text = Step(actions = [core.Tell ctx.actor text])
+
+let _to (s: State) (ctx: core.Ctx) text =
+  Step(state = Some s, actions = [core.Tell ctx.actor text])
+
+let _nothing = Step()
+
+let _print (s: State) (ctx: core.Ctx) here numbered =
+  match _in_buffer s here with
+  | Error why -> _tell ctx why
+  | Ok(from, to) -> (
+    let lines = _slice from to s.lines;
+    _to
+      State(s, cur = to)
+      ctx
+      (String.join "\n" (if numbered then _numbered from lines else lines))
+  )
+
+let _substitute (s: State) (ctx: core.Ctx) here cmd =
+  match (_in_buffer s here, Regex.capture r/^s\/([^\/]+)\/([^\/]*)\/(g?)$/ cmd) with
+  | (Error why, _) -> _tell ctx why
+  | (_, [_, old, new, g]) -> (
+    let (from, to) = here;
+    let edited =
+      List.map
+        (fn (i, l) -> if i + 1 >= from && i + 1 <= to then _replace old new (g == "g") l
+          else l)
+        (List.indexed s.lines);
+    let hits =
+      List.filter
+        (fn i -> List.get i edited != List.get i s.lines)
+        (List.range 0 (List.length s.lines));
+    match List.reverse hits with
+    | [] -> _tell ctx "No line has '%{old}'."
+    | [last :: _] ->
+      _to
+        State(s, lines = edited, cur = last + 1, dirty = true)
+        ctx
+        (String.join "\n" (_slice (last + 1) (last + 1) edited))
+  )
+  | _ -> _tell ctx "Write it as s/old/new/ or s/old/new/g."
+
+-- Back to where the editor was opened from. The driver sends the body home
+-- when that room is gone.
+let _quit (s: State) (ctx: core.Ctx) =
+  let name = ctx.world.short_of ctx.actor;
+  Step(
+    actions = List.flatten [
+      [core.Tell ctx.actor "You leave the editor."],
+      List.map
+        (fn p -> core.Tell p "%{name} comes back from the editor.")
+        (List.filter ctx.world.player? (ctx.world.contents s.origin)),
+      [core.Move ctx.actor s.origin, core.Remove ctx.self]
+    ]
+  )
+
+-- The driver's answer to t, w or w!.
+let _result (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+  match JSON.decode core.Outcome.decoder (Result.default JSON.null (JSON.parse p.rest)) with
+  | Error why -> _tell ctx "The driver's answer did not read: %{why}"
+  | Ok o -> (
+    let found =
+      List.map
+        (fn (x: core.Problem) -> "%{if x.severity == "error" then "" else "warning: "}%{x.line}:%{x.col}: %{x.message}")
+        o.problems;
+    let effects = if o.effects == [] then "none" else String.join ", " o.effects;
+    match (o.action, o.ok, o.text) with
+    | ("check", true, _) ->
+      _tell ctx (String.join "\n" (List.concat found ["No errors. Effects: %{effects}."]))
+    | ("check", false, _) -> _tell ctx (String.join "\n" found)
+    | (_, true, Some text) -> (
+      let lines = String.lines text;
+      let changed = _changed s.lines lines;
+      let cur = if s.cur > List.length lines then List.length lines else s.cur;
+      let saved =
+        if o.action == "save" then
+          "Saved %{s.path}: %{List.length lines} lines. It runs after the next restart."
+        else "Saved %{s.path} as a draft, with no check.";
+      _to
+        State(s, lines = lines, cur = cur, dirty = false)
+        ctx
+        (String.join
+          "\n"
+          (List.flatten [
+            found,
+            [saved],
+            if changed == 0 then []
+            else ["Formatting changed %{changed} lines. ,n shows them."]
+          ]))
+    )
+    | _ -> _tell ctx (String.join "\n" (List.concat found ["Not saved."]))
+  )
+
+-- /edit spawns the editor with its state: the file's path and lines, and
+-- the room to go back to.
+let _run (s: State) (ctx: core.Ctx) r cmd = (
+  let here = Option.default (s.cur, s.cur) r;
+  let (from, to) = here;
+  match cmd with
+  | "" -> (
+    match r with
+    | None -> _nothing
+    | Some _ -> (
+      match _in_buffer s (to, to) with
+      | Error why -> _tell ctx why
+      | Ok _ -> _to State(s, cur = to) ctx (String.join "\n" (_slice to to s.lines))
+    )
+  )
+  | "p" -> _print s ctx here false
+  | "n" -> _print s ctx here true
+  | "a" -> if to < 0 || to > List.length s.lines then _tell ctx "There is no line %{to}."
+    else _to State(s, adding = Some to) ctx "Type the lines. End with a line that is only ."
+  | "i" -> (
+    let at = if r == None && s.cur == 0 then 1 else from;
+    if at < 1 || at > List.length s.lines + 1 then _tell ctx "There is no line %{at}."
+    else
+      _to
+        State(s, adding = Some (at - 1))
+        ctx
+        "Type the lines. End with a line that is only ."
+  )
+  | "c" -> (
+    match _in_buffer s here with
+    | Error why -> _tell ctx why
+    | Ok _ ->
+      _to
+        State(s, lines = _without from to s.lines, adding = Some (from - 1), dirty = true)
+        ctx
+        "Type the new lines. End with a line that is only ."
+  )
+  | "d" -> (
+    match _in_buffer s here with
+    | Error why -> _tell ctx why
+    | Ok _ -> (
+      let left = _without from to s.lines;
+      let cur = if from > List.length left then List.length left else from;
+      _to
+        State(s, lines = left, cur = cur, dirty = true)
+        ctx
+        "Deleted %{to - from + 1} lines."
+    )
+  )
+  | "t" -> Step(actions = [core.Check s.path (_source s)])
+  | "w" -> Step(actions = [core.Save s.path (_source s)])
+  | "w!" -> Step(actions = [core.Draft s.path (_source s)])
+  | "q" -> if s.dirty then
+      _tell
+        ctx
+        "You have unsaved changes. Save them with w or w!, or leave without them with Q."
+    else _quit s ctx
+  | "Q" -> _quit s ctx
+  | "h" -> _tell ctx _help
+  | "help" -> _tell ctx _help
+  | _ -> if String.starts_with? "s/" cmd then _substitute s ctx here cmd
+    else _tell ctx "'%{cmd}' is not a command. Type h for help."
+)
+
+let _input (s: State) (ctx: core.Ctx) line =
+  match s.adding with
+  | Some n -> if line == "." then _to State(s, adding = None, cur = n) ctx "%{n}"
+    else Step(
+      state = Some State(
+        s,
+        lines = List.concat (List.take n s.lines) (line :: List.drop n s.lines),
+        adding = Some (n + 1),
+        dirty = true
+      )
+    )
+  | None -> (
+    match Regex.capture _command (String.trim line) with
+    | [_, whole, first, _, second, rest] -> (
+      match _range s whole first second with
+      | Error why -> _tell ctx why
+      | Ok r -> _run s ctx r (String.trim rest)
+    )
+    | _ -> _tell ctx "Type h for help."
+  )
+
+-- /edit from inside the editor: the same editor on another file. The
+-- driver sends the new file's state as JSON in `rest`; the room to go back
+-- to stays the one the editor was first opened from.
+let _open (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+  if s.dirty then
+    _tell
+      ctx
+      "You have unsaved changes. Save them with w or w!, or drop them with Q, then /edit again."
+  else match JSON.decode State.decoder (Result.default JSON.null (JSON.parse p.rest)) with
+    | Error why -> _tell ctx "The driver's answer did not read: %{why}"
+    | Ok next ->
+      _to
+        State(next, origin = s.origin)
+        ctx
+        "Editing %{next.path}: %{List.length next.lines} lines."
+
+-- ── The object ─────────────────────────────────────────────────────────
+
+let make (s: State) =
+  let reply (st: Step) = core.Reply(actions = st.actions, next = Option.map make st.state);
+  core.Object(
+    names = [],
+    short = fn _ -> "The editor",
+    long = fn _ -> "Editing %{s.path}: %{List.length s.lines} lines, at line %{s.cur}. Type h for help.",
+    verbs = [
+      core.Verb(names = ["result"], run = fn ctx p -> reply (_result s ctx p)),
+      core.Verb(names = ["open"], run = fn ctx p -> reply (_open s ctx p))
+    ],
+    props = Some (fn _ -> {
+      path = JSON.of_string s.path,
+      raw = JSON.of_bool (Option.some? s.adding)
+    }),
+    input = Some (fn ctx line -> reply (_input s ctx line)),
+    save = fn () -> State.encoder s
+  )
+
+implement core.Blueprint =
+  let create _ saved = match saved with
+  | None -> core.Init(object = make State())
+  | Some j -> core.Init(object = make (Result.get! (JSON.decode State.decoder j)))

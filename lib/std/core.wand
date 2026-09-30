@@ -84,6 +84,20 @@ type Action =
   | Register ObjId String String
   -- End a session. Only /std/login may ask this.
   | Hangup ObjId
+  -- Take an object out of the world: the object itself, or something it
+  -- holds. A player's body cannot be removed, nor anything that holds one.
+  | Remove ObjId
+  -- Check the source of the mudlib file for a blueprint path, such as
+  -- /home/ann/lamp, without saving it. Only /realm/editor may ask this, and
+  -- only for a file the actor may edit. The driver answers through the
+  -- asking object's `result` verb, with an Outcome as JSON in `rest`.
+  | Check String String
+  -- Format, check and gate the source, and save it when all three pass.
+  -- The same rules and answer as Check.
+  | Save String String
+  -- Save the source as it is, checked or not, to keep unfinished work. It
+  -- is formatted when it parses. The same rules and answer as Check.
+  | Draft String String
 
 -- A command the object answers to. `run` gets the parsed command, with
 -- dobj and iobj already matched to objects.
@@ -114,6 +128,22 @@ type Object(
   input: Option (Ctx -> String -> Reply ! {Random, Raise}) = None,
   -- The state to keep: what `create` gets back as `saved`.
   save: Unit -> JSON
+)
+
+-- One thing a check found, at a line and column of the source.
+-- `severity` is "error" or "warning". Only errors stop a save.
+type Problem(severity: String, line: Int, col: Int, message: String)
+
+-- The driver's answer to Check, Save or Draft. `action` names which.
+-- `effects` is what the source performs, when it checks. `text` is the
+-- source as saved, formatted, when the action saved it.
+type Outcome(
+  action: String,
+  path: String,
+  ok: Bool,
+  problems: List Problem = [],
+  effects: List String = [],
+  text: Option String = None
 )
 
 -- What a verb gives back: actions for the driver, and the next version of

@@ -1,0 +1,121 @@
+uses {FS.Read, FS.Write}
+
+-- Mudlib files by blueprint path: who may edit which, and checking and
+-- saving them for the editor.
+--
+-- A save goes parse, check, gate, format, write. The check reads the
+-- source as typed, so its line numbers are the editor's buffer lines; the
+-- file written is the formatted text.
+
+import FS
+import List
+import Path
+import Regex
+import Result
+import String
+import Wand
+
+let core = import ../lib/std/core
+let scan = import ./scan
+
+-- Lower-case words of letters, digits and _ between slashes, as
+-- /home/ann/lamp. There is no `..`, so a path cannot leave the mudlib.
+let valid? path = Regex.match? r/^(\/[a-z0-9_]+)+$/ path
+
+-- An admin may edit any file. A builder may edit only the files in their
+-- own home, /home/<name>/.
+let may_edit? role name path =
+  valid? path && (role == "admin" || String.starts_with? "/home/%{String.lower name}/" path)
+
+-- The file of a blueprint path under the mudlib root `lib`.
+let file_of (lib: Path) path = Path.join lib (Path.of_string ".%{path}.wand")
+
+-- The effects mudlib code may perform. Raise is not in a check's effects:
+-- a mudlib call that raises is a fault the driver catches.
+let allowed_effects = ["Random"]
+
+let _problem message =
+  core.Problem(severity = "error", line = 1, col = 1, message = message)
+
+let _problems (c: Wand.Checked) =
+  List.map
+    (fn (d: Wand.Diagnostic) -> core.Problem(
+      severity = d.severity,
+      line = d.line,
+      col = d.col,
+      message = d.message
+    ))
+    c.diagnostics
+
+let _errors? problems = List.any? (fn (p: core.Problem) -> p.severity == "error") problems
+
+-- Check `source` as the file of `path` in `lib`, then gate it: a file that
+-- performs any effect but Random is refused, whatever its `uses` line
+-- says.
+let check (lib: Path) path source =
+  match Wand.check_at (file_of lib path) source with
+  | Error why -> core.Outcome(
+    action = "check",
+    path = path,
+    ok = false,
+    problems = [_problem why]
+  )
+  | Ok c -> (
+    let refused =
+      List.filter (fn e -> !(List.any? (fn a -> a == e) allowed_effects)) c.effects;
+    let problems =
+      List.concat
+        (_problems c)
+        (List.map
+          (fn e -> _problem "the file performs %{e}; mudlib code may perform only Random")
+          refused);
+    core.Outcome(
+      action = "check",
+      path = path,
+      ok = !(_errors? problems),
+      problems = problems,
+      effects = c.effects
+    )
+  )
+
+-- Write `text` to the file of `path`, making its directory first.
+let _write (lib: Path) path text =
+  let file = file_of lib path;
+  Result.and_then (fn _ -> FS.write_atomic file text) (FS.mkdir (Path.dirname file))
+
+-- Write driver/blueprints.wand again when the blueprints in `lib` changed,
+-- so the next start loads a new one.
+let relist! (lib: Path) (out: Path) =
+  let text = scan.listing! lib out (scan.blueprints! lib);
+  if FS.exists? out && FS.read_file! out == text then () else FS.write_atomic! out text
+
+-- Check, gate, format and save. Nothing is written unless all pass.
+let save (lib: Path) path source = (
+  let checked = core.Outcome(check lib path source, action = "save");
+  if !checked.ok then checked
+  else match Wand.format source with
+    | Error why -> core.Outcome(checked, ok = false, problems = [_problem why])
+    | Ok text -> (
+      match _write lib path text with
+      | Error why -> core.Outcome(checked, ok = false, problems = [_problem why])
+      | Ok _ -> core.Outcome(checked, text = Some text)
+    )
+)
+
+-- Save as it is, to keep unfinished work: formatted when it parses.
+let draft (lib: Path) path source = (
+  let text = Result.default source (Wand.format source);
+  match _write lib path text with
+  | Error why -> core.Outcome(
+    action = "draft",
+    path = path,
+    ok = false,
+    problems = [_problem why]
+  )
+  | Ok _ -> core.Outcome(action = "draft", path = path, ok = true, text = Some text)
+)
+
+-- The source of the file of `path`, or None when there is no such file.
+let read (lib: Path) path =
+  let file = file_of lib path;
+  if FS.exists? file then Result.to_option (FS.read_file file) else None

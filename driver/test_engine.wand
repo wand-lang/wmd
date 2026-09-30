@@ -1,4 +1,4 @@
-uses {Random, Shared}
+uses {FS.Read, FS.Write, Random, Shared}
 
 -- Commands through the driver and the real mudlib in ../lib, with no
 -- socket: a test changes the world as a session would, then lets the

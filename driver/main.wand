@@ -56,11 +56,24 @@ let _drive (lib: engine.Lib) state path = (
   if world.snapshot_due? (Shared.get state) then _snapshot state path
 )
 
+-- Where the list of blueprints is, when the server runs from the wmd
+-- repo: the editor writes it again when it saves a new blueprint.
+let listing = ./driver/blueprints.wand
+
+-- The world before anything is restored: the pepper, and where the files
+-- are.
+let _start! (o: Opts) =
+  world.World(
+    world.with_pepper (Env.get! "WMD_PEPPER"),
+    lib_root = o.lib,
+    listing = if FS.exists? listing then Some listing else None
+  )
+
 -- The driver looks for input every 20ms: nothing can wait on a Shared for
 -- a change.
 let run! (o: Opts) (lib: engine.Lib) = (
   FS.mkdir! o.logs;
-  with Shared.make (world.with_pepper (Env.get! "WMD_PEPPER")) as state ->
+  with Shared.make (_start! o) as state ->
   -- On the way out, SIGTERM included, the world is saved and the events not
   -- yet written are written. The release runs before the Shared above is
   -- closed, and after the driver loop has stopped.
