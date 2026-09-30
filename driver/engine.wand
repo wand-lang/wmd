@@ -16,15 +16,14 @@ import Result
 import Shared
 import String
 
+import Wand
+
 let core = import ../lib/std/core
 let parse = import ./parse
 let password = import ./password
 let snapshot = import ./snapshot
 let files = import ./files
 let world = import ./world
-
--- Every blueprint the driver can spawn, by path, such as /std/player.
-type Lib = Map core.Blueprint
 
 let login_id = "/std/login#0"
 
@@ -157,6 +156,11 @@ let _from_login? (ctx: core.Ctx) = world.blueprint_of ctx.self == "/std/login"
 
 let editor_bp = "/realm/editor/room"
 
+-- Whether a source claims core.Blueprint, as the files the driver loads do.
+-- A helper, such as std/text.wand, is saved and not loaded.
+let _blueprint? source =
+  List.any? (String.starts_with? "implement core.Blueprint") (String.lines source)
+
 let _editor? id = world.blueprint_of id == editor_bp
 
 -- Whether the player `body` may edit the file of blueprint path `path`.
@@ -213,8 +217,8 @@ let allowed (ctx: core.Ctx) (a: core.Action) (w: world.World) =
 -- Make instance `id` of blueprint `bp` inside `dest`, and apply the actions
 -- its `create` asks for. Nothing happens for a blueprint that is not in
 -- the lib, or a create that raises; the event log says which.
-let _create (lib: Lib) id bp saved dest (tx: Tx) =
-  match Map.get bp lib with
+let _create id bp saved dest (tx: Tx) =
+  match Map.get bp tx.w.lib with
   | None -> _event (world.Event(at = "", event = "refused", actor = id, text = Some "no blueprint %{bp}")) tx
   | Some b -> (
     match _call (fn () -> b.create id saved) with
@@ -224,31 +228,31 @@ let _create (lib: Lib) id bp saved dest (tx: Tx) =
       |> change
         (world.put
           (world.Instance(id = id, blueprint = bp, object = init.object, env = dest, created = Some tx.at)))
-      |> _apply_actions lib (ctx_for tx.w id id) init.actions
+      |> _apply_actions (ctx_for tx.w id id) init.actions
   )
 
 -- Make sure `id` exists: a room named by an exit is spawned the first time
 -- someone goes there.
-and _ensure (lib: Lib) id (tx: Tx) =
+and _ensure id (tx: Tx) =
   let full = world.resolve id;
   if Option.some? (world.instance full tx.w) then tx
-  else _create lib full (world.blueprint_of full) None None tx
+  else _create full (world.blueprint_of full) None None tx
 
 -- A new instance of `bp` in `dest`, made by `actor`'s command.
-and spawn (lib: Lib) bp dest actor (tx: Tx) =
+and spawn bp dest actor (tx: Tx) =
   let id = "%{bp}#%{world.next_number bp tx.w}";
   tx
-  |> _ensure lib dest
-  |> _create lib id bp None (Some (world.resolve dest))
+  |> _ensure dest
+  |> _create id bp None (Some (world.resolve dest))
   |> change (fn w -> world.set_made id (Some actor) (Some tx.at) None w)
   |> _event (world.Event(at = "", event = "spawn", actor = actor, object = Some id))
-  |> _hook lib "enter" dest id actor
+  |> _hook "enter" dest id actor
 
 -- ── Hooks ──────────────────────────────────────────────────────────────
 
 -- Call `container`'s on_enter or on_leave for `mover`. The hook's own
 -- moves call no hooks.
-and _hook (lib: Lib) which container mover actor (tx: Tx) =
+and _hook which container mover actor (tx: Tx) =
   match (tx.hooks, world.instance container tx.w) with
   | (true, Some i) -> (
     let f = if which == "enter" then i.object.on_enter else i.object.on_leave;
@@ -256,7 +260,7 @@ and _hook (lib: Lib) which container mover actor (tx: Tx) =
     | None -> tx
     | Some h -> (
       let ctx = ctx_for tx.w i.id actor;
-      Tx(run lib ctx (fn () -> h ctx mover) Tx(tx, hooks = false), hooks = true)
+      Tx(run ctx (fn () -> h ctx mover) Tx(tx, hooks = false), hooks = true)
     )
   )
   | _ -> tx
@@ -274,9 +278,9 @@ and _say (ctx: core.Ctx) text (tx: Tx) =
 
 -- Move `obj` into `dest`. A player who moves looks around, and then the
 -- place left and the place entered hear of it.
-and _move (lib: Lib) (ctx: core.Ctx) obj dest (tx: Tx) =
+and _move (ctx: core.Ctx) obj dest (tx: Tx) =
   let from = world.env_of obj tx.w;
-  let ensured = _ensure lib dest tx;
+  let ensured = _ensure dest tx;
   -- A room that is gone, or cannot be made, is no place to go: a body goes
   -- home instead, and anything else stays where it is.
   let target =
@@ -285,57 +289,110 @@ and _move (lib: Lib) (ctx: core.Ctx) obj dest (tx: Tx) =
     else None;
   let moved =
     match target with
-    | Some t -> ensured |> _ensure lib t |> change (world.move obj t)
+    | Some t -> ensured |> _ensure t |> change (world.move obj t)
     | None -> ensured;
-  let looked = if player? obj then look lib obj moved else moved;
+  let looked = if player? obj then look obj moved else moved;
   let left =
     match from with
-    | Some f -> _hook lib "leave" f obj ctx.actor looked
+    | Some f -> _hook "leave" f obj ctx.actor looked
     | None -> looked;
   match target with
-  | Some t -> _hook lib "enter" (world.resolve t) obj ctx.actor left
+  | Some t -> _hook "enter" (world.resolve t) obj ctx.actor left
   | None -> left
 
-and _act (lib: Lib) (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
+and _act (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
   match allowed ctx a tx.w with
   | Error why -> _refuse ctx why tx
   | Ok _ -> (
     match a with
     | core.Say text -> _say ctx text tx
     | core.Tell target text -> change (world.tell target text) tx
-    | core.Move obj dest -> _move lib ctx (world.resolve obj) dest tx
-    | core.Spawn bp dest -> spawn lib bp dest ctx.actor tx
-    | core.Login sid name typed -> login lib sid name typed tx
-    | core.Register sid name typed -> register lib sid name typed tx
+    | core.Move obj dest -> _move ctx (world.resolve obj) dest tx
+    | core.Spawn bp dest -> spawn bp dest ctx.actor tx
+    | core.Login sid name typed -> login sid name typed tx
+    | core.Register sid name typed -> register sid name typed tx
     | core.Hangup sid -> change (world.close_soon sid) tx
     | core.Remove obj ->
       tx
       |> change (world.remove obj)
       |> _event (world.Event(at = "", event = "remove", actor = ctx.actor, object = Some (world.resolve obj)))
-    | core.Check path source -> _answer lib ctx (files.check tx.w.lib_root path source) tx
-    | core.Save path source -> _save lib ctx path source tx
-    | core.Draft path source -> _answer lib ctx (files.draft tx.w.lib_root path source) tx
+    | core.Check path source -> _answer ctx (files.check tx.w.lib_root path source) tx
+    | core.Save path source -> _save ctx path source tx
+    | core.Draft path source -> _answer ctx (files.draft tx.w.lib_root path source) tx
   )
 
 -- Save, and write the list of blueprints again, so a new one loads at
 -- the next start.
-and _save (lib: Lib) (ctx: core.Ctx) path source (tx: Tx) = (
+-- A save that passes loads the new code at once, as /update does.
+and _save (ctx: core.Ctx) path source (tx: Tx) =
   let o = files.save tx.w.lib_root path source;
-  let relisted =
-    match (o.ok, tx.w.listing) with
-    | (true, Some out) -> try files.relist! tx.w.lib_root out
-    | _ -> Ok();
-  let logged =
-    match relisted with
-    | Ok _ -> tx
-    | Error why ->
-      _event (world.Event(at = "", event = "fault", actor = ctx.actor, object = Some path, text = Some "listing: %{why}")) tx;
-  _answer lib ctx o logged
-)
+  let answered = _answer ctx o tx;
+  if o.ok && _blueprint? source then update ctx.actor path answered else answered
+
+-- Load the file of `path` again, and move every instance of it onto the
+-- new code: the old `save` gives each one's state, and the new `create`
+-- takes it. An instance whose state the new code cannot read stays on the
+-- old code and is named. A file that does not load changes nothing.
+and update actor path (tx: Tx) =
+  match Wand.load core.Blueprint.loader (files.file_of tx.w.lib_root path) with
+  | Error why ->
+    tx
+    |> _event (world.Event(at = "", event = "update_refused", actor = actor, object = Some path, text = Some why))
+    |> change (world.tell actor "%{path} was not updated: %{why}")
+  | Ok b -> (
+    let before = if path == editor_bp then Map.get path tx.w.lib else tx.w.editor_before;
+    let tx = change (fn w -> world.World(w, editor_before = before)) tx;
+    let (moved, kept) =
+      List.fold_left
+        (fn (acc, kept) id -> match world.instance id acc.w with
+          | None -> (acc, kept)
+          | Some i -> (
+            match _call (fn () -> b.create id (Some (i.object.save ()))) with
+            | Ok init -> (change (world.set_object id init.object tx.at) acc, kept)
+            | Error _ -> (acc, List.concat kept [id])
+          ))
+        (change (world.set_blueprint path b) tx, [])
+        (world.instances_of path tx.w);
+    let n = List.length (world.instances_of path tx.w) - List.length kept;
+    let told =
+      if kept == [] then "Updated %{path}: %{n} instances on the new code."
+      else "Updated %{path}: %{n} instances on the new code. Kept on the old code, because the new code cannot read their saved state: %{String.join ", " kept}. Fix the file and /update it again, or /reset them.";
+    moved
+    |> _event (world.Event(at = "", event = "update", actor = actor, object = Some path, text = Some "%{n} moved, %{List.length kept} kept"))
+    |> change (world.tell actor told)
+  )
+
+-- Make instances again as `create` makes a new one, and apply its starting
+-- actions again. Each keeps its id, its place and who made it. A body
+-- keeps its name, which is its account's.
+and reset actor ids (tx: Tx) =
+  List.fold_left
+    (fn acc id -> match world.instance id acc.w with
+      | None -> acc
+      | Some i -> (
+        match Map.get i.blueprint acc.w.lib with
+        | None -> change (world.tell actor "%{id} has no blueprint loaded.") acc
+        | Some b -> (
+          let saved =
+            match world.account_of id acc.w with
+            | Some a -> Some (JSON.of_map (Map.from_list [("name", JSON.of_string a.name)]))
+            | None -> None;
+          match _call (fn () -> b.create id saved) with
+          | Error why -> change (world.tell actor "%{id} was not reset: %{why}") acc
+          | Ok init ->
+            acc
+            |> change (world.set_object id init.object tx.at)
+            |> _apply_actions (ctx_for acc.w id id) init.actions
+            |> _event (world.Event(at = "", event = "reset", actor = actor, object = Some id))
+            |> change (world.tell actor "Reset %{id}.")
+        )
+      ))
+    tx
+    ids
 
 -- Log the driver's answer to a check or a save, with the errors or the
 -- effects, and give it to the editor through its `result` verb.
-and _answer (lib: Lib) (ctx: core.Ctx) (o: core.Outcome) (tx: Tx) =
+and _answer (ctx: core.Ctx) (o: core.Outcome) (tx: Tx) =
   let errors =
     List.map
       (fn (p: core.Problem) -> "%{p.line}:%{p.col}: %{p.message}")
@@ -352,35 +409,51 @@ and _answer (lib: Lib) (ctx: core.Ctx) (o: core.Outcome) (tx: Tx) =
       object = Some o.path,
       text = Some found
     ))
-  |> verb_with lib ctx.self ctx.actor (core.Parsed(verb = "result", rest = JSON.stringify (core.Outcome.encoder o)))
+  |> verb_with ctx.self ctx.actor (core.Parsed(verb = "result", rest = JSON.stringify (core.Outcome.encoder o)))
 
-and _apply_actions (lib: Lib) (ctx: core.Ctx) actions (tx: Tx) =
-  List.fold_left (fn acc a -> _act lib ctx a acc) tx actions
+and _apply_actions (ctx: core.Ctx) actions (tx: Tx) =
+  List.fold_left (fn acc a -> _act ctx a acc) tx actions
 
 -- Apply what a call on `ctx.self` gave back.
-and apply (lib: Lib) (ctx: core.Ctx) (r: core.Reply) (tx: Tx) = (
+and apply (ctx: core.Ctx) (r: core.Reply) (tx: Tx) = (
   let kept =
     match r.next with
     | Some o -> change (world.set_object ctx.self o tx.at) tx
     | None -> tx;
-  _apply_actions lib ctx r.actions kept
+  _apply_actions ctx r.actions kept
 )
 
 -- Run a reply-giving mudlib call, and apply its reply. A raise is a fault:
 -- the actor is told, and the event log keeps why.
-and run (lib: Lib) (ctx: core.Ctx) body (tx: Tx) =
+and run (ctx: core.Ctx) body (tx: Tx) =
   match _call body with
-  | Ok r -> apply lib ctx r tx
+  | Ok r -> apply ctx r tx
   | Error why ->
     tx
     |> change (world.tell ctx.actor "Something went wrong with %{short_of ctx.self tx.w}.")
     |> _event (world.Event(at = "", event = "fault", actor = ctx.actor, object = Some ctx.self, text = Some why))
+    |> _fall_back ctx.self ctx.actor
+
+-- An editor that faults goes back to the editor before the last /update
+-- of it, so a bad update of the editor can be fixed with the editor.
+and _fall_back self actor (tx: Tx) =
+  match (_editor? self, tx.w.editor_before, world.instance self tx.w) with
+  | (true, Some b, Some i) -> (
+    match _call (fn () -> b.create i.id (Some (i.object.save ()))) with
+    | Ok init ->
+      tx
+      |> change (world.set_blueprint editor_bp b)
+      |> change (world.set_object i.id init.object tx.at)
+      |> change (world.tell actor "The editor is back on its version from before the last /update of it.")
+    | Error _ -> tx
+  )
+  | _ -> tx
 
 -- Run the verb named `name` on `self`, with no arguments.
-and verb (lib: Lib) self actor name (tx: Tx) = verb_with lib self actor (core.Parsed(verb = name)) tx
+and verb self actor name (tx: Tx) = verb_with self actor (core.Parsed(verb = name)) tx
 
 -- Run the verb `p.verb` on `self`, with `p` as its command.
-and verb_with (lib: Lib) self actor (p: core.Parsed) (tx: Tx) =
+and verb_with self actor (p: core.Parsed) (tx: Tx) =
   match world.instance self tx.w with
   | None -> tx
   | Some i -> (
@@ -388,11 +461,11 @@ and verb_with (lib: Lib) self actor (p: core.Parsed) (tx: Tx) =
     | None -> tx
     | Some v -> (
       let ctx = ctx_for tx.w i.id actor;
-      run lib ctx (fn () -> v.run ctx p) tx
+      run ctx (fn () -> v.run ctx p) tx
     )
   )
 
-and look (lib: Lib) body (tx: Tx) = verb lib body body "look" tx
+and look body (tx: Tx) = verb body body "look" tx
 
 -- ── Login ──────────────────────────────────────────────────────────────
 
@@ -400,12 +473,12 @@ and look (lib: Lib) body (tx: Tx) = verb lib body body "look" tx
 -- the first time.
 -- Log a session in, when the password is the account's. A wrong one is
 -- logged, with the name tried and never the password.
-and login (lib: Lib) sid name typed (tx: Tx) =
+and login sid name typed (tx: Tx) =
   match world.account name tx.w with
   | Some acct when password.matches? tx.w.pepper acct.password typed ->
     if Option.some? (world.session_of acct.body tx.w) then
       change (world.tell sid "%{acct.name} is here already. What is your name?") tx
-    else _wake lib sid acct.name acct.body "%{acct.name} wakes up." tx
+    else _wake sid acct.name acct.body "%{acct.name} wakes up." tx
   | _ ->
     tx
     |> _event (world.Event(at = "", event = "login_failed", actor = sid, name = Some name))
@@ -413,7 +486,7 @@ and login (lib: Lib) sid name typed (tx: Tx) =
 
 -- Make an account and its body. The password is kept only as its hash,
 -- with a salt made for it and the server's pepper.
-and register (lib: Lib) sid name typed (tx: Tx) =
+and register sid name typed (tx: Tx) =
   if Option.some? (world.account name tx.w) then
     change (world.tell sid "%{name} was taken just now. What is your name?") tx
   else (
@@ -421,22 +494,22 @@ and register (lib: Lib) sid name typed (tx: Tx) =
     let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
     let hashed = password.hash tx.w.pepper (Random.hex 32) typed;
     tx
-    |> _ensure lib arrival
-    |> _create lib body player_bp (Some saved) (Some arrival)
+    |> _ensure arrival
+    |> _create body player_bp (Some saved) (Some arrival)
     |> change (world.add_account (world.Account(name = name, body = body, password = hashed)))
-    |> _hook lib "enter" arrival body body
+    |> _hook "enter" arrival body body
     |> _event (world.Event(at = "", event = "signup", actor = sid, name = Some name, object = Some body))
-    |> _wake lib sid name body "%{name} arrives."
+    |> _wake sid name body "%{name} arrives."
   )
 
-and _wake (lib: Lib) sid name body news (tx: Tx) =
+and _wake sid name body news (tx: Tx) =
   tx
   |> change (world.attach sid body)
-  |> verb lib login_id sid "done"
+  |> verb login_id sid "done"
   |> _event (world.Event(at = "", event = "login", actor = sid, name = Some name, object = Some body))
   |> change (world.tell body "Hello, %{name}.")
   |> _tell_room (room_of body tx.w) body news
-  |> look lib body
+  |> look body
 
 and _tell_room room except text (tx: Tx) =
   List.fold_left
@@ -496,7 +569,7 @@ let _list o =
   | None -> []
 
 -- Match a line to a verb and run it. A bare exit name is `go` that way.
-let command (lib: Lib) body line (tx: Tx) = (
+let command body line (tx: Tx) = (
   let here = room_of body tx.w;
   let verb = String.lower (Option.default "" (String.word 0 line));
   let rest = String.trim (String.slice (String.length verb) (String.length line) line);
@@ -517,11 +590,11 @@ let command (lib: Lib) body line (tx: Tx) = (
         iobj = parse.found_id iobj,
         rest = rest
       );
-    run lib ctx (fn () -> v.run ctx parsed) tx
+    run ctx (fn () -> v.run ctx parsed) tx
   )
   | None -> (
     match world.instance here tx.w with
-    | Some r when Map.has? verb r.object.exits -> command lib body "go %{verb}" tx
+    | Some r when Map.has? verb r.object.exits -> command body "go %{verb}" tx
     | _ -> change (world.tell body (_unmatched tx.w verb dobj)) tx
   )
 )
@@ -620,7 +693,7 @@ let _editor_state path lines here =
 
 -- Open the editor on the file of `path` for `body`: a new editor of its
 -- own, or, from inside one, the same editor on another file.
-let _edit (lib: Lib) body words (tx: Tx) =
+let _edit body words (tx: Tx) =
   match _edit_target body words tx.w with
   | Error why -> change (world.tell body why) tx
   | Ok path -> if !(files.valid? path) then
@@ -645,11 +718,11 @@ let _edit (lib: Lib) body words (tx: Tx) =
         if text == None then "%{path} is a new file."
         else "%{path}: %{List.length lines} lines.";
       if _editor? here then
-        verb_with lib here body core.Parsed(verb = "open", rest = JSON.stringify state) tx
+        verb_with here body core.Parsed(verb = "open", rest = JSON.stringify state) tx
       else (
         let id = "%{editor_bp}#%{world.next_number editor_bp tx.w}";
         tx
-        |> _create lib id editor_bp (Some state) None
+        |> _create id editor_bp (Some state) None
         |> change (world.set_made id (Some body) (Some tx.at) None)
         |> _event world.Event(
           at = "",
@@ -660,12 +733,55 @@ let _edit (lib: Lib) body words (tx: Tx) =
         )
         |> _tell_room here body "%{short_of body tx.w} leaves for the editor."
         |> change (world.tell body opened)
-        |> _move lib (ctx_for tx.w body body) body id
+        |> _move (ctx_for tx.w body body) body id
       )
     )
 
+-- /update: load a file's new code, for a blueprint the player may edit.
+let _update body words (tx: Tx) =
+  match _edit_target body words tx.w with
+  | Error why -> change (world.tell body why) tx
+  | Ok path -> if !(files.valid? path) then
+      change (world.tell body "'%{path}' is not a mudlib path.") tx
+    else if !(may_edit? body path tx.w) then
+      change (world.tell body "You may not update %{path}.") tx
+    else update body path tx
+
+-- The instances /reset names: here, me, an object by name, an instance id,
+-- or a blueprint path for every instance of it.
+let _reset_targets body words (w: world.World) = (
+  let here = room_of body w;
+  if words == "" then Error "Reset what? Name an object, here, me, or a path."
+  else if words == "here" then Ok [here]
+  else if words == "me" then Ok [body]
+  else if String.starts_with? "/" words then
+    if String.contains? "#" words then
+      if Option.some? (world.instance words w) then Ok [words]
+      else Error "There is no %{words}."
+    else Ok (world.instances_of words w)
+  else match parse.resolve w body here (String.words words) with
+    | parse.Found id -> Ok [id]
+    | _ -> Error "You don't see a '%{words}' here."
+)
+
+-- /reset: an instance whose blueprint the player may edit, or their own
+-- body.
+let _reset body words (tx: Tx) =
+  match _reset_targets body words tx.w with
+  | Error why -> change (world.tell body why) tx
+  | Ok [] -> change (world.tell body "There is nothing to reset.") tx
+  | Ok ids -> (
+    let refused =
+      List.filter
+        (fn id -> id != body && !(may_edit? body (world.blueprint_of id) tx.w))
+        ids;
+    if refused != [] then
+      change (world.tell body "You may not reset %{String.join ", " refused}.") tx
+    else reset body ids tx
+  )
+
 -- A command line from a session that is logged in.
-let _command_line (lib: Lib) sid body at line (tx: Tx) =
+let _command_line sid body at line (tx: Tx) =
   if line == "" then tx
   else (
     let full = _expand line;
@@ -693,14 +809,16 @@ let _command_line (lib: Lib) sid body at line (tx: Tx) =
       | None -> change (_who body) logged
     )
     | "/examine" -> change (_examine body (_after_verb full)) logged
-    | "/edit" -> _edit lib body (_after_verb full) logged
+    | "/edit" -> _edit body (_after_verb full) logged
+    | "/update" -> _update body (_after_verb full) logged
+    | "/reset" -> _reset body (_after_verb full) logged
     | "/sethome" -> (
       let room = room_of body tx.w;
       logged
       |> change (world.set_home body room)
       |> change (world.tell body "%{short_of room tx.w} is your home now.")
     )
-    | _ -> command lib body full logged
+    | _ -> command body full logged
   )
 
 -- The input hook of the room `body` is in, when it takes `line`: every
@@ -727,16 +845,13 @@ let _input_of body line (w: world.World) =
 
 -- A line from a session that is logged in. A room with an input hook
 -- gets it as typed, spaces and all; anything else is a command.
-let _play (lib: Lib) sid body at line (tx: Tx) =
+let _play sid body at line (tx: Tx) =
   match _input_of body line tx.w with
-  | Some(room, f) -> (
-    let ctx = ctx_for tx.w room body;
-    run lib ctx (fn () -> f ctx line) tx
-  )
-  | None -> _command_line lib sid body at (String.trim line) tx
+  | Some(room, f) -> (let ctx = ctx_for tx.w room body; run ctx (fn () -> f ctx line) tx)
+  | None -> _command_line sid body at (String.trim line) tx
 
 -- A line from a session that has not logged in goes to /std/login, whole.
-let _to_login (lib: Lib) sid line (tx: Tx) =
+let _to_login sid line (tx: Tx) =
   match world.instance login_id tx.w with
   | None -> tx
   | Some i -> (
@@ -751,13 +866,13 @@ let _to_login (lib: Lib) sid line (tx: Tx) =
           world = view tx.w sid,
           time = tx.w.now
         );
-      run lib ctx (fn () -> f ctx line) tx
+      run ctx (fn () -> f ctx line) tx
     )
   )
 
-let run_input (lib: Lib) (i: world.Input) (tx: Tx) =
+let run_input (i: world.Input) (tx: Tx) =
   match i with
-  | world.Connect sid _ -> verb lib login_id sid "connect" tx
+  | world.Connect sid _ -> verb login_id sid "connect" tx
   | world.Line sid at line -> (
     match world.session sid tx.w with
     | None -> tx
@@ -766,8 +881,8 @@ let run_input (lib: Lib) (i: world.Input) (tx: Tx) =
     | Some s when s.closing -> tx
     | Some s -> (
       match s.body with
-      | None -> _to_login lib sid line tx
-      | Some body -> _play lib sid body at line tx
+      | None -> _to_login sid line tx
+      | Some body -> _play sid body at line tx
     )
   )
   | world.Gone sid _ body -> (
@@ -776,24 +891,24 @@ let run_input (lib: Lib) (i: world.Input) (tx: Tx) =
       tx
       |> _tell_room (room_of b tx.w) b "%{short_of b tx.w} falls asleep."
       |> change (world.seen b tx.at)
-    | None -> verb lib login_id sid "done" tx
+    | None -> verb login_id sid "done" tx
   )
 
 -- ── The loop ───────────────────────────────────────────────────────────
 
 -- The rooms and services that exist before anyone connects.
-let boot (lib: Lib) state at =
-  let tx = begin (Shared.get state) at |> _ensure lib login_id |> _ensure lib arrival;
+let boot state at =
+  let tx = begin (Shared.get state) at |> _ensure login_id |> _ensure arrival;
   Shared.update state (commit tx)
 
 -- Take every queued input, in order. Each is applied in its own update,
 -- and taken off the queue in the same update, so a session can see when
 -- the driver has finished with everything it sent.
-let step (lib: Lib) state =
+let step state =
   let (w: world.World) = Shared.get state;
   List.each
     (fn i ->
-      let tx = run_input lib i (begin (Shared.get state) (world.at_of i));
+      let tx = run_input i (begin (Shared.get state) (world.at_of i));
       Shared.update state (fn cur -> world.dequeued 1 (commit tx cur)))
     w.inputs
 
@@ -830,7 +945,7 @@ let snapshot! state path at = (
 
 -- Bring back what a snapshot kept: the accounts, then every object, made
 -- again by its blueprint's `create` from its saved state.
-let restore (lib: Lib) state (f: snapshot.File) at =
+let restore state (f: snapshot.File) at =
   let accounts =
     List.fold_left
       (fn t (a: world.Account) -> change (world.add_account a) t)
@@ -839,7 +954,7 @@ let restore (lib: Lib) state (f: snapshot.File) at =
   let tx =
     List.fold_left
       (fn t (s: snapshot.Saved) -> t
-      |> _create lib s.id s.blueprint (Some s.state) s.env
+      |> _create s.id s.blueprint (Some s.state) s.env
       |> change (world.set_made s.id s.creator s.created s.modified)
       |> change (world.keep_saved s.id s.state))
       accounts
@@ -848,15 +963,15 @@ let restore (lib: Lib) state (f: snapshot.File) at =
 
 -- Make an account and its body in the arrival room, with no session: how
 -- `wmd init` makes the first admin.
-let make_account (lib: Lib) state name typed role at =
+let make_account state name typed role at =
   let t = begin (Shared.get state) at;
   let body = "%{player_bp}#%{world.next_number player_bp t.w}";
   let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
   let hashed = password.hash t.w.pepper (Random.hex 32) typed;
   let tx =
     t
-    |> _ensure lib arrival
-    |> _create lib body player_bp (Some saved) (Some arrival)
+    |> _ensure arrival
+    |> _create body player_bp (Some saved) (Some arrival)
     |> change
       (world.add_account world.Account(
         name = name,

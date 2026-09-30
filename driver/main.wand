@@ -15,7 +15,7 @@ import Shared
 
 let engine = import ./engine
 let log = import ./log
-let scan = import ./scan
+let mudlib = import ./mudlib
 let session = import ./session
 let snapshot = import ./snapshot
 let world = import ./world
@@ -31,14 +31,10 @@ type Opts(
 let _now () = "%{Clock.now ()}"
 
 -- Why the server must not start, if it must not. A missing mudlib is an
--- error rather than an empty world, so a typo in the path shows. A list of
--- blueprints that no longer matches the files would run old code. And
+-- error rather than an empty world, so a typo in the path shows. And
 -- without the pepper no password can be checked or kept.
-let problem! (o: Opts) paths =
+let problem (o: Opts) =
   if !(FS.dir? o.lib) then Some "no mudlib at %{o.lib}; run wmd init to make a world"
-  else if List.map (fn (b: scan.Blueprint) -> b.path) (scan.blueprints! o.lib) != paths then
-    Some
-      "the blueprints in %{o.lib} changed; run: wand tools/blueprints.wand --lib %{o.lib}"
   else if Env.get "WMD_PEPPER" == None then
     Some "WMD_PEPPER is not set; it is the secret every password is hashed with"
   else None
@@ -51,27 +47,26 @@ let _snapshot state path =
   | Ok _ -> ()
   | Error why -> IO.println_err "wmd: snapshot to %{path} failed: %{why}"
 
-let _drive (lib: engine.Lib) state path = (
-  engine.step lib state;
+let _drive state path = (
+  engine.step state;
   if world.snapshot_due? (Shared.get state) then _snapshot state path
 )
 
--- Where the list of blueprints is, when the server runs from the wmd
--- repo: the editor writes it again when it saves a new blueprint.
-let listing = ./driver/blueprints.wand
-
--- The world before anything is restored: the pepper, and where the files
--- are.
-let _start! (o: Opts) =
-  world.World(
-    world.with_pepper (Env.get! "WMD_PEPPER"),
-    lib_root = o.lib,
-    listing = if FS.exists? listing then Some listing else None
-  )
+-- The world before anything is restored: the pepper, the mudlib and where
+-- its files are. A file that does not load is left out and said, and the
+-- rest of the world starts: a builder's broken file does not stop the
+-- server.
+let _start! (o: Opts) = (
+  let loaded = mudlib.load_all! o.lib;
+  List.each
+    (fn (path, why) -> IO.println_err "wmd: %{path} did not load: %{why}")
+    loaded.failed;
+  world.World(world.with_pepper (Env.get! "WMD_PEPPER"), lib_root = o.lib, lib = loaded.lib)
+)
 
 -- The driver looks for input every 20ms: nothing can wait on a Shared for
 -- a change.
-let run! (o: Opts) (lib: engine.Lib) = (
+let run! (o: Opts) = (
   FS.mkdir! o.logs;
   with Shared.make (_start! o) as state ->
   -- On the way out, SIGTERM included, the world is saved and the events not
@@ -82,14 +77,14 @@ let run! (o: Opts) (lib: engine.Lib) = (
     (fn () -> (_snapshot state o.world; log.flush! state o.logs)) as _ -> (
     (
       match snapshot.read! o.world with
-      | Some f -> (let _ = engine.restore lib state f (_now ()); ())
+      | Some f -> (let _ = engine.restore state f (_now ()); ())
       | None -> ()
     );
-    engine.boot lib state (_now ());
+    engine.boot state (_now ());
     IO.println "wmd listening on %{o.port}, world in %{o.world}, logging to %{o.logs}";
     Par.all! [
       fn () -> Net.listen o.port |> Par.each_stream 256 (session.serve state),
-      fn () -> Clock.every 20ms (fn () -> _drive lib state o.world),
+      fn () -> Clock.every 20ms (fn () -> _drive state o.world),
       fn () -> Clock.every 60s (fn () -> Shared.update state world.snapshot_due),
       fn () -> Clock.every 1s (fn () -> log.flush! state o.logs)
     ]

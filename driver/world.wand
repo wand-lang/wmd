@@ -88,9 +88,12 @@ type World(
   now: DateTime = 1970-01-01T00:00:00Z,
   -- The mudlib directory, where the editor reads and saves files.
   lib_root: Path = ./lib,
-  -- The generated list of blueprints, written again when the editor saves
-  -- a new one. None where nothing should be written, as in tests.
-  listing: Option Path = None
+  -- Every blueprint the driver can spawn, by path, such as /std/player:
+  -- each file's module, as loaded at start or by /update since.
+  lib: Map core.Blueprint = {},
+  -- The editor as it was before the last /update of it, for an editor that
+  -- faults on its new code to go back to.
+  editor_before: Option core.Blueprint = None
 )
 
 let empty =
@@ -141,6 +144,15 @@ let set_made id creator created modified (w: World) =
   match instance id w with
   | Some i -> put Instance(i, creator = creator, created = created, modified = modified) w
   | None -> w
+
+-- The instances of blueprint `bp`, by id.
+let instances_of bp (w: World) =
+  List.map
+    (fn (i: Instance) -> i.id)
+    (List.filter (fn (i: Instance) -> i.blueprint == bp) (Map.values w.instances))
+
+-- Use `b` for blueprint `path` from now on.
+let set_blueprint path (b: core.Blueprint) (w: World) = World(w, lib = Map.set path b w.lib)
 
 -- Take an object out of the world.
 let remove id (w: World) = World(w, instances = Map.delete (resolve id) w.instances)

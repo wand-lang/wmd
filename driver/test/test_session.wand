@@ -15,10 +15,14 @@ import Shared
 import String
 
 let {test, group} = import Test
-let blueprints = import ../blueprints
+let mudlib = import ../mudlib
 let engine = import ../engine
 let session = import ../session
 let world = import ../world
+
+-- A new world, with the mudlib in lib/ loaded and passwords hashed with a
+-- test pepper.
+let start = world.World(world.with_pepper "test pepper", lib = (mudlib.load_all! ./lib).lib)
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -32,16 +36,16 @@ let _lines text = List.filter (fn l -> l != "") (String.split "\r\n" text)
 -- connection has ended.
 let _serve! state = Par.all! [
   fn () -> Net.listen :4000 |> Par.each_stream 8 (session.serve state),
-  fn () -> Clock.every 10ms (fn () -> engine.step blueprints.lib state)
+  fn () -> Clock.every 10ms (fn () -> engine.step state)
 ]
 
 -- Serve one fake connection per script. `write_ok` false makes every write
 -- fail, as when the other end has gone.
 let run! scripts write_ok =
-  with Shared.make (world.with_pepper "test pepper") as state ->
+  with Shared.make start as state ->
   with Shared.make scripts as input ->
   with Shared.make Map.empty as sent -> (
-    engine.boot blueprints.lib state at;
+    engine.boot state at;
     handle _serve! state with
     | Net!listen _ k -> k (Map.keys scripts)
     | Net!read_line conn k -> (
@@ -107,8 +111,8 @@ group "two sessions" (fn () -> [
 -- the writer can see that the connection is gone. If it did not end the
 -- session, this would never finish, so a deadline guards it.
 let dropped! () =
-  with Shared.make (world.with_pepper "test pepper") as state -> (
-    engine.boot blueprints.lib state at;
+  with Shared.make start as state -> (
+    engine.boot state at;
     let _ =
       Par.timeout 5s (fn () ->
         handle _serve! state with

@@ -6,13 +6,16 @@ uses {FS.Read, FS.Write, Random, Shared}
 
 import FS
 import List
+import Map
 import Option
 import Path
+import Resource
+import Result
 import Shared
 import String
 
 let {test, group} = import Test
-let blueprints = import ../blueprints
+let mudlib = import ../mudlib
 let core = import ../../lib/std/core
 let engine = import ../engine
 let snapshot = import ../snapshot
@@ -63,52 +66,68 @@ let heard sid (w: world.World) =
 
 let heard? sid text (w: world.World) = List.any? (fn l -> l == text) (heard sid w)
 
--- Play `changes` on a copy of the mudlib, then give `check` the world and
--- the copy's root.
-let on_copy! changes check =
-  with FS.temp_dir "wmd_ed_" as d -> (
-    let lib = Path.join d ./lib;
-    FS.copy_tree! ./lib lib;
-    let start =
-      world.World(
-        world.with_pepper "test pepper",
-        lib_root = lib,
-        listing = Some (Path.join d ./blueprints.wand)
-      );
-    with Shared.make start as state -> (
-      engine.boot blueprints.lib state at;
-      List.each (fn f -> (Shared.update state f; engine.step blueprints.lib state)) changes;
-      check (Shared.get state) lib
-    )
+-- The mudlib, loaded once. It is the real lib/, because a file loads only
+-- when it imports the driver's own std/core.wand: a copy of lib/ would
+-- declare another core.Blueprint.
+let loaded = (mudlib.load_all! ./lib).lib
+
+-- Ann's home, where a test saves. It must not exist before a test, and
+-- it is removed after one, so the mudlib is left as it was found.
+let home = ./lib/home/ann
+
+let _clean () = (
+  let _ = FS.delete_tree home;
+  match FS.list_dir ./lib/home with
+  | Ok [] -> (let _ = FS.delete_tree ./lib/home; ())
+  | _ -> ()
+)
+
+-- `on_lib!`, for a test that changes files outside Ann's home: each of
+-- `kept` is read first and written back after.
+let keeping! kept changes check =
+  let before = List.map (fn f -> (f, FS.read_file! f)) kept;
+  with Resource.make (fn () -> ()) (fn () -> List.each (fn (f, text) -> FS.write_file! f text) before) as _ ->
+  on_lib! changes check
+
+-- Play `changes` on the mudlib, then give `check` the world and the
+-- mudlib's root.
+and on_lib! changes check =
+  if FS.exists? home then
+    Result.get! (Error "%{home} exists: the editor tests save there, and remove it after")
+  else with Resource.make (fn () -> ()) (fn () -> _clean ()) as _ ->
+  with Shared.make world.World(world.with_pepper "test pepper", lib = loaded) as state -> (
+    engine.boot state at;
+    List.each (fn f -> (Shared.update state f; engine.step state)) changes;
+    check (Shared.get state) ./lib
   )
 
 let lamp lib = Path.join lib ./home/ann/lamp.wand
 
 group "opening" (fn () -> [
   test "a builder may not edit outside their home" (fn t ->
-    on_copy! (List.concat ann_in [line ann "/edit /realm/commons/garden"]) (fn w _ ->
+    on_lib! (List.concat ann_in [line ann "/edit /realm/commons/garden"]) (fn w _ ->
       t.eq
         [
           "You may not edit /realm/commons/garden. A builder edits the files in /home/<name>/."
         ]
         (heard ann w))),
   test "a path that is not a mudlib path" (fn t ->
-    on_copy! (List.concat ann_in [line ann "/edit /home/ann/../../std/core"]) (fn w _ ->
+    on_lib! (List.concat ann_in [line ann "/edit /home/ann/../../std/core"]) (fn w _ ->
       t.eq
         ["'/home/ann/../../std/core' is not a mudlib path. One looks like /home/ann/lamp."]
         (heard ann w))),
   test "a new file in your home opens the editor, and the room sees you go" (fn t ->
-    on_copy! (List.concat both_in [line ann "/edit /home/ann/lamp"]) (fn w _ ->
+    on_lib! (List.concat both_in [line ann "/edit /home/ann/lamp"]) (fn w _ ->
       t.eq (true, Some editor, true) (
         heard? ann "/home/ann/lamp is a new file." w,
         world.env_of ann_body w,
         heard? bo "Ann leaves for the editor." w
       ))),
   test "an admin edits the room they are in with /edit here" (fn t ->
-    on_copy! (List.concat ann_in [admin, line ann "/edit here", world.emptied ann, line ann "1p"]) (fn w _ ->
+    on_lib! (List.concat ann_in [admin, line ann "/edit here", world.emptied ann, line ann "1p"]) (fn w _ ->
       t.eq ["uses {Random}"] (heard ann w))),
   test "no one else may be moved into your editor" (fn t ->
-    on_copy! (List.concat both_in [line ann "/edit /home/ann/lamp"]) (fn w _ ->
+    on_lib! (List.concat both_in [line ann "/edit /home/ann/lamp"]) (fn w _ ->
       let ctx = engine.ctx_for w "/std/player#1" "/std/player#1";
       t.eq
         (Error "may not move /std/player#1 into %{editor}")
@@ -117,7 +136,7 @@ group "opening" (fn () -> [
 
 group "the buffer" (fn () -> [
   test "a adds lines, spaces kept, until a lone ." (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "let x =", "  1", "."]) [
         world.emptied ann,
@@ -126,16 +145,16 @@ group "the buffer" (fn () -> [
     ) (fn w _ ->
       t.eq ["1\tlet x =", "2\t  1"] (heard ann w))),
   test "a line that starts with / is text while adding" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "/who", "."]) [world.emptied ann, line ann "p"])
     ) (fn w _ ->
       t.eq ["/who"] (heard ann w))),
   test "and a driver command while not" (fn t ->
-    on_copy! (List.concat editing [line ann "/who"]) (fn w _ ->
+    on_lib! (List.concat editing [line ann "/who"]) (fn w _ ->
       t.eq ["1 connected: Ann."] (heard ann w))),
   test "i inserts before a line" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "b", ".", "1i", "a", "."]) [
         world.emptied ann,
@@ -144,7 +163,7 @@ group "the buffer" (fn () -> [
     ) (fn w _ ->
       t.eq ["a", "b"] (heard ann w))),
   test "c changes lines" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "a", "b", "c", ".", "2c", "B", "."]) [
         world.emptied ann,
@@ -153,7 +172,7 @@ group "the buffer" (fn () -> [
     ) (fn w _ ->
       t.eq ["a", "B", "c"] (heard ann w))),
   test "d deletes lines" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "a", "b", "c", ".", "1,2d"]) [
         world.emptied ann,
@@ -162,7 +181,7 @@ group "the buffer" (fn () -> [
     ) (fn w _ ->
       t.eq ["c"] (heard ann w))),
   test "s replaces the first on each line, and g every one" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "aa", "aa", ".", "1s/a/b/", "2s/a/b/g"]) [
         world.emptied ann,
@@ -171,7 +190,7 @@ group "the buffer" (fn () -> [
     ) (fn w _ ->
       t.eq ["ba", "bb"] (heard ann w))),
   test "a line past the end" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "a", "."]) [world.emptied ann, line ann "5p"])
     ) (fn w _ ->
@@ -180,7 +199,7 @@ group "the buffer" (fn () -> [
 
 group "checking and saving" (fn () -> [
   test "t shows an error at its buffer line" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "let x: Int = 1", `let y: Int = "a"`, "."]) [
         world.emptied ann,
@@ -189,7 +208,7 @@ group "checking and saving" (fn () -> [
     ) (fn w _ ->
       t.ok (List.any? (String.starts_with? "2:") (heard ann w)))),
   test "t shows the effects of a file that checks" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "uses {Random}", "import Random", "let roll () = Random.int 1 6", "."]) [
         world.emptied ann,
@@ -198,7 +217,7 @@ group "checking and saving" (fn () -> [
     ) (fn w _ ->
       t.eq ["No errors. Effects: Random."] (heard ann w))),
   test "the gate refuses a file that writes files, whatever its uses line says" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann [
         "a",
@@ -213,25 +232,22 @@ group "checking and saving" (fn () -> [
         FS.exists? (lamp lib)
       ))),
   test "w formats and saves" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "let x=1", "."]) [world.emptied ann, line ann "w"])
     ) (fn w lib ->
       t.eq (
-        [
-          "Saved /home/ann/lamp: 1 lines. It runs after the next restart.",
-          "Formatting changed 1 lines. ,n shows them."
-        ],
+        ["Saved /home/ann/lamp: 1 lines.", "Formatting changed 1 lines. ,n shows them."],
         "let x = 1\n"
       ) (heard ann w, FS.read_file! (lamp lib)))),
   test "w writes nothing when the file has an error" (fn t ->
-    on_copy! (List.concat editing (lines ann ["a", `let x: Int = "a"`, ".", "w"])) (fn _ lib ->
+    on_lib! (List.concat editing (lines ann ["a", `let x: Int = "a"`, ".", "w"])) (fn _ lib ->
       t.not_ok (FS.exists? (lamp lib)))),
   test "w! keeps unfinished work" (fn t ->
-    on_copy! (List.concat editing (lines ann ["a", "let x =", ".", "w!"])) (fn _ lib ->
+    on_lib! (List.concat editing (lines ann ["a", "let x =", ".", "w!"])) (fn _ lib ->
       t.eq "let x =\n" (FS.read_file! (lamp lib)))),
-  test "a new blueprint goes into the list the next start loads" (fn t ->
-    on_copy! (List.concat
+  test "a new blueprint loads when it is saved" (fn t ->
+    on_lib! (List.concat
       editing
       (lines ann [
         "a",
@@ -244,17 +260,17 @@ group "checking and saving" (fn () -> [
         ".",
         "w"
       ])
-    ) (fn _ lib ->
-      t.ok
-        (String.contains?
-          `("/home/ann/lamp", `
-          (FS.read_file! (Path.join (Path.dirname lib) ./blueprints.wand)))))
+    ) (fn w _ ->
+      t.eq (true, true) (
+        Map.has? "/home/ann/lamp" w.lib,
+        heard? ann "Updated /home/ann/lamp: 0 instances on the new code." w
+      )))
 ])
 
 -- Formatting takes out the second blank line, so line 4 is line 3 now,
 -- and . still names `let y = 2`.
 test "after a save, the current line is the same line of code" (fn t ->
-  on_copy! (List.concat
+  on_lib! (List.concat
     editing
     (List.concat (lines ann ["a", "let x=1", "", "", "let y=2", ".", "w"]) [
       world.emptied ann,
@@ -265,7 +281,7 @@ test "after a save, the current line is the same line of code" (fn t ->
 
 group "the event log" (fn () -> [
   test "a save logs its effects, and a refused one its errors" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (lines ann [
         "a",
@@ -288,7 +304,7 @@ group "the event log" (fn () -> [
             else None)
           w.events))),
   test "the editor's spawn and removal are logged" (fn t ->
-    on_copy! (List.concat editing [line ann "q"]) (fn w _ ->
+    on_lib! (List.concat editing [line ann "q"]) (fn w _ ->
       t.eq
         [("spawn", Some editor), ("remove", Some editor)]
         (List.filter_map
@@ -300,7 +316,7 @@ group "the event log" (fn () -> [
 
 group "leaving" (fn () -> [
   test "q refuses while there are unsaved changes" (fn t ->
-    on_copy! (List.concat
+    on_lib! (List.concat
       editing
       (List.concat (lines ann ["a", "x", "."]) [world.emptied ann, line ann "q"])
     ) (fn w _ ->
@@ -309,7 +325,7 @@ group "leaving" (fn () -> [
         Some editor
       ) (heard ann w, world.env_of ann_body w))),
   test "Q goes back to the room it was opened from, and the editor is gone" (fn t ->
-    on_copy! (List.concat ann_in [
+    on_lib! (List.concat ann_in [
       line ann "north",
       line ann "/edit /home/ann/lamp",
       line ann "a",
@@ -322,23 +338,114 @@ group "leaving" (fn () -> [
         Option.map (fn (i: world.Instance) -> i.id) (world.instance editor w)
       ))),
   test "the room sees you come back" (fn t ->
-    on_copy! (List.concat both_in [line ann "/edit /home/ann/lamp", line ann "q"]) (fn w _ ->
+    on_lib! (List.concat both_in [line ann "/edit /home/ann/lamp", line ann "q"]) (fn w _ ->
       t.ok (heard? bo "Ann comes back from the editor." w))),
   test "a restart keeps the buffer" (fn t ->
-    on_copy! (List.concat editing (lines ann ["a", "kept", "."])) (fn w lib ->
-      let path = Path.join (Path.dirname lib) ./world.json;
-      with Shared.make w as state -> (
-        engine.snapshot! state path at;
-        with Shared.make world.World(world.with_pepper "test pepper", lib_root = lib) as again -> (
-          let _ =
-            Option.map
-              (fn f -> engine.restore blueprints.lib again f at)
-              (snapshot.read! path);
-          let saved (x: world.World) =
-            Option.map
-              (fn (i: world.Instance) -> i.object.save ())
-              (world.instance editor x);
-          t.eq (saved w) (saved (Shared.get again))
+    on_lib! (List.concat editing (lines ann ["a", "kept", "."])) (fn w _ ->
+      with FS.temp_dir "wmd_ed_" as d -> (
+        let path = Path.join d ./world.json;
+        with Shared.make w as state -> (
+          engine.snapshot! state path at;
+          with Shared.make world.World(world.with_pepper "test pepper", lib = loaded) as again -> (
+            let _ = Option.map (fn f -> engine.restore again f at) (snapshot.read! path);
+            let saved (x: world.World) =
+              Option.map
+                (fn (i: world.Instance) -> i.object.save ())
+                (world.instance editor x);
+            t.eq (saved w) (saved (Shared.get again))
+          )
         )
       )))
 ])
+
+let lever = ./lib/realm/commons/lever.wand
+
+-- Ann as an admin in the editor on the lever's file, after one pull.
+let on_lever = List.concat ann_in [admin, line ann "pull lever", line ann "/edit lever"]
+
+let lever_pulls (w: world.World) =
+  Option.map
+    (fn (i: world.Instance) -> i.object.long (engine.ctx_for w i.id ann_body))
+    (world.instance "/realm/commons/lever#0" w)
+
+group "reloading" (fn () -> [
+  test "w moves the instances onto the new code, with their state" (fn t ->
+    keeping! [lever] (List.concat on_lever [line ann ",s/pulled/yanked/", line ann "w", line ann "q"]) (fn w _ ->
+      t.eq (Some "It has been yanked 1 times.", true) (
+        lever_pulls w,
+        heard? ann "Updated /realm/commons/lever: 1 instances on the new code." w
+      ))),
+  -- The field is renamed and loses its default, so the saved {"pulls": 1}
+  -- has nothing the new State can be made from.
+  -- The field is renamed and loses its default, so the saved {"pulls": 1}
+  -- has nothing the new State can be made from.
+  test "an instance the new code cannot read stays on the old code" (fn t ->
+    keeping! [lever] (List.concat on_lever [
+      line ann ",s/pulls/times/g",
+      line ann ",s/times: Int = 0/times: Int/",
+      line ann ",s/make State()/make State(times = 0)/",
+      line ann "w",
+      line ann "q"
+    ]) (fn w _ ->
+      t.eq (Some "It has been pulled 1 times.", true) (
+        lever_pulls w,
+        List.any?
+          (String.contains?
+            "Kept on the old code, because the new code cannot read their saved state: /realm/commons/lever#0.")
+          (heard ann w)
+      ))),
+  test "a file that does not load changes nothing" (fn t ->
+    keeping! [lever] (List.concat on_lever [
+      line ann `,s/pulls + 1/pulls + "x"/`,
+      line ann "w!",
+      line ann "q",
+      line ann "/update lever"
+    ]) (fn w _ ->
+      t.eq (Some "It has been pulled 1 times.", true) (
+        lever_pulls w,
+        List.any?
+          (String.starts_with? "/realm/commons/lever was not updated: ")
+          (heard ann w)
+      ))),
+  test "a builder may not update a file outside their home" (fn t ->
+    on_lib! (List.concat ann_in [world.emptied ann, line ann "/update lever"]) (fn w _ ->
+      t.eq ["You may not update /realm/commons/lever."] (heard ann w)))
+])
+
+group "resetting" (fn () -> [
+  test "/reset makes an instance again, as create makes a new one" (fn t ->
+    on_lib! (List.concat ann_in [admin, line ann "pull lever", line ann "/reset lever"]) (fn w _ ->
+      t.eq (Some "It has been pulled 0 times.", true) (
+        lever_pulls w,
+        heard? ann "Reset /realm/commons/lever#0." w
+      ))),
+  test "the starting actions run again: a reset square makes another lever" (fn t ->
+    on_lib! (List.concat ann_in [admin, line ann "/reset here"]) (fn w _ ->
+      t.eq 2 (List.length (world.instances_of "/realm/commons/lever" w)))),
+  test "/reset me keeps your name" (fn t ->
+    on_lib! (List.concat ann_in [line ann "/reset me", world.emptied ann, line ann "/who ann"]) (fn w _ ->
+      t.ok (heard? ann "Ann looks like a person." w))),
+  test "a builder may not reset what they may not edit" (fn t ->
+    on_lib! (List.concat ann_in [world.emptied ann, line ann "/reset lever"]) (fn w _ ->
+      t.eq ["You may not reset /realm/commons/lever#0."] (heard ann w)))
+])
+
+let editor_file = ./lib/realm/editor/room.wand
+
+test "an editor that faults on its new code goes back to the one before" (fn t ->
+  keeping! [editor_file] (List.concat ann_in [
+    admin,
+    line ann "/edit /realm/editor/room",
+    line
+      ann
+      `,s/| "h" -> _tell ctx _help/| "h" -> _tell ctx (Result.get! (Error "broken"))/`,
+    line ann "w",
+    world.emptied ann,
+    line ann "h",
+    line ann "h"
+  ]) (fn w _ ->
+    t.eq (true, true, true) (
+      heard? ann "Something went wrong with The editor." w,
+      heard? ann "The editor is back on its version from before the last /update of it." w,
+      List.any? (String.starts_with? "Lines are numbered from 1.") (heard ann w)
+    )))

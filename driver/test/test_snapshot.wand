@@ -12,10 +12,14 @@ import Shared
 import String
 
 let {test, group} = import Test
-let blueprints = import ../blueprints
+let mudlib = import ../mudlib
 let engine = import ../engine
 let snapshot = import ../snapshot
 let world = import ../world
+
+-- A new world, with the mudlib in lib/ loaded and passwords hashed with a
+-- test pepper.
+let start = world.World(world.with_pepper "test pepper", lib = (mudlib.load_all! ./lib).lib)
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -34,13 +38,12 @@ let _changes = [
   line "pull lever"
 ]
 
-let _play state =
-  List.each (fn f -> (Shared.update state f; engine.step blueprints.lib state)) _changes
+let _play state = List.each (fn f -> (Shared.update state f; engine.step state)) _changes
 
 -- Play, save to `path`, and give back the world as it was saved.
 let saved! path =
-  with Shared.make (world.with_pepper "test pepper") as state -> (
-    engine.boot blueprints.lib state at;
+  with Shared.make start as state -> (
+    engine.boot state at;
     _play state;
     engine.snapshot! state path at;
     Shared.get state
@@ -48,12 +51,9 @@ let saved! path =
 
 -- A new world made from the file at `path`.
 let restored! path =
-  with Shared.make (world.with_pepper "test pepper") as state ->
+  with Shared.make start as state ->
   match snapshot.read! path with
-  | Some f -> (
-    engine.restore blueprints.lib state f at;
-    engine.boot blueprints.lib state at
-  )
+  | Some f -> (engine.restore state f at; engine.boot state at)
   | None -> Shared.get state
 
 let _where (w: world.World) =
@@ -91,12 +91,12 @@ group "a snapshot" (fn () -> [
   test "saves again only what changed" (fn t ->
     with FS.temp_dir "wmd_snap_" as d -> (
       let path = Path.join d ./world.json;
-      with Shared.make (world.with_pepper "test pepper") as state -> (
-        engine.boot blueprints.lib state at;
+      with Shared.make start as state -> (
+        engine.boot state at;
         _play state;
         engine.snapshot! state path at;
         Shared.update state (line "pull lever");
-        engine.step blueprints.lib state;
+        engine.step state;
         let (w: world.World) = Shared.get state;
         t.eq ([], []) (
           List.filter

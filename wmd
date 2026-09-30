@@ -4,14 +4,13 @@ uses {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Proc, Random, Shared}
 -- The wmd server. Run it from the repo as ./wmd, and make a new world
 -- first with ./wmd init --admin <name>.
 --
--- The mudlib is loaded through driver/blueprints.wand, which
--- tools/blueprints.wand writes from the mudlib directory.
+-- The mudlib is loaded while the server runs: each file is checked and
+-- gated as it loads, at start and on /update.
 
 import Args
 import IO
 import Proc
 
-let blueprints = import ./driver/blueprints
 let init = import ./driver/init
 let main = import ./driver/main
 
@@ -22,7 +21,7 @@ match Proc.args () with
   match Args.parse init.InitOpts.decoder rest with
   | Error e -> stop e
   | Ok o -> (
-    match init.run! o blueprints.lib with
+    match init.run! o with
     | Error why -> stop why
     | Ok _ -> ()
   )
@@ -31,8 +30,8 @@ match Proc.args () with
   match Args.parse main.Opts.decoder rest with
   | Error e -> stop e
   | Ok o -> (
-    match main.problem! o blueprints.paths with
+    match main.problem o with
     | Some why -> stop why
-    | None -> main.run! o blueprints.lib
+    | None -> main.run! o
   )
 )

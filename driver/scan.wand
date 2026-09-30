@@ -6,7 +6,6 @@ import FS
 import List
 import Path
 import String
-import Wand
 
 -- A blueprint's path in the world, such as /std/player, and its file.
 type Blueprint(path: String, file: Path)
@@ -35,45 +34,3 @@ let blueprints! lib =
           Some Blueprint(path = path_in lib f, file = f)
         else None)
       (FS.glob_in **/*.wand lib))
-
--- The import path of `file`, as the output file sees it: relative when the
--- mudlib is given as a relative path, absolute when it is absolute.
-let _import_path (out: Path) (file: Path) =
-  let f = Path.to_string (Path.normalize file);
-  let plain = if String.starts_with? "./" f then String.slice 2 (String.length f) f else f;
-  let bare = String.slice 0 (String.length plain - 5) plain;
-  if Path.absolute? file then bare
-  else (
-    let depth =
-      List.length (List.filter (fn c -> c != ".") (Path.components (Path.dirname out)));
-    "%{String.repeat depth "../"}%{bare}"
-  )
-
-let _source lib out (bps: List Blueprint) =
-  let core_file = Path.join lib ./std/core.wand;
-  let imports =
-    List.map
-      (fn (n, (b: Blueprint)) -> "let _b%{n} = import %{_import_path out b.file}")
-      (List.indexed bps);
-  let entries =
-    List.map (fn (n, (b: Blueprint)) -> `("%{b.path}", _b%{n})`) (List.indexed bps);
-  let paths = List.map (fn (b: Blueprint) -> `"%{b.path}"`) bps;
-  String.join "\n" [
-    "-- Written from %{lib} by tools/blueprints.wand, or by the driver when the",
-    "-- editor saves a new blueprint. Do not edit: run the tool again after",
-    "-- adding or removing a blueprint by hand.",
-    "",
-    "import Map",
-    "",
-    "let core = import %{_import_path out core_file}",
-    String.join "\n" imports,
-    "",
-    "let lib: Map core.Blueprint = Map.from_list [%{String.join ", " entries}]",
-    "",
-    "let paths = [%{String.join ", " paths}]",
-    ""
-  ]
-
--- driver/blueprints.wand for the blueprints `bps` of `lib`, as the file
--- at `out` imports them.
-let listing! lib out (bps: List Blueprint) = Wand.format! (_source lib out bps)

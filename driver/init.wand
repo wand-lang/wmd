@@ -14,6 +14,7 @@ import Shared
 import String
 
 let engine = import ./engine
+let mudlib = import ./mudlib
 let snapshot = import ./snapshot
 let world = import ./world
 
@@ -74,7 +75,7 @@ let _pepper () =
     p
   )
 
-let run! (o: InitOpts) (lib: engine.Lib) =
+let run! (o: InitOpts) =
   match _problem o with
   | Some why -> Error why
   | None -> (
@@ -84,9 +85,15 @@ let run! (o: InitOpts) (lib: engine.Lib) =
     | Ok typed -> if String.length typed < 8 then Error "a password is at least 8 characters"
       else (
         let at = "%{Clock.now ()}";
-        with Shared.make (world.with_pepper (_pepper ())) as state -> (
-          engine.boot lib state at;
-          engine.make_account lib state name typed "admin" at;
+        let start =
+          world.World(
+            world.with_pepper (_pepper ()),
+            lib_root = o.lib,
+            lib = (mudlib.load_all! o.lib).lib
+          );
+        with Shared.make start as state -> (
+          engine.boot state at;
+          engine.make_account state name typed "admin" at;
           engine.snapshot! state o.world at;
           IO.println "Made %{o.world}, with %{name} as admin.";
           Ok()

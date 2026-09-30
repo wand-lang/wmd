@@ -573,3 +573,69 @@ plans for milestone 4. #65, #66 and #67 are fixed in wand 0.95.3.
 - Later: the test files moved into `test/` beside the code they test. Each
   import went up one more level (`./engine` to `../engine`), and `wand s`
   found the files in their new places with no change. 109 tests pass.
+
+## 2026-09-30 · milestone 4 · Wand.load, /update and /reset
+
+Files: driver/{mudlib,engine,world,main,init,files,scan}.wand, wmd,
+lib/realm/editor/room.wand, driver/test/*. driver/blueprints.wand and
+tools/blueprints.wand are gone. In wand: `Wand.load`, #68 and #69.
+
+Observed
+- The API was chosen with the user: every interface has a derived
+  `loader`, as a type has `decoder`, and `Wand.load! core.Blueprint.loader
+  path` gives the file's module. A loaded file is held to the effects its
+  interface's members allow. Before any code, a probe booted the wmd
+  engine on blueprints loaded this way: sign-up, the lever and the
+  garden's hook all worked.
+- Checker errors hit in wmd: 2
+  - `type error: unknown type 'core.Blueprint' in field 'lib' of 'World'`.
+    A parameter, an annotation and an alias can name an interface, but a
+    record field could not. Filed and fixed in wand as #69.
+  - `unbound variable 'raise' -- errors are values: return an Error, call
+    a !-suffixed function to raise, or wrap a call with try`. Fixed with
+    `Result.get! (Error ...)`.
+- wand s runs until green: 5. Four of the failures were mine:
+  - 24 editor tests failed at once: they worked on a copy of lib/, and a
+    file loads only when it imports the driver's own std/core.wand. The
+    tests now use the real lib/, save under lib/home/ann/, and remove it
+    after. They refuse to run when that directory exists already.
+  - A test that changed `pulls` to a String: the new file did not check,
+    so /update refused it before any state was read. The test now renames
+    the field and removes its default.
+  - A wand test fixture that performed Raise, which `Shape` does not allow.
+  - The last one was wand's: loading a file again replaced its types for
+    the code an earlier load had handed out, so the lever that /update
+    kept on its old code decoded its State as the new file's. After that
+    the lever could not be made at all, and 6 tests failed in a row. Each
+    load of a file now has a module name of its own.
+- A design decision with the user: the driver and the mudlib must share
+  one core.wand, so a game is a checkout of wmd for now. The `wand <url>`
+  layout stays possible if a game's mudlib imports core from the package
+  (see the design doc, "One core.wand").
+- A real run on a copy of the repo: `/edit lever` as admin, `,s/pulled/
+  yanked/`, `w`: "Updated /realm/commons/lever: 1 instances on the new
+  code.", and `look at lever` said "It has been yanked 1 times." Then
+  `/reset lever` set it to 0.
+- Tests: 118 pass, 3 runs of 3.
+
+Easy, and why
+- Taking `lib` out of the engine was one regular expression: it was
+  passed in the same position everywhere. It is a field of the world now,
+  so /update changes it in the middle of a step.
+- The derived-member pattern (`State.decoder`) made `core.Blueprint.loader`
+  a small change in the checker and needed no new syntax.
+
+Hard, and why
+- Identity by path cuts both ways. It is what makes a loaded module share
+  core's types with the driver, and it is also what refused a copy of
+  lib/ and what let a reload change the old code's types.
+
+Candidate wand issues
+- #68 (Wand.load) and #69 (a record field with an interface type), both
+  on the wand branch `wand-load`, not released yet.
+- FS has no way to make a symlink. A test with a symlinked std/ would
+  not have needed the real lib/.
+- Later: the user asked what happens with two `implement` blocks of one
+  interface in a file. Both checked, and the second block's members
+  replaced the first's while both claims stood. Filed and fixed as wand
+  #70. The fix was in 0.96.0, with Wand.load (#68) and #69.

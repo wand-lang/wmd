@@ -42,7 +42,7 @@ let _help = String.join "\n" [
   "  [range]d      delete lines",
   "  [range]s/old/new/[g]   replace text: the first on each line, or all with g",
   "  t             check the file: errors, with line numbers, and its effects",
-  "  w             check and save; the new code runs after the next restart",
+  "  w             check, save, and load the new code, as /update does",
   "  w!            save without a check, to keep unfinished work",
   "  q             leave; refused while there are unsaved changes",
   "  Q             leave, and lose unsaved changes"
@@ -197,8 +197,7 @@ let _result (s: State) (ctx: core.Ctx) (p: core.Parsed) =
       let changed = _changed s.lines lines;
       let cur = _same_line s.lines lines s.cur;
       let saved =
-        if o.action == "save" then
-          "Saved %{s.path}: %{List.length lines} lines. It runs after the next restart."
+        if o.action == "save" then "Saved %{s.path}: %{List.length lines} lines."
         else "Saved %{s.path} as a draft, with no check.";
       _to
         State(s, lines = lines, cur = cur, dirty = false)

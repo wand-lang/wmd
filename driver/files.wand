@@ -16,7 +16,6 @@ import String
 import Wand
 
 let core = import ../lib/std/core
-let scan = import ./scan
 
 -- Lower-case words of letters, digits and _ between slashes, as
 -- /home/ann/lamp. There is no `..`, so a path cannot leave the mudlib.
@@ -82,12 +81,6 @@ let check (lib: Path) path source =
 let _write (lib: Path) path text =
   let file = file_of lib path;
   Result.and_then (fn _ -> FS.write_atomic file text) (FS.mkdir (Path.dirname file))
-
--- Write driver/blueprints.wand again when the blueprints in `lib` changed,
--- so the next start loads a new one.
-let relist! (lib: Path) (out: Path) =
-  let text = scan.listing! lib out (scan.blueprints! lib);
-  if FS.exists? out && FS.read_file! out == text then () else FS.write_atomic! out text
 
 -- Check, gate, format and save. Nothing is written unless all pass.
 let save (lib: Path) path source = (
