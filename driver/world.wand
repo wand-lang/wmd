@@ -1,5 +1,5 @@
--- The world for milestone 1: two rooms, the sessions in them, the outbox of
--- each session, and the events not yet logged.
+-- The world: two fixed rooms, the sessions in them, the outbox of each
+-- session, and the events not yet logged.
 --
 -- Every function here is pure and takes the world last, so a change is a
 -- pipeline. The session code applies each change in one Shared.update.
@@ -253,7 +253,8 @@ let _capitalize name =
 let _in_use? name (w: World) =
   List.any? (fn (s: Session) -> s.name == Some name) (Map.values w.sessions)
 
--- Milestone 1 logs in by name only. What is typed here is not logged.
+-- Login is by name only, with no password. What is typed here is not
+-- logged.
 let _login (s: Session) at line (w: World) =
   if !(_valid_name? line) then tell s.id "A name is 2 to 16 letters. What is your name?" w
   else (

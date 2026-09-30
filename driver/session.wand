@@ -36,7 +36,8 @@ let _drained? state sid conn =
   if lines == [] then true
   else Result.ok? (Net.write (String.join "" (List.map (fn l -> "%{l}\r\n") lines)) conn)
 
--- Until Shared.wait exists, the writer looks at the outbox every 50ms.
+-- The writer looks at the outbox every 50ms, because a fiber cannot wait on
+-- a Shared for a change.
 let _writer state sid conn =
   if !(_drained? state sid conn) then ()
   else if world.closing? sid (Shared.get state) then ()

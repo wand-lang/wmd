@@ -1,9 +1,9 @@
 uses {Clock, Net.Listen, Shared}
 
--- Spike: can a test run a session with no socket? A handler answers
--- Net!listen with fake connections, Net!read_line from a script, and
--- Net!write into a list. If this works, milestone 1 tests every session
--- this way until wand has Net.connect.
+-- A session runs in a test with no socket. A handler answers Net!listen
+-- with fake connections, Net!read_line from a script, and Net!write into a
+-- list. This is how sessions are tested, because wand cannot open a
+-- connection to a port.
 
 import Clock
 import List
@@ -41,7 +41,7 @@ group "one fiber" (fn () -> [
     t.eq ["you said: hi\n", "you said: bye\n"] (scripted! ["hi", "bye"] echo!))
 ])
 
--- Two fibers, as in the design: the reader puts replies in an outbox, and
+-- Two fibers: the reader puts replies in an outbox, and
 -- the writer is the only one that writes to the socket.
 let reader outbox conn =
   match Net.read_line conn with
