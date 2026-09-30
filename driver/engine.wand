@@ -75,9 +75,38 @@ let guarded body =
   | Random!float _ k -> k (Random.float ())
   | Random!seed _ k -> k ()
 
--- A mudlib call, with a raise as an Error, so a fault in one object cannot
--- stop the driver.
-let _call body = try guarded body
+-- How much one mudlib call may do before the driver stops it, as MudOS
+-- stops a "too long evaluation": steps, which bound time and the size of
+-- what it builds, and how deep its calls may nest.
+let limits = Wand.Limits(steps = 100000, depth = 1000)
+
+-- A mudlib call, with a raise or a limit that ran out as an Error, so a
+-- fault in one object cannot stop the driver.
+let _call body =
+  match Wand.limit limits (fn () -> try guarded body) with
+  | Ok r -> r
+  | Error why -> Error why
+
+-- Mudlib code that gives a value and performs nothing, such as a `short`,
+-- under the same limits: `fallback` when it runs out.
+let _bounded fallback f =
+  match Wand.limit limits f with
+  | Ok v -> v
+  | Error _ -> fallback
+
+-- The longest line an object may show, and the most actions one reply may
+-- ask for: an object cannot flood a session or the driver.
+let max_line = 8192
+
+let max_actions = 100
+
+-- The most an object's saved state may be, as JSON. /std/login keeps every
+-- session in the middle of logging in, so it may keep more.
+let max_saved bp = if bp == "/std/login" then 1048576 else 65536
+
+-- An object that faults this many times in a row stops working, until its
+-- builder fixes it with /update or /reset.
+let fault_limit = 5
 
 -- ── The read-only view ─────────────────────────────────────────────────
 
@@ -118,10 +147,10 @@ let view (w: world.World) viewer =
     account? = fn name -> Option.some? (world.account name w),
     detail_of = fn id name -> match world.instance id w with
       | Some i ->
-        Option.map (fn f -> f (_seen w viewer i.id)) (Map.get (String.lower name) i.object.details)
+        _bounded None (fn () -> Option.map (fn f -> f (_seen w viewer i.id)) (Map.get (String.lower name) i.object.details))
       | None -> None,
     prop = fn id key -> match world.instance id w with
-      | Some i -> Option.and_then (fn f -> Map.get key (f (_seen w viewer i.id))) i.object.props
+      | Some i -> _bounded None (fn () -> Option.and_then (fn f -> Map.get key (f (_seen w viewer i.id))) i.object.props)
       | None -> None,
     awake? = fn id -> Option.some? (world.session_of id w),
     home_of = fn id -> home_of id w
@@ -132,7 +161,10 @@ and _seen (w: world.World) viewer id =
 and _text (w: world.World) viewer id short =
   match world.instance id w with
   | None -> "nothing"
-  | Some i -> if short then i.object.short (_seen w viewer i.id) else i.object.long (_seen w viewer i.id)
+  | Some i ->
+    _bounded
+      "something that is not working"
+      (fn () -> if short then i.object.short (_seen w viewer i.id) else i.object.long (_seen w viewer i.id))
 
 let short_of id (w: world.World) = _text w id id true
 
@@ -163,6 +195,17 @@ let _blueprint? source =
 
 let _editor? id = world.blueprint_of id == editor_bp
 
+let _broken? id (w: world.World) =
+  match world.instance id w with
+  | Some i -> i.faults >= fault_limit
+  | None -> false
+
+-- A line too long to show.
+let _too_long text =
+  if String.length text > max_line then
+    Error "a line of %{String.length text} characters, and the most is %{max_line}"
+  else Ok()
+
 -- Whether the player `body` may edit the file of blueprint path `path`.
 let may_edit? body path (w: world.World) =
   match world.account_of body w with
@@ -180,10 +223,10 @@ let _may_file (ctx: core.Ctx) path (w: world.World) =
 -- what mudlib code may do is here, in one place.
 let allowed (ctx: core.Ctx) (a: core.Action) (w: world.World) =
   match a with
-  | core.Say _ -> Ok()
-  | core.Tell target _ -> if world.session? target && !(_from_login? ctx) then
+  | core.Say text -> _too_long text
+  | core.Tell target text -> if world.session? target && !(_from_login? ctx) then
       Error "only /std/login may tell a session"
-    else Ok()
+    else _too_long text
   | core.Move obj dest -> (
     let o = world.resolve obj;
     let d = world.resolve dest;
@@ -414,8 +457,14 @@ and _answer (ctx: core.Ctx) (o: core.Outcome) (tx: Tx) =
 and _apply_actions (ctx: core.Ctx) actions (tx: Tx) =
   List.fold_left (fn acc a -> _act ctx a acc) tx actions
 
--- Apply what a call on `ctx.self` gave back.
-and apply (ctx: core.Ctx) (r: core.Reply) (tx: Tx) = (
+-- Apply what a call on `ctx.self` gave back. A reply with more actions
+-- than `max_actions` is refused whole: its object keeps its old version.
+and apply (ctx: core.Ctx) (r: core.Reply) (tx: Tx) =
+  if List.length r.actions > max_actions then
+    _refuse ctx "%{List.length r.actions} actions in one reply, and the most is %{max_actions}" tx
+  else _apply ctx r tx
+
+and _apply (ctx: core.Ctx) (r: core.Reply) (tx: Tx) = (
   let kept =
     match r.next with
     | Some o -> change (world.set_object ctx.self o tx.at) tx
@@ -425,14 +474,27 @@ and apply (ctx: core.Ctx) (r: core.Reply) (tx: Tx) = (
 
 -- Run a reply-giving mudlib call, and apply its reply. A raise is a fault:
 -- the actor is told, and the event log keeps why.
+-- An object that has faulted `fault_limit` times in a row runs no more
+-- code until /update or /reset gives it a new start.
 and run (ctx: core.Ctx) body (tx: Tx) =
-  match _call body with
-  | Ok r -> apply ctx r tx
-  | Error why ->
-    tx
-    |> change (world.tell ctx.actor "Something went wrong with %{short_of ctx.self tx.w}.")
-    |> _event (world.Event(at = "", event = "fault", actor = ctx.actor, object = Some ctx.self, text = Some why))
-    |> _fall_back ctx.self ctx.actor
+  if _broken? ctx.self tx.w then
+    change (world.tell ctx.actor "%{short_of ctx.self tx.w} is not working.") tx
+  else match _call body with
+    | Ok r -> tx |> change (world.worked ctx.self) |> apply ctx r
+    | Error why -> (
+      let faulted =
+        tx
+        |> change (world.tell ctx.actor "Something went wrong with %{short_of ctx.self tx.w}.")
+        |> _event (world.Event(at = "", event = "fault", actor = ctx.actor, object = Some ctx.self, text = Some why))
+        |> change (world.faulted ctx.self);
+      let broken =
+        if _broken? ctx.self faulted.w then
+          faulted
+          |> _event (world.Event(at = "", event = "broken", actor = ctx.actor, object = Some ctx.self))
+          |> change (world.tell ctx.actor "%{short_of ctx.self tx.w} has stopped working. Its builder can fix it and /update it, or /reset it.")
+        else faulted;
+      _fall_back ctx.self ctx.actor broken
+    )
 
 -- An editor that faults goes back to the editor before the last /update
 -- of it, so a bad update of the editor can be fixed with the editor.
@@ -648,7 +710,7 @@ let _examine body words (w: world.World) = (
          | Some f ->
            List.map
              (fn (k, v) -> "%{k} = %{JSON.stringify v}")
-             (Map.to_list (f (_seen w body i.id)))
+             (Map.to_list (_bounded Map.empty (fn () -> f (_seen w body i.id))))
          | None -> []);
       let lines =
         [
@@ -925,7 +987,17 @@ let snapshot! state path at = (
     List.filter_map
       (fn (i: world.Instance) -> match i.saved with
         | Some _ -> None
-        | None -> Some (i.id, _call (fn () -> i.object.save ()))
+        | None -> Some (
+          i.id,
+          Result.and_then
+            (fn j ->
+              let size = String.length (JSON.stringify j);
+              if size > max_saved i.blueprint then
+                Error
+                  "its saved state is %{size} bytes, and the most is %{max_saved i.blueprint}"
+              else Ok j)
+            (_call (fn () -> i.object.save ()))
+        )
       )
       (Map.values w.instances);
   let kept (cur: world.World) =

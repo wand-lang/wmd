@@ -449,3 +449,101 @@ test "an editor that faults on its new code goes back to the one before" (fn t -
       heard? ann "The editor is back on its version from before the last /update of it." w,
       List.any? (String.starts_with? "Lines are numbered from 1.") (heard ann w)
     )))
+
+-- Ann as an admin, having made the lever loop forever when pulled: a
+-- function of its own that calls itself, and `pull` calling it first.
+let looping_lever = List.concat ann_in [
+  admin,
+  line ann "/edit lever",
+  line
+    ann
+    ",s/let make (s: State) =/let spin (n: Int) = spin (n + 1) and make (s: State) =/",
+  line
+    ann
+    ",s/run = fn ctx _ -> core.Reply(/run = fn ctx _ -> if spin 0 then core.nothing else core.Reply(/",
+  line ann "w",
+  line ann "q",
+  world.emptied ann
+]
+
+let pulls n = List.map (fn _ -> line ann "pull lever") (List.range 1 n)
+
+let faults_of (w: world.World) =
+  List.filter_map
+    (fn (e: world.Event) -> if e.event == "fault" then e.text else None)
+    w.events
+
+group "limits" (fn () -> [
+  test "a verb that never ends is stopped, and the world goes on" (fn t ->
+    keeping! [lever] (List.concat looping_lever [line ann "pull lever", line ann "look"]) (fn w _ ->
+      t.eq (true, ["ran out of steps after 100000"], true) (
+        heard? ann "Something went wrong with brass lever." w,
+        faults_of w,
+        heard? ann "The Commons" w
+      ))),
+  test "an object that faults five times in a row stops working" (fn t ->
+    keeping! [lever] (List.concat looping_lever (pulls 6)) (fn w _ ->
+      t.eq (true, true, 5) (
+        heard?
+          ann
+          "brass lever has stopped working. Its builder can fix it and /update it, or /reset it."
+          w,
+        heard? ann "brass lever is not working." w,
+        List.length (faults_of w)
+      ))),
+  test "/reset gives a stopped object a new start" (fn t ->
+    keeping! [lever] (List.concat
+      looping_lever
+      (List.concat (pulls 5) [
+        world.emptied ann,
+        line ann "/reset lever",
+        line ann "pull lever"
+      ])
+    ) (fn w _ ->
+      t.eq
+        ["Reset /realm/commons/lever#0.", "Something went wrong with brass lever."]
+        (heard ann w))),
+  test "a line too long to show is refused" (fn t ->
+    keeping! [lever] (List.concat ann_in [
+      admin,
+      line ann "/edit lever",
+      line ann "1a",
+      line ann "import String",
+      line ann ".",
+      line ann `,s/"You pull the lever. Clunk."/(String.repeat 9000 "x")/`,
+      line ann "w",
+      line ann "q",
+      world.emptied ann,
+      line ann "pull lever"
+    ]) (fn w _ ->
+      t.eq (false, true) (
+        List.any? (fn l -> String.length l > 8192) (heard ann w),
+        List.any?
+          (fn (e: world.Event) -> e.event == "refused"
+          && e.text == Some "a line of 9000 characters, and the most is 8192")
+          w.events
+      ))),
+  test "a saved state too big to keep is left out of the snapshot" (fn t ->
+    keeping! [lever] (List.concat ann_in [
+      admin,
+      line ann "/edit lever",
+      line ann "1a",
+      line ann "import String",
+      line ann ".",
+      line
+        ann
+        `,s/save = fn () -> State.encoder s/save = fn () -> JSON.of_string (String.repeat 70000 "x")/`,
+      line ann "w",
+      line ann "q"
+    ]) (fn w _ ->
+      with FS.temp_dir "wmd_ed_" as d ->
+      with Shared.make w as state -> (
+        engine.snapshot! state (Path.join d ./world.json) at;
+        t.ok
+          (List.any?
+            (fn (e: world.Event) -> e.event == "fault"
+            && e.actor == "/realm/commons/lever#0"
+            && e.text == Some "save: its saved state is 70002 bytes, and the most is 65536")
+            (Shared.get state).events)
+      )))
+])

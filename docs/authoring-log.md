@@ -639,3 +639,48 @@ Candidate wand issues
   interface in a file. Both checked, and the second block's members
   replaced the first's while both claims stood. Filed and fixed as wand
   #70. The fix was in 0.96.0, with Wand.load (#68) and #69.
+
+## 2026-09-30 · milestone 5 · part 1: fuel, caps, and objects that stop working
+
+Files: driver/{engine,world}.wand, driver/test/test_editor.wand. In wand:
+`Wand.limit` and `Wand.cost` (#71), on the branch `wand-limit`.
+
+Observed
+- Wand.limit was built as the design describes: a step budget from the
+  counter the evaluator keeps for fiber yields, a depth budget, and
+  builtins that take steps for the size they build. Two bugs of my own on
+  the way, both found by tests:
+  - A limit around `Par.all!` did not stop it: Par items start on pool
+    domains, which had no limit of their own. The caller's fuel now goes
+    with each item.
+  - Then `Par.all!` answered "race: no thunk finished": the race dropped
+    an exception that was neither a wand error nor a stop. A limit that
+    runs out in an item now ends the race as a stop does.
+- A 20,000,000-step loop took 4.57 s with the limit code and 4.82 s on
+  wand 0.96.0: no measurable cost.
+- In wmd every mudlib call runs under 100,000 steps and 1,000 nested
+  calls, including `short`, `long`, details and props, which the driver
+  had called with no guard at all.
+- Caps: a line longer than 8,192 characters is refused, a reply with more
+  than 100 actions is refused whole, and a saved state over 64 KB (1 MB
+  for /std/login) is left out of the snapshot. An object that faults 5
+  times in a row stops working until /update or /reset.
+- Checker errors hit: 0 in wmd. In wand: `Unbound record field
+  depth_asked` (a field added to the constructor but not the record), and
+  a Perl quoting failure in my edit script, not a wand error.
+- The limit tests edit the real lever through the editor as admin: a
+  `pull` that calls a function that calls itself forever was stopped
+  with "ran out of steps after 100000", and `look` still answered.
+- Tests: 123 pass, 3 runs of 3. wand: 1999 wand-level tests pass.
+
+Easy, and why
+- `let spin (n: Int) = spin (n + 1) and make (s: State) =`: the editor's
+  `s` command could add a function to the lever's file, because an `and`
+  group needs no new line.
+
+Hard, and why
+- Par's domains: a per-task counter is simple until work moves between
+  domains. Both bugs were at that seam.
+
+Candidate wand issues
+- #71, not released yet.

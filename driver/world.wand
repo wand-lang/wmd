@@ -30,7 +30,10 @@ type Instance(
   saved: Option JSON = None,
   creator: Option String = None,
   created: Option String = None,
-  modified: Option String = None
+  modified: Option String = None,
+  -- How many of its calls in a row have faulted. It is not saved: a
+  -- restart gives every object a new start.
+  faults: Int = 0
 )
 
 -- One connection. `body` is None until login.
@@ -136,8 +139,19 @@ let contents id (w: World) =
 
 let set_object id (o: core.Object) at (w: World) =
   match instance id w with
-  | Some i -> put Instance(i, object = o, saved = None, modified = Some at) w
+  | Some i -> put Instance(i, object = o, saved = None, modified = Some at, faults = 0) w
   | None -> w
+
+-- A call on the object faulted, or one did not: how many in a row did.
+let faulted id (w: World) =
+  match instance id w with
+  | Some i -> put Instance(i, faults = i.faults + 1) w
+  | None -> w
+
+let worked id (w: World) =
+  match instance id w with
+  | Some i when i.faults > 0 -> put Instance(i, faults = 0) w
+  | _ -> w
 
 -- Who made an object and when, as a snapshot kept them.
 let set_made id creator created modified (w: World) =
