@@ -29,6 +29,8 @@ commit.
   impressions. Each impression must point at evidence. A model is not a
   reliable narrator about its own processing.
 - Paste each checker error that you hit, and write what fixed it.
+- Leave out bugs that were found and fixed, in wand or in wmd. They say
+  nothing about how good the language is to write in.
 - At the end of each milestone, add a summary: the three biggest sources of
   friction, the three things that worked best, and the wand issues you
   propose.
