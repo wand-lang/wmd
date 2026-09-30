@@ -8,9 +8,8 @@ import String
 
 -- IAC (byte 255) starts a command. Three shapes are dropped, longest first:
 -- a subnegotiation (IAC SB ... IAC SE), an option (IAC WILL, WONT, DO or
--- DONT, then one byte), and any other two-byte command. A character class
--- cannot hold `\xff`, so the option bytes are an alternation.
-let _iac = r/\xff\xfa.*?\xff\xf0|\xff(\xfb|\xfc|\xfd|\xfe).|\xff./
+-- DONT, then one byte), and any other two-byte command.
+let _iac = r/\xff\xfa.*?\xff\xf0|\xff[\xfb-\xfe].|\xff./
 
 -- A line as the player typed it: no IAC sequences, no trailing `\r`.
 let clean line = Regex.replace_all _iac "" line |> String.trim_right

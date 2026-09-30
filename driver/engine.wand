@@ -1,0 +1,421 @@
+uses {Random, Shared}
+
+-- The driver proper: the one fiber that runs mudlib code.
+--
+-- It takes each input the sessions queued, runs the mudlib code it calls
+-- for, checks the actions that come back, and applies them. Only this fiber
+-- runs mudlib code or changes an object, so the world it reads cannot
+-- change under it before it writes.
+
+import JSON
+import List
+import Map
+import Option
+import Random
+import Result
+import Shared
+import String
+
+let core = import ../lib/std/core
+let parse = import ./parse
+let world = import ./world
+
+-- Every blueprint the driver can spawn, by path, such as /std/player.
+type Lib = Map core.Blueprint
+
+let login_id = "/std/login#0"
+
+let player_bp = "/std/player"
+
+-- Where every new body first stands.
+let arrival = "/realm/commons/square#0"
+
+-- ── Changes ────────────────────────────────────────────────────────────
+
+-- The work on one input: the world as the driver sees it so far, and every
+-- change made to it, newest first. The changes are made again, in order,
+-- on the shared world, where the sessions may have added lines or input in
+-- the meantime: the two kinds of change do not touch the same things.
+type Tx(w: world.World, changes: List (world.World -> world.World ! {}), at: String)
+
+-- Work that starts at `at`, the time its input arrived.
+let begin (w: world.World) at = Tx(w = w, changes = [], at = at)
+
+let change f (tx: Tx) = Tx(tx, w = f tx.w, changes = f :: tx.changes)
+
+let commit (tx: Tx) (w: world.World) = List.fold_right (fn f acc -> f acc) tx.changes w
+
+-- Every event of one input carries the time the input arrived.
+let _event (ev: world.Event) (tx: Tx) = change (world.emit world.Event(ev, at = tx.at)) tx
+
+-- ── Running mudlib code ────────────────────────────────────────────────
+
+-- Every mudlib call runs under this. Draws come from the driver's own
+-- generator, and a seed does nothing: all mudlib calls share one generator,
+-- so one file calling Random.seed would otherwise fix every die in the
+-- world.
+let guarded body =
+  handle body () with
+  | Random!int n k -> k (Random.int 0 (n - 1))
+  | Random!float _ k -> k (Random.float ())
+  | Random!seed _ k -> k ()
+
+-- A mudlib call, with a raise as an Error, so a fault in one object cannot
+-- stop the driver.
+let _call body = try guarded body
+
+-- ── The read-only view ─────────────────────────────────────────────────
+
+-- The room an object is in, climbing out of whatever holds it. A room is
+-- in nothing, so a room is its own.
+let room_of id (w: world.World) =
+  match world.env_of id w with
+  | Some e -> room_of e w
+  | None -> world.resolve id
+
+let player? id = world.blueprint_of id == player_bp
+
+let players_in room (w: world.World) = List.filter player? (world.contents room w)
+
+-- Every body in the world, asleep or not.
+let _players (w: world.World) =
+  List.filter player? (List.map (fn (i: world.Instance) -> i.id) (Map.values w.instances))
+
+-- The world as `viewer` sees it now. Each function answers from this one
+-- moment.
+let view (w: world.World) viewer =
+  core.World(
+    contents = fn id -> world.contents id w,
+    env_of = fn id -> world.env_of id w,
+    short_of = fn id -> _text w viewer id true,
+    long_of = fn id -> _text w viewer id false,
+    exits_of = fn id -> match world.instance id w with
+      | Some i -> i.object.exits
+      | None -> Map.empty,
+    player? = player?,
+    players = fn () -> _players w
+  )
+and _text (w: world.World) viewer id short =
+  match world.instance id w with
+  | None -> "nothing"
+  | Some i -> (
+    let ctx =
+      core.Ctx(self = i.id, actor = viewer, here = room_of i.id w, world = view w viewer);
+    if short then i.object.short ctx else i.object.long ctx
+  )
+
+let short_of id (w: world.World) = _text w id id true
+
+let ctx_for (w: world.World) self actor =
+  core.Ctx(
+    self = world.resolve self,
+    actor = actor,
+    here = room_of actor w,
+    world = view w actor
+  )
+
+-- ── Spawning ───────────────────────────────────────────────────────────
+
+-- Make instance `id` of blueprint `bp` inside `dest`, and apply the actions
+-- its `create` asks for. Nothing happens for a blueprint that is not in
+-- the lib, or a create that raises; the event log says which.
+let _create (lib: Lib) id bp saved dest (tx: Tx) =
+  match Map.get bp lib with
+  | None -> _event (world.Event(at = "", event = "refused", actor = id, text = Some "no blueprint %{bp}")) tx
+  | Some b -> (
+    match _call (fn () -> b.create id saved) with
+    | Error why -> _event (world.Event(at = "", event = "fault", actor = id, text = Some why)) tx
+    | Ok init ->
+      tx
+      |> change (world.put (world.Instance(id = id, blueprint = bp, object = init.object, env = dest)))
+      |> _apply_actions lib (ctx_for tx.w id id) init.actions
+  )
+
+-- Make sure `id` exists: a room named by an exit is spawned the first time
+-- someone goes there.
+and _ensure (lib: Lib) id (tx: Tx) =
+  let full = world.resolve id;
+  if Option.some? (world.instance full tx.w) then tx
+  else _create lib full (world.blueprint_of full) None None tx
+
+and spawn (lib: Lib) bp dest saved (tx: Tx) =
+  _create lib "%{bp}#%{world.next_number bp tx.w}" bp saved dest tx
+
+-- ── Actions ────────────────────────────────────────────────────────────
+
+and _refuse (ctx: core.Ctx) why (tx: Tx) =
+  _event (world.Event(at = "", event = "refused", actor = ctx.self, text = Some why)) tx
+
+and _say (ctx: core.Ctx) text (tx: Tx) =
+  List.fold_left
+    (fn acc p -> change (world.tell p text) acc)
+    tx
+    (players_in (room_of ctx.self tx.w) tx.w)
+
+-- An object may move itself, the player whose command it is running, or
+-- something it holds.
+and _may_move? (ctx: core.Ctx) obj (w: world.World) =
+  obj == ctx.self || obj == ctx.actor || world.env_of obj w == Some ctx.self
+
+and _act (lib: Lib) (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
+  match a with
+  | core.Say text -> _say ctx text tx
+  | core.Tell target text ->
+    if world.session? target && world.blueprint_of ctx.self != "/std/login" then
+      _refuse ctx "only /std/login may tell a session" tx
+    else change (world.tell target text) tx
+  | core.Move obj dest -> (
+    let o = world.resolve obj;
+    if !(_may_move? ctx o tx.w) then _refuse ctx "may not move %{o}" tx
+    else (
+      let moved = tx |> _ensure lib dest |> change (world.move o dest);
+      if player? o then look lib o moved else moved
+    )
+  )
+  | core.Spawn bp dest -> tx |> _ensure lib dest |> spawn lib bp (Some (world.resolve dest)) None
+  | core.Login name ->
+    if world.blueprint_of ctx.self != "/std/login" then _refuse ctx "only /std/login may log in" tx
+    else login lib ctx.actor name tx
+
+and _apply_actions (lib: Lib) (ctx: core.Ctx) actions (tx: Tx) =
+  List.fold_left (fn acc a -> _act lib ctx a acc) tx actions
+
+-- Apply what a call on `ctx.self` gave back.
+and apply (lib: Lib) (ctx: core.Ctx) (r: core.Reply) (tx: Tx) = (
+  let kept =
+    match r.next with
+    | Some o -> change (world.set_object ctx.self o) tx
+    | None -> tx;
+  _apply_actions lib ctx r.actions kept
+)
+
+-- Run a reply-giving mudlib call, and apply its reply. A raise is a fault:
+-- the actor is told, and the event log keeps why.
+and run (lib: Lib) (ctx: core.Ctx) body (tx: Tx) =
+  match _call body with
+  | Ok r -> apply lib ctx r tx
+  | Error why ->
+    tx
+    |> change (world.tell ctx.actor "Something went wrong with %{short_of ctx.self tx.w}.")
+    |> _event (world.Event(at = "", event = "fault", actor = ctx.actor, object = Some ctx.self, text = Some why))
+
+-- Run the verb named `name` on `self`, with no arguments.
+and verb (lib: Lib) self actor name (tx: Tx) =
+  match world.instance self tx.w with
+  | None -> tx
+  | Some i -> (
+    match List.find (fn (v: core.Verb) -> List.any? (fn n -> n == name) v.names) i.object.verbs with
+    | None -> tx
+    | Some v -> (
+      let ctx = ctx_for tx.w i.id actor;
+      run lib ctx (fn () -> v.run ctx (core.Parsed(verb = name))) tx
+    )
+  )
+
+and look (lib: Lib) body (tx: Tx) = verb lib body body "look" tx
+
+-- ── Login ──────────────────────────────────────────────────────────────
+
+-- Attach a session to the body of `name`, making the account and its body
+-- the first time.
+and login (lib: Lib) sid name (tx: Tx) =
+  match world.account name tx.w with
+  | Some acct ->
+    if Option.some? (world.session_of acct.body tx.w) then
+      change (world.tell sid "%{name} is here already. What is your name?") tx
+    else _wake lib sid name acct.body "%{name} wakes up." tx
+  | None -> (
+    let body = "%{player_bp}#%{world.next_number player_bp tx.w}";
+    let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
+    tx
+    |> _ensure lib arrival
+    |> _create lib body player_bp (Some saved) (Some arrival)
+    |> change (world.add_account name body)
+    |> _wake lib sid name body "%{name} arrives."
+  )
+
+and _wake (lib: Lib) sid name body news (tx: Tx) =
+  tx
+  |> change (world.attach sid body)
+  |> _event (world.Event(at = "", event = "login", actor = sid, name = Some name, object = Some body))
+  |> change (world.tell body "Hello, %{name}.")
+  |> _tell_room (room_of body tx.w) body news
+  |> look lib body
+
+and _tell_room room except text (tx: Tx) =
+  List.fold_left
+    (fn acc p -> if p == except then acc else change (world.tell p text) acc)
+    tx
+    (players_in room tx.w)
+
+-- ── Commands ───────────────────────────────────────────────────────────
+
+-- `"Hello.` is `say Hello.`, `:sits.` is `pose sits.`, and `;'s cat
+-- purrs.` is `semipose 's cat purrs.`. The driver rewrites the prefix and
+-- nothing else; the commands are the player's verbs.
+let _expand line =
+  let rest = String.slice 1 (String.length line) line;
+  if String.starts_with? `"` line then "say %{rest}"
+  else if String.starts_with? ":" line then "pose %{rest}"
+  else if String.starts_with? ";" line then "semipose %{rest}"
+  else line
+
+let _fits? (arg: core.Arg) (f: parse.Found) holder =
+  match arg with
+  | core.NoArg -> true
+  | core.This -> parse.found? holder f
+  | core.AnyObj -> Option.some? (parse.found_id f)
+
+-- The first verb that answers: on the player, then the room, then the
+-- direct object, then the indirect one.
+let _find (w: world.World) holders verb dobj iobj =
+  List.head
+    (List.filter_map
+      (fn h -> match world.instance h w with
+        | None -> None
+        | Some i ->
+          Option.map
+            (fn v -> (h, v))
+            (List.find
+              (fn (v: core.Verb) -> List.any? (fn n -> n == verb) v.names
+              && _fits? v.dobj dobj h
+              && _fits? v.iobj iobj h)
+              i.object.verbs)
+      )
+      holders)
+
+-- Why nothing answered, in words the player can act on.
+let _unmatched (w: world.World) verb (dobj: parse.Found) =
+  match dobj with
+  | parse.Missing words -> "You don't see a '%{words}' here."
+  | parse.Ambiguous words ids ->
+    String.join
+      "\n"
+      ("Which %{words}?" :: List.map (fn (n, id) -> "  %{n + 1}. %{short_of id w}") (List.indexed ids))
+  | _ -> `I don't know how to "%{verb}".`
+
+let _list o =
+  match o with
+  | Some x -> [x]
+  | None -> []
+
+-- Match a line to a verb and run it. A bare exit name is `go` that way.
+let command (lib: Lib) body line (tx: Tx) = (
+  let here = room_of body tx.w;
+  let verb = String.lower (Option.default "" (String.word 0 line));
+  let rest = String.trim (String.slice (String.length verb) (String.length line) line);
+  let words = parse.split (String.words rest);
+  let dobj = parse.resolve tx.w body here words.dobj;
+  let iobj = parse.resolve tx.w body here words.iobj;
+  let holders =
+    List.unique
+      (List.flatten [[body, here], _list (parse.found_id dobj), _list (parse.found_id iobj)]);
+  match _find tx.w holders verb dobj iobj with
+  | Some(h, v) -> (
+    let ctx = ctx_for tx.w h body;
+    let parsed =
+      core.Parsed(
+        verb = verb,
+        dobj = parse.found_id dobj,
+        prep = words.prep,
+        iobj = parse.found_id iobj,
+        rest = rest
+      );
+    run lib ctx (fn () -> v.run ctx parsed) tx
+  )
+  | None -> (
+    match world.instance here tx.w with
+    | Some r when Map.has? verb r.object.exits -> command lib body "go %{verb}" tx
+    | _ -> change (world.tell body (_unmatched tx.w verb dobj)) tx
+  )
+)
+
+-- ── Input ──────────────────────────────────────────────────────────────
+
+let _who body (w: world.World) =
+  let names =
+    List.sort
+      (List.filter_map
+        (fn (s: world.Session) -> Option.map (fn b -> short_of b w) s.body)
+        (Map.values w.sessions));
+  world.tell body "%{List.length names} connected: %{String.join ", " names}." w
+
+-- A line from a session that is logged in.
+let _play (lib: Lib) sid body at line (tx: Tx) =
+  if line == "" then tx
+  else (
+    let full = _expand line;
+    let verb = String.lower (Option.default "" (String.word 0 full));
+    let logged =
+      _event
+        world.Event(
+          at = at,
+          event = "command",
+          actor = body,
+          name = Some (short_of body tx.w),
+          verb = Some verb,
+          room = Some (room_of body tx.w),
+          text = if verb == "say" then
+              Some (String.trim (String.slice 3 (String.length full) full))
+            else None
+        )
+        tx;
+    match verb with
+    | "/quit" ->
+      logged |> change (world.tell body "Goodbye.") |> change (world.close_soon sid)
+    | "/who" -> change (_who body) logged
+    | _ -> command lib body full logged
+  )
+
+-- A line from a session that has not logged in goes to /std/login, whole.
+let _to_login (lib: Lib) sid line (tx: Tx) =
+  match world.instance login_id tx.w with
+  | None -> tx
+  | Some i -> (
+    match i.object.input with
+    | None -> tx
+    | Some f -> (
+      let ctx =
+        core.Ctx(self = login_id, actor = sid, here = login_id, world = view tx.w sid);
+      run lib ctx (fn () -> f ctx line) tx
+    )
+  )
+
+let run_input (lib: Lib) (i: world.Input) (tx: Tx) =
+  match i with
+  | world.Connect sid _ -> verb lib login_id sid "connect" tx
+  | world.Line sid at line -> (
+    match world.session sid tx.w with
+    | None -> tx
+    -- A session that is closing, after /quit say, runs nothing more: the
+    -- reader may have queued lines the client sent after it.
+    | Some s when s.closing -> tx
+    | Some s -> (
+      match s.body with
+      | None -> _to_login lib sid line tx
+      | Some body -> _play lib sid body at (String.trim line) tx
+    )
+  )
+  | world.Gone _ _ body -> (
+    match body with
+    | Some b -> _tell_room (room_of b tx.w) b "%{short_of b tx.w} falls asleep." tx
+    | None -> tx
+  )
+
+-- ── The loop ───────────────────────────────────────────────────────────
+
+-- The rooms and services that exist before anyone connects.
+let boot (lib: Lib) state at =
+  let tx = begin (Shared.get state) at |> _ensure lib login_id |> _ensure lib arrival;
+  Shared.update state (commit tx)
+
+-- Take every queued input, in order. Each is applied in its own update,
+-- and taken off the queue in the same update, so a session can see when
+-- the driver has finished with everything it sent.
+let step (lib: Lib) state =
+  let (w: world.World) = Shared.get state;
+  List.each
+    (fn i ->
+      let tx = run_input lib i (begin (Shared.get state) (world.at_of i));
+      Shared.update state (fn cur -> world.dequeued 1 (commit tx cur)))
+    w.inputs

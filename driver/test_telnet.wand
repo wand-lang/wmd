@@ -1,19 +1,11 @@
-import Base64
-
 let {test, group} = import Test
 let telnet = import ./telnet
-
--- A string has no byte escapes, so lines with IAC bytes come from Base64.
--- Each comment shows the bytes in hex.
-let bytes! b64 = Base64.decode! b64
 
 group "clean" (fn () -> [
   test "keeps plain text" (fn t -> t.eq "say hello" (telnet.clean "say hello")),
   test "drops the CR that ends a line" (fn t -> t.eq "look" (telnet.clean "look\r")),
-  -- ff fb 01 "he" ff fa 18 01 ff f0 "llo" ff f1 0d
   test "drops options, subnegotiation and commands" (fn t ->
-    t.eq "hello" (telnet.clean (bytes! "//sBaGX/+hgB//BsbG//8Q0="))),
-  -- ff fd 03 ff fb 18
+    t.eq "hello" (telnet.clean "\xff\xfb\x01he\xff\xfa\x18\x01\xff\xf0llo\xff\xf1\r")),
   test "a line of only IAC sequences is empty" (fn t ->
-    t.eq "" (telnet.clean (bytes! "//0D//sY")))
+    t.eq "" (telnet.clean "\xff\xfd\x03\xff\xfb\x18"))
 ])

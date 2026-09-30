@@ -1,0 +1,117 @@
+uses {Random}
+
+-- A player's body. The everyday commands are verbs here, so anyone can read
+-- how they work. The driver only parses a line, matches it to a verb and
+-- applies the actions the verb gives back.
+
+import JSON
+import List
+import Map
+import Option
+import Result
+import String
+
+let core = import ./core
+let text = import ./text
+
+type State(name: String = "someone")
+
+-- ── look ───────────────────────────────────────────────────────────────
+
+let _look (ctx: core.Ctx) _ =
+  let w = ctx.world;
+  let here = List.filter (fn o -> o != ctx.actor) (w.contents ctx.here);
+  let people = List.filter w.player? here;
+  let things = List.filter (fn o -> !(w.player? o)) here;
+  let exits = Map.keys (w.exits_of ctx.here);
+  let lines =
+    List.flatten [
+      [w.short_of ctx.here, w.long_of ctx.here],
+      if things == [] then []
+      else ["You see %{text.listing (List.map (fn o -> text.a (w.short_of o)) things)}."],
+      [if exits == [] then "There is no way out." else "Exits: %{String.join ", " exits}."],
+      List.map (fn p -> "%{w.short_of p} is here.") people
+    ];
+  core.tell ctx (String.join "\n" lines)
+
+-- ── go ─────────────────────────────────────────────────────────────────
+
+let _opposites = Map.from_list [
+  ("north", "the south"),
+  ("south", "the north"),
+  ("east", "the west"),
+  ("west", "the east"),
+  ("up", "below"),
+  ("down", "above")
+]
+
+let _arrival name dir =
+  match Map.get dir _opposites with
+  | Some from -> "%{name} arrives from %{from}."
+  | None -> "%{name} arrives."
+
+-- The people already in `room`, who see someone arrive.
+let _in (ctx: core.Ctx) room = List.filter ctx.world.player? (ctx.world.contents room)
+
+let _go (s: State) (ctx: core.Ctx) (p: core.Parsed) = (
+  let dir = String.lower (String.trim p.rest);
+  match Map.get dir (ctx.world.exits_of ctx.here) with
+  | None -> core.tell ctx (if dir == "" then "Go where?" else "You can't go that way.")
+  | Some e -> (
+    let check = Option.default (fn _ -> Ok()) e.check;
+    match check ctx with
+    | Error why -> core.tell ctx why
+    | Ok _ -> core.Reply(
+      actions = List.flatten [
+        List.map
+          (fn o -> core.Tell o (Option.default "%{s.name} leaves %{dir}." e.leave))
+          (text.others ctx),
+        List.map
+          (fn o -> core.Tell o (Option.default (_arrival s.name dir) e.arrive))
+          (_in ctx e.to),
+        [core.Move ctx.actor e.to]
+      ]
+    )
+  )
+)
+
+-- ── talk ───────────────────────────────────────────────────────────────
+
+let _say (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+  if p.rest == "" then core.tell ctx "Say what?"
+  else core.Reply(actions = text.act ctx `You say "%{p.rest}"` `%{s.name} says "%{p.rest}"`)
+
+-- `pose sits down.` shows "Ann sits down." to everyone, Ann too.
+let _pose (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+  if p.rest == "" then core.tell ctx "Pose what?"
+  else core.Reply(actions = text.act ctx "%{s.name} %{p.rest}" "%{s.name} %{p.rest}")
+
+-- `semipose 's cat purrs.` shows "Ann's cat purrs.": no space after the name.
+let _semipose (s: State) (ctx: core.Ctx) (p: core.Parsed) =
+  if p.rest == "" then core.tell ctx "Semipose what?"
+  else core.Reply(actions = text.act ctx "%{s.name}%{p.rest}" "%{s.name}%{p.rest}")
+
+-- ── the body ───────────────────────────────────────────────────────────
+
+let _verb names run = core.Verb(names, run)
+
+let make (s: State) =
+  core.Object(
+    names = [String.lower s.name],
+    short = fn _ -> s.name,
+    long = fn _ -> "%{s.name} looks like a person.",
+    verbs = [
+      _verb ["look", "l"] _look,
+      _verb ["go"] (_go s),
+      _verb ["say"] (_say s),
+      _verb ["pose"] (_pose s),
+      _verb ["semipose"] (_semipose s)
+    ],
+    save = fn () -> State.encoder s
+  )
+
+-- The driver spawns a body with its name already in `saved`.
+implement core.Blueprint =
+  let create _ saved = match saved with
+  | None -> core.Init(object = make State())
+  | Some j -> core.Init(object = make (Result.get! (JSON.decode State.decoder j)))

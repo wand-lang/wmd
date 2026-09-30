@@ -36,7 +36,7 @@ let flushed! (w: world.World) =
   )
 
 test "flush writes each event once and takes it out of the world" (fn t ->
-  let w = world.empty |> world.open "session:1" at |> world.input "session:1" at "ann";
+  let w = world.empty |> world.open_next at |> world.open_next at;
   let (appended, left) = flushed! w;
   t.eq ([./logs/2026-10-02.jsonl, ./logs/2026-10-02.jsonl], 0) (
     List.map (fn (p, _) -> p) appended,

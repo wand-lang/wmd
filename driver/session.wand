@@ -1,4 +1,4 @@
-uses {Clock, Net.Listen, Random, Shared}
+uses {Clock, Net.Listen, Shared}
 
 -- Each connection gets two fibers: a reader that runs the command loop, and
 -- a writer that drains the session's outbox. Only the writer writes to the
@@ -11,7 +11,6 @@ import Clock
 import List
 import Net
 import Par
-import Random
 import Result
 import Shared
 import String
@@ -21,13 +20,9 @@ let world = import ./world
 
 let _now () = "%{Clock.now ()}"
 
--- Take the lines in a session's outbox. Only the writer of that session
--- takes lines out, so dropping the ones it took loses none added since.
-let _take state sid = (
-  let lines = world.outbox sid (Shared.get state);
-  Shared.update state (world.taken sid (List.length lines));
-  lines
-)
+-- Take the lines in a session's outbox, in one step: the update answers
+-- the world before it emptied the outbox, so no line is lost or sent twice.
+let _take state sid = world.outbox sid (Shared.update state (world.emptied sid))
 
 -- Send what is in the outbox now. True when it went, or there was nothing
 -- to send; false when the connection is gone.
@@ -43,11 +38,17 @@ let _writer state sid conn =
   else if world.closing? sid (Shared.get state) then ()
   else (Clock.sleep 50ms; _writer state sid conn)
 
+-- Wait until the driver has finished with every line this session sent,
+-- so a client that sends a command and then closes still gets the answer.
+let _settle state sid =
+  if world.pending? sid (Shared.get state) then (Clock.sleep 20ms; _settle state sid)
+
+-- Lines go to the driver, which runs them in the order they came.
 let _reader state sid conn =
   match Net.read_line conn with
-  | None -> ()
+  | None -> _settle state sid
   | Some raw -> (
-    Shared.update state (world.input sid (_now ()) (telnet.clean raw));
+    Shared.update state (world.queue (world.Line sid (_now ()) (telnet.clean raw)));
     if world.closing? sid (Shared.get state) then () else _reader state sid conn
   )
 
@@ -57,10 +58,9 @@ let _reader state sid conn =
 -- drained once more after it: that is how the goodbye gets out. A failure
 -- inside the session is caught here, because a raise from one element of
 -- Par.each_stream would stop every other session too.
-let serve state conn = (
-  let sid = "session:%{Random.hex 12}";
-  Shared.update state (world.open sid (_now ()));
+let serve state conn =
+  let (before: world.World) = Shared.update state (world.open_next (_now ()));
+  let sid = world.session_id before.opened;
   let _ = try Par.all! [fn () -> _reader state sid conn, fn () -> _writer state sid conn];
   let _ = try _drained? state sid conn;
   Shared.update state (world.close sid (_now ()))
-)

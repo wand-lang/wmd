@@ -1,0 +1,29 @@
+-- Text for people: articles, lists of names, and one action seen from two
+-- sides.
+
+import List
+import String
+
+let core = import ./core
+
+-- "a lever", "an orc".
+let a name =
+  if List.any? (fn v -> String.starts_with? v (String.lower name)) ["a", "e", "i", "o", "u"] then
+    "an %{name}"
+  else "a %{name}"
+
+-- "Ann", "Ann and Bo", "Ann, Bo and Cy".
+let listing names =
+  match List.reverse names with
+  | [] -> ""
+  | [last :: []] -> last
+  | [last :: before] -> "%{String.join ", " (List.reverse before)} and %{last}"
+
+-- The other players in the room of the actor.
+let others (ctx: core.Ctx) =
+  List.filter (fn p -> p != ctx.actor && ctx.world.player? p) (ctx.world.contents ctx.here)
+
+-- An action reads differently to the one doing it and to everyone else:
+-- "You say" to the actor, "Ann says" to the rest of the room.
+let act (ctx: core.Ctx) you them =
+  core.Tell ctx.actor you :: List.map (fn p -> core.Tell p them) (others ctx)

@@ -1,0 +1,39 @@
+uses {Random}
+
+-- A lever that counts its pulls: the smallest object with state.
+--
+-- The state is a record that the object's functions close over. Pulling
+-- gives back a new object over the new state, and `save` gives the driver
+-- what to keep.
+
+import JSON
+import Result
+
+let core = import ../../std/core
+let text = import ../../std/text
+
+type State(pulls: Int = 0)
+
+let make (s: State) =
+  core.Object(
+    names = ["lever", "brass lever"],
+    short = fn _ -> "brass lever",
+    long = fn _ -> "It has been pulled %{s.pulls} times.",
+    verbs = [
+      core.Verb(
+        names = ["pull", "yank"],
+        dobj = core.This,
+        run = fn ctx _ -> core.Reply(
+          actions =
+            text.act ctx "You pull the lever. Clunk." "Someone pulls the lever. Clunk.",
+          next = Some (make State(s, pulls = s.pulls + 1))
+        )
+      )
+    ],
+    save = fn () -> State.encoder s
+  )
+
+implement core.Blueprint =
+  let create _ saved = match saved with
+  | None -> core.Init(object = make State())
+  | Some j -> core.Init(object = make (Result.get! (JSON.decode State.decoder j)))

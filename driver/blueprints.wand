@@ -1,0 +1,27 @@
+-- Written by tools/blueprints.wand from ./lib. Do not edit: run the
+-- tool again after adding or removing a blueprint.
+
+import Map
+
+let core = import ../lib/std/core
+let _b0 = import ../lib/realm/commons/garden
+let _b1 = import ../lib/realm/commons/lever
+let _b2 = import ../lib/realm/commons/square
+let _b3 = import ../lib/std/login
+let _b4 = import ../lib/std/player
+
+let lib : Map core.Blueprint = Map.from_list [
+  ("/realm/commons/garden", _b0),
+  ("/realm/commons/lever", _b1),
+  ("/realm/commons/square", _b2),
+  ("/std/login", _b3),
+  ("/std/player", _b4)
+]
+
+let paths = [
+  "/realm/commons/garden",
+  "/realm/commons/lever",
+  "/realm/commons/square",
+  "/std/login",
+  "/std/player"
+]

@@ -1,0 +1,20 @@
+uses {Random}
+
+-- The arrival room: where everyone first stands.
+
+let core = import ../../std/core
+let room = import ../../std/room
+
+let square =
+  core.Object(
+    room.room
+      "The Commons"
+      "A wide, quiet square. Doors of every size stand along its edges, all of them shut for now.",
+    exits = {north = room.exit "/realm/commons/garden"}
+  )
+
+-- A new square gets its lever. A restored one already has it.
+implement core.Blueprint =
+  let create self saved = match saved with
+  | None -> core.Init(object = square, actions = [core.Spawn "/realm/commons/lever" self])
+  | Some _ -> core.Init(object = square)

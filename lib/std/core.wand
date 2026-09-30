@@ -1,0 +1,108 @@
+-- The contract between the driver and every mudlib file.
+--
+-- A mudlib file is a blueprint: it implements Blueprint, and the driver
+-- calls its `create` once for each instance it spawns. An object never
+-- changes the world. It returns Actions, and the next version of itself,
+-- and the driver checks and applies them.
+
+-- An object's id: its blueprint's path and an instance number, as in
+-- /realm/commons/lever#0. A connection that has not logged in yet is a
+-- session id, such as session:3fa9c2d1b07e, which never starts with /.
+type ObjId = String
+
+-- What a verb takes as its direct or indirect object: nothing, the object
+-- the verb is on, or any object.
+type Arg = NoArg | This | AnyObj
+
+-- A parsed line. `put lever in box` is verb "put", dobj the lever, prep
+-- "in", iobj the box. `rest` is the text after the verb, as typed, for
+-- verbs that take free text, such as say.
+type Parsed(
+  verb: String,
+  dobj: Option ObjId = None,
+  prep: Option String = None,
+  iobj: Option ObjId = None,
+  rest: String = ""
+)
+
+-- A read-only view of the world as it is when the call starts. Reading
+-- stays pure: each function answers from the same moment.
+type World(
+  contents: ObjId -> List ObjId,
+  env_of: ObjId -> Option ObjId,
+  short_of: ObjId -> String,
+  long_of: ObjId -> String,
+  exits_of: ObjId -> Map Exit,
+  player?: ObjId -> Bool,
+  players: Unit -> List ObjId
+)
+
+-- Who is asking, about what, and where. `self` is the object the call is
+-- on. `actor` is the player who typed the command, or `self` when the
+-- driver calls an object on its own.
+type Ctx(self: ObjId, actor: ObjId, here: ObjId, world: World)
+
+-- A way out of a room. A message left as None gets the driver's default.
+-- `check` refuses with the message the mover sees, as in
+-- Error "The door is locked."
+type Exit(
+  to: ObjId,
+  leave: Option String = None,
+  arrive: Option String = None,
+  check: Option (Ctx -> Result String Unit) = None
+)
+
+-- Everything an object can ask of the world.
+type Action =
+  -- Show a line to everyone in the room the object is in.
+  Say String
+  -- Show a line to one player.
+  | Tell ObjId String
+  -- Move an object into another.
+  | Move ObjId ObjId
+  -- Make a new instance of a blueprint, inside an object.
+  | Spawn String ObjId
+  -- A login succeeded for this name. Only /std/login may ask this.
+  | Login String
+
+-- A command the object answers to. `run` gets the parsed command, with
+-- dobj and iobj already matched to objects.
+type Verb(
+  names: List String,
+  dobj: Arg = NoArg,
+  iobj: Arg = NoArg,
+  run: Ctx -> Parsed -> Reply ! {Random, Raise}
+)
+
+type Object(
+  names: List String,
+  short: Ctx -> String,
+  long: Ctx -> String,
+  verbs: List Verb = [],
+  exits: Map Exit = {},
+  -- While the room a player is in has one, the player's lines come here
+  -- unparsed.
+  input: Option (Ctx -> String -> Reply ! {Random, Raise}) = None,
+  -- The state to keep: what `create` gets back as `saved`.
+  save: Unit -> JSON
+)
+
+-- What a verb gives back: actions for the driver, and the next version of
+-- the object, when it changed.
+type Reply(actions: List Action = [], next: Option Object = None)
+
+-- What `create` gives back: the object, and actions to apply once it
+-- exists. A restored object gets no starting actions, or a restart would
+-- spawn its contents again.
+type Init(object: Object, actions: List Action = [])
+
+-- What every mudlib file implements, as `implement core.Blueprint`.
+-- `create self saved` builds the instance `self`, from its saved state or,
+-- when `saved` is None, new.
+interface Blueprint(create: ObjId -> Option JSON -> Init ! {Random, Raise})
+
+-- A reply that changes nothing.
+let nothing = Reply()
+
+-- A reply that only shows the actor a line.
+let tell (ctx: Ctx) line = Reply(actions = [Tell ctx.actor line])

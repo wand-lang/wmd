@@ -1,0 +1,13 @@
+uses {Random}
+
+let core = import ../../std/core
+let room = import ../../std/room
+
+let garden =
+  core.Object(
+    room.room "The Garden" "A small walled garden. A path leads back south to the Commons.",
+    exits = {south = room.exit "/realm/commons/square"}
+  )
+
+implement core.Blueprint =
+  let create _ _ = core.Init(object = garden)

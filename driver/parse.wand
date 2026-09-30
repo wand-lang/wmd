@@ -1,0 +1,100 @@
+-- Turning the words of a command into objects.
+--
+-- The driver does the parsing, so builders never parse strings: a verb
+-- says what it takes, and gets objects.
+
+import List
+import Option
+import Result
+import String
+
+let world = import ./world
+
+-- What some words name.
+type Found =
+  -- No words were given.
+  NoWords
+  | Found String
+  -- Words that name nothing here.
+  | Missing String
+  -- Words that name more than one object: the words, then the objects.
+  | Ambiguous String (List String)
+
+-- The words after the verb, split at the first preposition: `lever in box`
+-- is ["lever"], Some "in", ["box"].
+type Split(dobj: List String, prep: Option String, iobj: List String)
+
+let _preps = ["in", "into", "on", "onto", "at", "to", "with", "from", "under", "inside"]
+
+let _articles = ["the", "a", "an"]
+
+let _split before words =
+  match words with
+  | [] -> Split(dobj = List.reverse before, prep = None, iobj = [])
+  | [w :: rest] -> if List.any? (fn p -> p == String.lower w) _preps then
+      Split(dobj = List.reverse before, prep = Some (String.lower w), iobj = rest)
+    else _split (w :: before) rest
+
+let split words = _split [] words
+
+let found? id f =
+  match f with
+  | Found x -> x == id
+  | _ -> false
+
+let found_id f =
+  match f with
+  | Found x -> Some x
+  | _ -> None
+
+let _names id (w: world.World) =
+  match world.instance id w with
+  | Some i -> i.object.names
+  | None -> []
+
+-- Pick one of several matches. `take lever 2` picks the second lever.
+let _pick phrase index matches =
+  match (matches, index) with
+  | ([one], _) -> Found one
+  | (_, Some n) -> (
+    match List.get (n - 1) matches with
+    | Some id -> Found id
+    | None -> Ambiguous phrase matches
+  )
+  | _ -> Ambiguous phrase matches
+
+-- What `words` name, for `actor` standing in `here`. The articles are
+-- dropped. `me`, `here` and an exact id always work. Otherwise it looks in
+-- what the actor carries, then the room, then the room itself, and an
+-- exact name beats the start of one.
+let resolve (w: world.World) actor here words =
+  let lower =
+    List.filter
+      (fn x -> !(List.any? (fn a -> a == x) _articles))
+      (List.map String.lower words);
+  let index =
+    Option.and_then
+      (fn last -> Result.to_option (String.to_int last))
+      (List.head (List.reverse lower));
+  let named =
+    if Option.some? index then List.reverse (List.drop 1 (List.reverse lower)) else lower;
+  let phrase = String.join " " named;
+  if phrase == "" then NoWords
+  else if phrase == "me" then Found actor
+  else if phrase == "here" then Found here
+  else if String.starts_with? "/" phrase then
+    match world.instance phrase w with
+    | Some i -> Found i.id
+    | None -> Missing phrase
+  else (
+    let candidates = List.flatten [world.contents actor w, world.contents here w, [here]];
+    let exact =
+      List.filter (fn id -> List.any? (fn n -> n == phrase) (_names id w)) candidates;
+    let prefix =
+      List.filter
+        (fn id -> List.any? (fn n -> String.starts_with? phrase n) (_names id w))
+        candidates;
+    if exact != [] then _pick phrase index exact
+    else if prefix != [] then _pick phrase index prefix
+    else Missing phrase
+  )

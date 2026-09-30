@@ -1,15 +1,22 @@
 #!/usr/bin/env wand
-uses {Clock, FS.Write, IO, Net.Listen, Proc, Random, Shared}
+uses {Clock, FS.Read, FS.Write, IO, Net.Listen, Proc, Random, Shared}
 
--- The wmd server. Run it from the repo as ./wmd, or from a game directory
--- as wand github.com/wand-lang/wmd/wmd.
+-- The wmd server. Run it from the repo as ./wmd.
+--
+-- The mudlib is loaded through driver/blueprints.wand, which
+-- tools/blueprints.wand writes from the mudlib directory.
 
 import Args
 import IO
 import Proc
 
+let blueprints = import ./driver/blueprints
 let main = import ./driver/main
 
 match Args.parse main.Opts.decoder (Proc.args ()) with
-| Ok o -> main.run! o
 | Error e -> (IO.println_err "wmd: %{e}"; Proc.exit 2)
+| Ok o -> (
+  match main.problem! o blueprints.paths with
+  | Some why -> (IO.println_err "wmd: %{why}"; Proc.exit 2)
+  | None -> main.run! o blueprints.lib
+)

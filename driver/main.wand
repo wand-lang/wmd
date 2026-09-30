@@ -1,32 +1,51 @@
-uses {Clock, FS.Write, IO, Net.Listen, Random, Shared}
+uses {Clock, FS.Read, FS.Write, IO, Net.Listen, Random, Shared}
 
--- The server: the telnet listener and the event logger, side by side, over
--- one Shared World.
+-- The server: the telnet listener, the driver loop and the event logger,
+-- side by side, over one Shared World.
 
 import Clock
 import FS
 import IO
+import List
+import Map
 import Net
 import Par
 import Resource
 import Shared
 
+let engine = import ./engine
 let log = import ./log
+let scan = import ./scan
 let session = import ./session
 let world = import ./world
 
 -- The flags of `wmd`. Each field is a flag: --port 4000 --logs ./logs.
-type Opts(port: Port = :4000, logs: Path = ./logs)
+type Opts(port: Port = :4000, logs: Path = ./logs, lib: Path = ./lib)
 
-let run! (o: Opts) = (
+-- Why the server must not start, if it must not. A missing mudlib is an
+-- error rather than an empty world, so a typo in the path shows. A list of
+-- blueprints that no longer matches the files would run old code.
+let problem! (o: Opts) paths =
+  if !(FS.dir? o.lib) then Some "no mudlib at %{o.lib}"
+  else if List.map (fn (b: scan.Blueprint) -> b.path) (scan.blueprints! o.lib) != paths then
+    Some
+      "the blueprints in %{o.lib} changed; run: wand tools/blueprints.wand --lib %{o.lib}"
+  else None
+
+-- The driver looks for input every 20ms: nothing can wait on a Shared for
+-- a change.
+let run! (o: Opts) (lib: engine.Lib) = (
   FS.mkdir! o.logs;
   IO.println "wmd listening on %{o.port}, logging to %{o.logs}";
   with Shared.make world.empty as state ->
   -- On the way out, SIGTERM included, the events not yet written are
   -- written. The release runs before the Shared above is closed.
-  with Resource.make (fn () -> ()) (fn () -> log.flush! state o.logs) as _ ->
-  Par.all! [
-    fn () -> Net.listen o.port |> Par.each_stream 256 (session.serve state),
-    fn () -> Clock.every 1s (fn () -> log.flush! state o.logs)
-  ]
+  with Resource.make (fn () -> ()) (fn () -> log.flush! state o.logs) as _ -> (
+    engine.boot lib state "%{Clock.now ()}";
+    Par.all! [
+      fn () -> Net.listen o.port |> Par.each_stream 256 (session.serve state),
+      fn () -> Clock.every 20ms (fn () -> engine.step lib state),
+      fn () -> Clock.every 1s (fn () -> log.flush! state o.logs)
+    ]
+  )
 )

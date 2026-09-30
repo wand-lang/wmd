@@ -1,0 +1,36 @@
+uses {FS.Read}
+
+-- Finding the blueprints in a mudlib directory.
+
+import FS
+import List
+import Path
+import String
+
+-- A blueprint's path in the world, such as /std/player, and its file.
+type Blueprint(path: String, file: Path)
+
+-- /std/player for ./lib/std/player.wand in ./lib.
+let path_in lib (file: Path) =
+  let f = Path.to_string (Path.normalize file);
+  let l = Path.to_string (Path.normalize lib);
+  let inside = String.slice (String.length l) (String.length f) f;
+  String.slice 0 (String.length inside - 5) inside
+
+-- Every file under `lib` with a line that starts `implement core.Blueprint`,
+-- sorted by path.
+-- Helpers such as std/room.wand implement nothing, and tests are not part
+-- of the world.
+let blueprints! lib =
+  List.sort_by
+    (fn (b: Blueprint) -> b.path)
+    (List.filter_map
+      (fn f ->
+        let name = Path.to_string (Path.basename f);
+        if String.starts_with? "test_" name then None
+        else if List.any?
+          (String.starts_with? "implement core.Blueprint")
+          (String.lines (FS.read_file! f)) then
+          Some Blueprint(path = path_in lib f, file = f)
+        else None)
+      (FS.glob_in **/*.wand lib))

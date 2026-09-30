@@ -3,8 +3,9 @@ uses {Clock, Net.Listen, Random, Shared}
 -- Sessions run with no socket. A handler answers Net!listen with fake
 -- connections, one per name in the script, feeds each its own lines, and
 -- keeps what the session writes. "%{conn}" is the name of a fake connection.
+-- The driver loop runs beside them, as it does in the server.
 
-import Base64
+import Clock
 import List
 import Map
 import Net
@@ -14,8 +15,12 @@ import Shared
 import String
 
 let {test, group} = import Test
+let blueprints = import ./blueprints
+let engine = import ./engine
 let session = import ./session
 let world = import ./world
+
+let at = "2026-09-30T12:00:00Z"
 
 -- What each connection was sent, as lines, and the world after every
 -- session has ended.
@@ -23,13 +28,21 @@ type Run(sent: Map (List String), after: world.World)
 
 let _lines text = List.filter (fn l -> l != "") (String.split "\r\n" text)
 
+-- The listener and the driver loop, side by side. The loop stops when every
+-- connection has ended.
+let _serve! state = Par.all! [
+  fn () -> Net.listen :4000 |> Par.each_stream 8 (session.serve state),
+  fn () -> Clock.every 10ms (fn () -> engine.step blueprints.lib state)
+]
+
 -- Serve one fake connection per script. `write_ok` false makes every write
 -- fail, as when the other end has gone.
 let run! scripts write_ok =
   with Shared.make world.empty as state ->
   with Shared.make scripts as input ->
   with Shared.make Map.empty as sent -> (
-    handle Net.listen :4000 |> Par.each_stream 8 (session.serve state) with
+    engine.boot blueprints.lib state at;
+    handle _serve! state with
     | Net!listen _ k -> k (Map.keys scripts)
     | Net!read_line conn k -> (
       let name = "%{conn}";
@@ -58,12 +71,8 @@ group "one session" (fn () -> [
       (List.any?
         (fn l -> String.contains? "dance" l)
         (sent "ann" (one! ["ann", "/quit", "dance"])))),
-  -- ff fb 01 "ann" 0d
   test "telnet bytes are dropped before the line is read" (fn t ->
-    t.ok
-      (List.any?
-        (fn l -> l == "Hello, Ann.")
-        (sent "ann" (one! [Base64.decode! "//sBYW5uDQ=="])))),
+    t.ok (List.any? (fn l -> l == "Hello, Ann.") (sent "ann" (one! ["\xff\xfb\x01ann\r"])))),
   test "the session is gone once the connection ends" (fn t ->
     let w = (one! ["ann", "look"]).after;
     t.eq (true, true) (Map.empty? w.sessions, Map.empty? w.outboxes)),
@@ -87,9 +96,10 @@ group "two sessions" (fn () -> [
 -- session, this would never finish, so a deadline guards it.
 let dropped! () =
   with Shared.make world.empty as state -> (
+    engine.boot blueprints.lib state at;
     let _ =
       Par.timeout 5s (fn () ->
-        handle Net.listen :4000 |> Par.each_stream 1 (session.serve state) with
+        handle _serve! state with
         | Net!listen _ k -> k ["ann"]
         | Net!read_line _ k -> k (Some "look")
         | Net!write _ k -> k (Error "connection closed"));

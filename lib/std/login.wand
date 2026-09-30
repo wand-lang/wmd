@@ -1,0 +1,41 @@
+uses {Random}
+
+-- The login dialogue. One instance, /std/login#0, talks to every session
+-- that has not logged in; the actor is the session. It never sees an
+-- account: it asks the driver to log a name in, and the driver decides.
+
+import JSON
+import Regex
+import String
+
+let core = import ./core
+
+let _ask = "What is your name?"
+
+-- 2 to 16 letters, so a name is easy to type and cannot look like an id.
+let _valid? name = Regex.match? r/^[A-Za-z]{2,16}$/ name
+
+let _capitalize name =
+  String.upper (String.slice 0 1 name) ++ String.lower (String.slice 1 (String.length name) name)
+
+-- The driver runs this when a session connects.
+let _connect (ctx: core.Ctx) _ =
+  core.tell ctx "Welcome to WMD, the World of Many Doors.\n%{_ask}"
+
+let _line (ctx: core.Ctx) line =
+  let name = String.trim line;
+  if _valid? name then core.Reply(actions = [core.Login(_capitalize name)])
+  else core.tell ctx "A name is 2 to 16 letters. %{_ask}"
+
+let login =
+  core.Object(
+    names = [],
+    short = fn _ -> "the login",
+    long = fn _ -> "Where a connection waits for a name.",
+    verbs = [core.Verb(names = ["connect"], run = _connect)],
+    input = Some _line,
+    save = fn () -> JSON.null
+  )
+
+implement core.Blueprint =
+  let create _ _ = core.Init(object = login)

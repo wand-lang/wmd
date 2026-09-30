@@ -22,10 +22,8 @@ let file dir (e: world.Event) =
 -- One append is one write, so lines from two events never interleave.
 let append! dir (e: world.Event) = FS.append! (file dir e) (line e)
 
--- Write the events not yet logged. Only this takes events out of the world,
--- so dropping the ones it wrote loses none added since.
-let flush! state dir = (
-  let (w: world.World) = Shared.get state;
-  Shared.update state (world.logged (List.length w.events));
-  List.each (fn e -> append! dir e) w.events
-)
+-- Write the events not yet logged. They are taken out in one step: the
+-- update answers the world before it emptied them.
+let flush! state dir =
+  let (before: world.World) = Shared.update state world.all_logged;
+  List.each (fn e -> append! dir e) before.events

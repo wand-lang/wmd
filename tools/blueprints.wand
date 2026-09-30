@@ -1,0 +1,68 @@
+uses {FS.Read, FS.Write, IO, Proc}
+
+-- Writes driver/blueprints.wand: one import for every mudlib file that
+-- implements core.Blueprint, and the map the server loads them from.
+--
+-- An import is fixed when a file is checked, so the list is written before
+-- the server's code is loaded. Run this after adding or removing a
+-- blueprint; the server refuses to start while the list is out of date.
+--
+--   wand tools/blueprints.wand --lib ./lib
+
+import Args
+import FS
+import IO
+import List
+import Path
+import Proc
+import String
+import Wand
+
+let scan = import ../driver/scan
+
+type Opts(lib: Path = ./lib, out: Path = ./driver/blueprints.wand)
+
+-- The import path of `file`, as the output file sees it: relative when the
+-- mudlib is given as a relative path, absolute when it is absolute.
+let import_path (o: Opts) (file: Path) =
+  let f = Path.to_string (Path.normalize file);
+  let plain = if String.starts_with? "./" f then String.slice 2 (String.length f) f else f;
+  let bare = String.slice 0 (String.length plain - 5) plain;
+  if Path.absolute? file then bare
+  else (
+    let depth =
+      List.length (List.filter (fn c -> c != ".") (Path.components (Path.dirname o.out)));
+    "%{String.repeat depth "../"}%{bare}"
+  )
+
+let source (o: Opts) (bps: List scan.Blueprint) =
+  let core_file = Path.join o.lib ./std/core.wand;
+  let imports =
+    List.map
+      (fn (n, (b: scan.Blueprint)) -> "let _b%{n} = import %{import_path o b.file}")
+      (List.indexed bps);
+  let entries =
+    List.map (fn (n, (b: scan.Blueprint)) -> `("%{b.path}", _b%{n})`) (List.indexed bps);
+  let paths = List.map (fn (b: scan.Blueprint) -> `"%{b.path}"`) bps;
+  String.join "\n" [
+    "-- Written by tools/blueprints.wand from %{o.lib}. Do not edit: run the",
+    "-- tool again after adding or removing a blueprint.",
+    "",
+    "import Map",
+    "",
+    "let core = import %{import_path o core_file}",
+    String.join "\n" imports,
+    "",
+    "let lib: Map core.Blueprint = Map.from_list [%{String.join ", " entries}]",
+    "",
+    "let paths = [%{String.join ", " paths}]",
+    ""
+  ]
+
+match Args.parse Opts.decoder (Proc.args ()) with
+| Error e -> (IO.println_err "blueprints: %{e}"; Proc.exit 2)
+| Ok o -> (
+  let bps = scan.blueprints! o.lib;
+  FS.write_file! o.out (Wand.format! (source o bps));
+  IO.println "wrote %{o.out}: %{List.length bps} blueprints from %{o.lib}"
+)

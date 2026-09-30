@@ -222,3 +222,80 @@ Observed
   docs checks, and every demo pass.
 - wmd with the fixed wand: SIGTERM exits 143 with no message, and the last
   events are logged.
+
+## 2026-09-30 · milestone 2 · objects, the engine, and wand 0.95
+
+Files: lib/std/{mud,room,text,player,login}.wand,
+lib/realm/commons/{square,garden,lever}.wand, driver/{world,engine,parse,
+scan,session,log,main}.wand, tools/blueprints.wand, and tests.
+
+Observed
+- wand bugs found while writing this, each filed and fixed in wand 0.95:
+  - #50: a record update found its type by bare name in one table for the
+    whole program. The lever's second pull built the player's `State`:
+    `constructor 'State' has no field named 'pulls'`. With matching fields
+    it would have been a wrong value with no error.
+  - #51: `implement mud.Blueprint` failed with `unknown type 'Object'`, no
+    location, because the interface's member types were read in the
+    implementing file. Worked around with a type parameter until the fix.
+  - #52: a list of two different blueprint modules was refused with
+    `expected a module implementing mud.Blueprint Init, got a module
+    implementing mud.Blueprint Init`.
+  - #53: a state-passing Random handler stopped wand with
+    `Fatal error: exception Stdlib.Effect.Continuation_already_resumed`.
+    That ended the plan to run mudlib code inside Shared.update; the driver
+    runs it in one fiber instead, as the design says.
+  - #54: a false V-BANG1 on the lever's `make`.
+  - #61: a function stored in a record field could run a command that no
+    manifest saw. A driver under `uses {IO}` ran `$(echo pwned)` built in a
+    file under `uses {Random, Raise}`. Found while fixing #54.
+- The proposals from milestone 1 were built too: `Shared.update` answers
+  the old value (#55), `\xNN` escapes (#56), `wand f <dir>` (#57),
+  `Wand.check_at` (#59), `Checked.effects` (#60).
+- After 0.95, every workaround came out: plain `implement mud.Blueprint`;
+  one plain list of blueprints; one-step takes of an outbox and the event
+  queue; counted session ids; `\xff` in tests and `[\xfb-\xfe]` in the
+  telnet regex.
+- Other checker errors hit: `'Command' is a built-in type, so it cannot be
+  declared` (renamed `Parsed`); `mud.World and world.World are not the same
+  type` inside a record construction, gone when the annotated lambda moved
+  to its own function; a record field `List (World -> World)` gathered
+  Random from its uses until written `! {}`.
+- One regression the tests caught: with readers that only queue, a line
+  sent after `/quit` still ran. The engine now ignores a closing session.
+- Tests: 45 pass. The engine tests ran green on their first run.
+
+Easy, and why
+- Mudlib objects as records of closures over a private State record: each
+  file was short, and derived `State.encoder` and `State.decoder` made save
+  and restore one line each.
+- Effects as the gate: the Random handler, and the test that a mudlib seed
+  cannot fix the driver's dice, took ten lines.
+
+Hard, and why
+- Interfaces across modules (#51, #52): the first real use of interfaces
+  with several implementing files found both bugs in an hour.
+- Where to run mudlib code: pure inside Shared.update needed a stateful
+  handler (#53); outside it needed a way to learn what an update changed
+  (#55). One driver fiber avoids both.
+
+Candidate wand issues
+- None open. Two older quirks noted, not filed: two modules that claim no
+  interface can share a list; `wand d --load` resolves a file's imports
+  from the working directory, not the file's.
+
+## 2026-09-30 · milestone 2 · a flaky test, and wand 0.95.1
+
+Observed
+- The spike test "two connections" failed about once in eight runs:
+  `expected {ann = [...], bo = [...]}, got {bo = [...], ann = [...]}`. The
+  two maps held the same entries; the sessions had finished in the other
+  order. A probe showed `{a = 1, b = 2} == {b = 2, a = 1}` was `false`, and
+  `List.unique` kept both. Filed as wand #62 and fixed in 0.95.1: maps are
+  equal by keys and values, and still print in insertion order.
+- wand.pkg now needs 0.95.1. The suite passed 10 runs of 10 with it.
+- `mud` was renamed `core` (lib/std/core.wand). Entries above quote the
+  old name as the errors said it.
+
+Candidate wand issues
+- None open.

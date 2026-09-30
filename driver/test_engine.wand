@@ -1,0 +1,163 @@
+uses {Random, Shared}
+
+-- Commands through the driver and the real mudlib in ../lib, with no
+-- socket: a test changes the world as a session would, then lets the
+-- driver take what was queued, as its loop does.
+
+import List
+import Random
+import Shared
+import String
+
+let {test, group} = import Test
+let blueprints = import ./blueprints
+let engine = import ./engine
+let world = import ./world
+
+let at = "2026-09-30T12:00:00Z"
+
+let ann = world.session_id 0
+
+let bo = world.session_id 1
+
+let line sid text = world.queue (world.Line sid at text)
+
+-- Boot the world, then apply each change and let the driver take it.
+let played changes =
+  with Shared.make world.empty as state -> (
+    engine.boot blueprints.lib state at;
+    List.each (fn f -> (Shared.update state f; engine.step blueprints.lib state)) changes;
+    Shared.get state
+  )
+
+let heard sid (w: world.World) = world.outbox sid w
+
+let heard? sid text (w: world.World) = List.any? (fn l -> l == text) (heard sid w)
+
+let events (w: world.World) = List.map (fn (e: world.Event) -> e.event) w.events
+
+-- Ann logged in, and everything she was told so far forgotten.
+let ann_in = [world.open_next at, line ann "ann", world.emptied ann]
+
+-- Ann and Bo both logged in, with nothing heard yet.
+let both_in =
+  List.concat ann_in [world.open_next at, line bo "bo", world.emptied ann, world.emptied bo]
+
+group "login" (fn () -> [
+  test "a new connection is asked for a name" (fn t ->
+    t.eq
+      ["Welcome to WMD, the World of Many Doors.", "What is your name?"]
+      (heard ann (played [world.open_next at]))),
+  test "a name that is not 2 to 16 letters is refused" (fn t ->
+    t.eq
+      ["A name is 2 to 16 letters. What is your name?"]
+      (heard ann (played [world.open_next at, world.emptied ann, line ann "x1"]))),
+  test "a good name wakes a body in the Commons" (fn t ->
+    let w = played [world.open_next at, world.emptied ann, line ann "ann"];
+    t.eq
+      [
+        "Hello, Ann.",
+        "The Commons",
+        "A wide, quiet square. Doors of every size stand along its edges, all of them shut for now.",
+        "You see a brass lever.",
+        "Exits: north."
+      ]
+      (heard ann w)),
+  test "the name of someone connected is refused" (fn t ->
+    t.ok
+      (heard?
+        bo
+        "Ann is here already. What is your name?"
+        (played (List.concat ann_in [world.open_next at, line bo "ANN"])))),
+  test "others see the arrival" (fn t ->
+    t.ok
+      (heard?
+        ann
+        "Bo arrives."
+        (played (List.concat ann_in [world.open_next at, line bo "bo"])))),
+  test "the login is logged, at the time it arrived" (fn t ->
+    t.eq
+      [at]
+      (List.filter_map
+        (fn (e: world.Event) -> if e.event == "login" then Some e.at else None)
+        (played ann_in).events))
+])
+
+group "talk" (fn () -> [
+  test "say" (fn t ->
+    let w = played (List.concat both_in [line ann "say Hello."]);
+    t.eq ([`You say "Hello."`], [`Ann says "Hello."`]) (heard ann w, heard bo w)),
+  test "a quote is say, a colon pose, a semicolon semipose" (fn t ->
+    t.eq
+      [`Ann says "Hi."`, "Ann waves.", "Ann's cat purrs."]
+      (heard
+        bo
+        (played
+          (List.concat both_in [
+            line ann `"Hi.`,
+            line ann ":waves.",
+            line ann ";'s cat purrs."
+          ]))))
+])
+
+group "moving" (fn () -> [
+  test "go north spawns the garden and goes there" (fn t ->
+    let w = played (List.concat both_in [line ann "go north"]);
+    t.eq (Some "The Garden", true) (
+      List.head (heard ann w),
+      heard? bo "Ann leaves north." w
+    )),
+  test "an exit name alone is go" (fn t ->
+    t.eq
+      (Some "The Garden")
+      (List.head (heard ann (played (List.concat ann_in [line ann "north"]))))),
+  test "arriving says where from" (fn t ->
+    t.ok
+      (heard?
+        bo
+        "Ann arrives from the north."
+        (played (List.concat both_in [line ann "north", line ann "south"])))),
+  test "no such exit" (fn t ->
+    t.eq
+      ["You can't go that way."]
+      (heard ann (played (List.concat ann_in [line ann "go west"]))))
+])
+
+group "objects" (fn () -> [
+  -- Each object's state is its own record type, and several files declare
+  -- one named State: the second pull updates the lever's, not the player's.
+  test "the lever can be pulled twice" (fn t ->
+    t.eq
+      ["You pull the lever. Clunk.", "You pull the lever. Clunk."]
+      (heard ann (played (List.concat ann_in [line ann "pull lever", line ann "yank lev"])))),
+  test "an object that is not here" (fn t ->
+    t.eq ["You don't see a 'rope' here."] (heard ann (played (List.concat ann_in [line ann "pull rope"])))),
+  test "an unknown verb" (fn t ->
+    t.eq ["I don't know how to \"dance\"."] (heard ann (played (List.concat ann_in [line ann "dance"]))))
+])
+
+group "driver commands" (fn () -> [
+  test "/who" (fn t ->
+    t.eq
+      ["2 connected: Ann, Bo."]
+      (heard ann (played (List.concat both_in [line ann "/who"])))),
+  test "/quit says goodbye and closes" (fn t ->
+    let w = played (List.concat ann_in [line ann "/quit"]);
+    t.eq (["Goodbye."], true) (heard ann w, world.closing? ann w)),
+  test "a body whose session ends falls asleep, and wakes at the next login" (fn t ->
+    let w =
+      played
+        (List.concat both_in [
+          world.close ann at,
+          world.open_next at,
+          line (world.session_id 2) "ann"
+        ]);
+    t.eq (true, true) (heard? bo "Ann falls asleep." w, heard? bo "Ann wakes up." w))
+])
+
+-- All mudlib calls share one generator, so a seed in one would fix every
+-- die in the world. The driver answers a seed with nothing.
+test "a Random.seed inside a mudlib call does not change the driver's next draw" (fn t ->
+  let draw () = engine.guarded (fn () -> (Random.seed 1; Random.int 1 1000000000));
+  let seeded = (Random.seed 1; Random.int 1 1000000000);
+  t.ok (List.any? (fn d -> d != seeded) [draw (), draw (), draw ()]))
