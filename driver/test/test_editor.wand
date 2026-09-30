@@ -126,6 +126,12 @@ group "opening" (fn () -> [
   test "an admin edits the room they are in with /edit here" (fn t ->
     on_lib! (List.concat ann_in [admin, line ann "/edit here", world.emptied ann, line ann "1p"]) (fn w _ ->
       t.eq ["uses {Random}"] (heard ann w))),
+  test "the editor says how to leave it, where a room lists its exits" (fn t ->
+    on_lib! (List.concat ann_in [line ann "/edit /home/ann/lamp"]) (fn w _ ->
+      t.eq (true, false) (
+        heard? ann "q leaves the editor." w,
+        heard? ann "There is no way out." w
+      ))),
   test "no one else may be moved into your editor" (fn t ->
     on_lib! (List.concat both_in [line ann "/edit /home/ann/lamp"]) (fn w _ ->
       let ctx = engine.ctx_for w "/std/player#1" "/std/player#1";

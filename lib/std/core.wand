@@ -120,7 +120,9 @@ type Object(
   exits: Map Exit = {},
   -- Scenery by name: `look at window` reads `details.window`.
   details: Map (Ctx -> String) = {},
-  -- What the object shows the world, read by others with `prop`.
+  -- What the object shows the world, read by others with `prop`. A room
+  -- with an `exits` prop, a string, shows it where `look` would list its
+  -- exits.
   props: Option (Ctx -> Map JSON) = None,
   -- Called after something arrives in the object, or leaves it, by any
   -- route: an exit, a spawn, being picked up. A move a hook makes does not

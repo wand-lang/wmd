@@ -74,6 +74,9 @@ group "/eval" (fn () -> [
         (fn (e: world.Event) -> e.event == "eval"
         && String.starts_with? "1 + 3 (" (Option.default "" e.text))
         (played ["/eval 1 + 3"]).events)),
+  test "an /eval buffer says what w and q do" (fn t ->
+    t.ok
+      (List.any? (fn l -> l == "w runs the buffer, and q leaves.") (heard (played ["/eval"])))),
   test "with no expression, an editor buffer whose w runs it" (fn t ->
     t.ok
       (List.any?

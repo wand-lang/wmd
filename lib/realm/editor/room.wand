@@ -336,7 +336,9 @@ let make (s: State) =
     ],
     props = Some (fn _ -> {
       path = JSON.of_string s.path,
-      raw = JSON.of_bool (Option.some? s.adding)
+      raw = JSON.of_bool (Option.some? s.adding),
+      exits = JSON.of_string
+        (if s.eval then "w runs the buffer, and q leaves." else "q leaves the editor.")
     }),
     input = Some (fn ctx line -> reply (_input s ctx line)),
     save = fn () -> State.encoder s

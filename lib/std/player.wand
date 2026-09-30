@@ -21,6 +21,14 @@ let _in (ctx: core.Ctx) room = List.filter ctx.world.player? (ctx.world.contents
 
 -- ── look ───────────────────────────────────────────────────────────────
 
+-- The line about a room's exits. A room whose way out is not an exit, such
+-- as the editor, which `q` leaves, says so with an `exits` prop.
+let _way_out (w: core.World) room exits =
+  match Option.and_then (fn j -> Result.to_option (JSON.get_string j)) (w.prop room "exits") with
+  | Some line -> line
+  | None -> if exits == [] then "There is no way out."
+    else "Exits: %{String.join ", " exits}."
+
 let _room (ctx: core.Ctx) =
   let w = ctx.world;
   let here = List.filter (fn o -> o != ctx.actor) (w.contents ctx.here);
@@ -32,7 +40,7 @@ let _room (ctx: core.Ctx) =
       [w.short_of ctx.here, w.long_of ctx.here],
       if things == [] then []
       else ["You see %{text.listing (List.map (fn o -> text.a (w.short_of o)) things)}."],
-      [if exits == [] then "There is no way out." else "Exits: %{String.join ", " exits}."],
+      [_way_out w ctx.here exits],
       List.map
         (fn p -> if w.awake? p then "%{w.short_of p} is here."
           else "%{w.short_of p} is here, asleep.")
