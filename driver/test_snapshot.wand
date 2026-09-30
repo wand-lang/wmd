@@ -1,0 +1,113 @@
+uses {FS.Read, FS.Write, Random, Shared}
+
+-- A world saved to world.json and made again from it.
+
+import FS
+import JSON
+import List
+import Map
+import Option
+import Path
+import Shared
+import String
+
+let {test, group} = import Test
+let blueprints = import ./blueprints
+let engine = import ./engine
+let snapshot = import ./snapshot
+let world = import ./world
+
+let at = "2026-09-30T12:00:00Z"
+
+let ann = world.session_id 0
+
+let line text = world.queue (world.Line ann at text)
+
+-- Ann signs up and pulls the lever twice.
+let _changes = [
+  world.open_next at,
+  line "ann",
+  line "2000-05-01",
+  line "ann-password",
+  line "ann-password",
+  line "pull lever",
+  line "pull lever"
+]
+
+let _play state =
+  List.each (fn f -> (Shared.update state f; engine.step blueprints.lib state)) _changes
+
+-- Play, save to `path`, and give back the world as it was saved.
+let saved! path =
+  with Shared.make (world.with_pepper "test pepper") as state -> (
+    engine.boot blueprints.lib state at;
+    _play state;
+    engine.snapshot! state path at;
+    Shared.get state
+  )
+
+-- A new world made from the file at `path`.
+let restored! path =
+  with Shared.make (world.with_pepper "test pepper") as state ->
+  match snapshot.read! path with
+  | Some f -> (
+    engine.restore blueprints.lib state f at;
+    engine.boot blueprints.lib state at
+  )
+  | None -> Shared.get state
+
+let _where (w: world.World) =
+  List.sort (List.map (fn (i: world.Instance) -> (i.id, i.env)) (Map.values w.instances))
+
+let _lever (w: world.World) =
+  Option.and_then
+    (fn (i: world.Instance) -> i.saved)
+    (world.instance "/realm/commons/lever#0" w)
+
+group "a snapshot" (fn () -> [
+  test "brings back the accounts, the objects and where each one is" (fn t ->
+    with FS.temp_dir "wmd_snap_" as d -> (
+      let path = Path.join d ./world.json;
+      let before = saved! path;
+      let after = restored! path;
+      t.eq (Map.keys before.accounts, _where before) (Map.keys after.accounts, _where after)
+    )),
+  test "brings back each object's own state" (fn t ->
+    with FS.temp_dir "wmd_snap_" as d -> (
+      let path = Path.join d ./world.json;
+      let _ = saved! path;
+      t.eq (Some (JSON.parse! `{"pulls": 2}`)) (_lever (restored! path))
+    )),
+  test "keeps the password hash and never the pepper" (fn t ->
+    with FS.temp_dir "wmd_snap_" as d -> (
+      let path = Path.join d ./world.json;
+      let _ = saved! path;
+      let text = FS.read_file! path;
+      t.eq (true, false) (
+        String.contains? "hmac-sha256$" text,
+        String.contains? "test pepper" text
+      )
+    )),
+  test "saves again only what changed" (fn t ->
+    with FS.temp_dir "wmd_snap_" as d -> (
+      let path = Path.join d ./world.json;
+      with Shared.make (world.with_pepper "test pepper") as state -> (
+        engine.boot blueprints.lib state at;
+        _play state;
+        engine.snapshot! state path at;
+        Shared.update state (line "pull lever");
+        engine.step blueprints.lib state;
+        let (w: world.World) = Shared.get state;
+        t.eq ([], []) (
+          List.filter
+            (fn (i: world.Instance) -> Option.none? i.saved
+            && i.id != "/realm/commons/lever#0")
+            (Map.values w.instances),
+          List.filter
+            (fn (i: world.Instance) -> Option.some? i.saved
+            && i.id == "/realm/commons/lever#0")
+            (Map.values w.instances)
+        )
+      )
+    ))
+])

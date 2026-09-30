@@ -1,0 +1,45 @@
+uses {FS.Read, FS.Write}
+
+-- world.json: what survives a restart. The accounts, and every object's
+-- blueprint, place and saved state. Sessions are not in it, so after a
+-- restart everyone logs in again and finds their body where they left it.
+-- The pepper is not in it either.
+
+import FS
+import JSON
+import List
+import Map
+import Option
+import Result
+
+let world = import ./world
+
+-- One object as the file keeps it.
+type Saved(id: String, blueprint: String, env: Option String = None, state: JSON)
+
+type File(version: Int = 1, accounts: List world.Account, instances: List Saved)
+
+-- The file for a world whose every instance has its saved state. An
+-- instance with none -- its `save` faulted -- is left out, rather than
+-- written as something it never said.
+let of_world (w: world.World) =
+  File(
+    accounts = Map.values w.accounts,
+    instances =
+      List.filter_map
+        (fn (i: world.Instance) -> Option.map
+          (fn s -> Saved(id = i.id, blueprint = i.blueprint, env = i.env, state = s))
+          i.saved)
+        (Map.values w.instances)
+  )
+
+-- Written whole to a temporary file and moved into place, so a crash while
+-- writing leaves the last snapshot, never half of this one.
+let write! path (f: File) = FS.write_atomic! path (JSON.stringify_pretty (File.encoder f))
+
+-- The file at `path`, or None when there is none: a world that has never
+-- been saved.
+let read! path =
+  if FS.exists? path then
+    Some (Result.get! (JSON.decode File.decoder (JSON.read_file! path)))
+  else None

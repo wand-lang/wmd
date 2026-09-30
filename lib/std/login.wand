@@ -1,14 +1,33 @@
 uses {Random}
 
 -- The login dialogue. One instance, /std/login#0, talks to every session
--- that has not logged in; the actor is the session. It never sees an
--- account: it asks the driver to log a name in, and the driver decides.
+-- that has not logged in; the actor is the session. It never sees a
+-- password once it is given: it asks the driver to log in or to register,
+-- and the driver checks and keeps the hash.
 
+import DateTime
 import JSON
+import Map
+import Option
 import Regex
 import String
 
 let core = import ./core
+
+-- Where one session is in the dialogue.
+type Stage =
+  AskName
+  | AskPassword String
+  | AskBirth String
+  | NewPassword String
+  | Confirm String String
+  | Refused
+
+-- 255 251 1 and 255 252 1: the server will and will not echo, so a
+-- telnet client stops showing what is typed while a password is.
+let _hide = "\xff\xfb\x01"
+
+let _show = "\xff\xfc\x01"
 
 let _ask = "What is your name?"
 
@@ -18,24 +37,91 @@ let _valid? name = Regex.match? r/^[A-Za-z]{2,16}$/ name
 let _capitalize name =
   String.upper (String.slice 0 1 name) ++ String.lower (String.slice 1 (String.length name) name)
 
--- The driver runs this when a session connects.
-let _connect (ctx: core.Ctx) _ =
-  core.tell ctx "Welcome to WMD, the World of Many Doors.\n%{_ask}"
+-- A date as written, YYYY-MM-DD, into its three numbers.
+let _date text =
+  match Regex.capture r/^(\d{4})-(\d{2})-(\d{2})$/ (String.trim text) with
+  | [_, y, m, d] -> (
+    match (String.to_int y, String.to_int m, String.to_int d) with
+    | (Ok yy, Ok mm, Ok dd) -> Some(yy, mm, dd)
+    | _ -> None
+  )
+  | _ -> None
 
-let _line (ctx: core.Ctx) line =
-  let name = String.trim line;
-  if _valid? name then core.Reply(actions = [core.Login(_capitalize name)])
-  else core.tell ctx "A name is 2 to 16 letters. %{_ask}"
+-- Whether someone born on (y, m, d) is 13 or older at `now`: their
+-- thirteenth birthday is on or before that day.
+let _thirteen? (y, m, d) now =
+  let ny = DateTime.year now;
+  let nm = DateTime.month now;
+  let nd = DateTime.day now;
+  y + 13 < ny || y + 13 == ny && (m < nm || m == nm && d <= nd)
 
-let login =
+-- The dialogue, over where each session is in it.
+let make (stages: Map Stage) = (
+  let at (ctx: core.Ctx) stage = make (Map.set ctx.actor stage stages);
+  let tell (ctx: core.Ctx) text next =
+    core.Reply(actions = [core.Tell ctx.actor text], next = Some next);
+  let line (ctx: core.Ctx) typed = (
+    let text = String.trim typed;
+    match Option.default AskName (Map.get ctx.actor stages) with
+    | AskName ->
+      if !(_valid? text) then tell ctx "A name is 2 to 16 letters. %{_ask}" (at ctx AskName)
+      else (
+        let name = _capitalize text;
+        if ctx.world.account? name then tell ctx "%{_hide}Password:" (at ctx (AskPassword name))
+        else
+          tell
+            ctx
+            "Welcome, %{name}. What is your date of birth? Write it as YYYY-MM-DD."
+            (at ctx (AskBirth name))
+      )
+    | AskPassword name ->
+      core.Reply(
+        actions = [core.Tell ctx.actor _show, core.Login ctx.actor name typed],
+        next = Some (at ctx AskName)
+      )
+    | AskBirth name -> (
+      match _date text with
+      | None -> tell ctx "Write it as YYYY-MM-DD, as 2010-04-30." (at ctx (AskBirth name))
+      | Some birth ->
+        if _thirteen? birth ctx.time then
+          tell ctx "Choose a password.\n%{_hide}Password:" (at ctx (NewPassword name))
+        else
+          core.Reply(
+            actions = [
+              core.Tell ctx.actor "Sorry, WMD is for people 13 and older. Goodbye.",
+              core.Hangup ctx.actor
+            ],
+            next = Some (at ctx Refused)
+          )
+    )
+    | NewPassword name ->
+      if String.length typed < 8 then tell ctx "At least 8 characters.\nPassword:" (at ctx (NewPassword name))
+      else tell ctx "Again:" (at ctx (Confirm name typed))
+    | Confirm name first ->
+      if typed != first then
+        tell ctx "They did not match. Choose a password.\nPassword:" (at ctx (NewPassword name))
+      else
+        core.Reply(
+          actions = [core.Tell ctx.actor _show, core.Register ctx.actor name first],
+          next = Some (at ctx AskName)
+        )
+    | Refused -> core.nothing
+  );
+  -- The driver runs `connect` when a session connects, and `done` when it
+  -- logs in or goes away, so no stage outlives its session.
+  let connect (ctx: core.Ctx) _ =
+    tell ctx "Welcome to WMD, the World of Many Doors.\n%{_ask}" (at ctx AskName);
+  let done (ctx: core.Ctx) _ = core.Reply(next = Some (make (Map.delete ctx.actor stages)));
   core.Object(
     names = [],
     short = fn _ -> "the login",
-    long = fn _ -> "Where a connection waits for a name.",
-    verbs = [core.Verb(names = ["connect"], run = _connect)],
-    input = Some _line,
+    long = fn _ -> "Where a connection waits to log in.",
+    verbs = [core.Verb(names = ["connect"], run = connect), core.Verb(names = ["done"], run = done)],
+    input = Some line,
+    -- A dialogue belongs to a connection, and connections are not saved.
     save = fn () -> JSON.null
   )
+)
 
 implement core.Blueprint =
-  let create _ _ = core.Init(object = login)
+  let create _ _ = core.Init(object = make Map.empty)

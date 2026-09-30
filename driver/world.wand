@@ -9,18 +9,29 @@
 import List
 import Map
 import Option
+import Result
 import String
 
 let core = import ../lib/std/core
 
 -- One object in the world. `object` is what the blueprint's `create`
--- built, or the `next` of its last reply.
-type Instance(id: String, blueprint: String, object: core.Object, env: Option String = None)
+-- built, or the `next` of its last reply. `saved` is what its `save` gave
+-- at the last snapshot, and None once it has changed since, so a snapshot
+-- calls `save` only on what changed.
+type Instance(
+  id: String,
+  blueprint: String,
+  object: core.Object,
+  env: Option String = None,
+  saved: Option JSON = None
+)
 
 -- One connection. `body` is None until login.
 type Session(id: String, body: Option String = None, closing: Bool = false)
 
-type Account(name: String, body: String)
+-- An account: its name as written, its body, its password as
+-- "./password" keeps one, and its role, "builder" or "admin".
+type Account(name: String, body: String, password: String, role: String = "builder")
 
 -- What a session hands the driver.
 type Input =
@@ -49,7 +60,16 @@ type World(
   inputs: List Input,
   events: List Event,
   -- How many sessions have opened: the next session's number.
-  opened: Int
+  opened: Int,
+  -- The server's secret, from WMD_PEPPER. Held here, and never written to
+  -- world.json.
+  pepper: String = "",
+  -- Set by the timer and cleared by the snapshot, which the driver fiber
+  -- takes, so a snapshot never sees an object halfway through a change.
+  snapshot_due: Bool = false,
+  -- When the input the driver is working on arrived: what `ctx.time` says.
+  -- Set on the driver's working copy only; nothing else reads it.
+  now: DateTime = 1970-01-01T00:00:00Z
 )
 
 let empty =
@@ -92,7 +112,7 @@ let contents id (w: World) =
 
 let set_object id (o: core.Object) (w: World) =
   match instance id w with
-  | Some i -> put Instance(i, object = o) w
+  | Some i -> put Instance(i, object = o, saved = None) w
   | None -> w
 
 let move id dest (w: World) =
@@ -100,17 +120,26 @@ let move id dest (w: World) =
   | Some i -> put Instance(i, env = Some (resolve dest)) w
   | None -> w
 
--- The next free instance number of a blueprint.
+-- The next free instance number of a blueprint: one past the highest in
+-- use, so a gap left by a restore or a removal is never filled twice.
 let next_number bp (w: World) =
-  List.length (List.filter (fn (i: Instance) -> i.blueprint == bp) (Map.values w.instances))
+  List.fold_left
+    (fn n (i: Instance) -> if i.blueprint != bp then n
+      else match Result.to_option
+        (String.to_int (Option.default "" (List.get 1 (String.split "#" i.id)))) with
+        | Some k -> if k + 1 > n then k + 1 else n
+        | None -> n
+    )
+    0
+    (Map.values w.instances)
 
 -- ── Accounts ───────────────────────────────────────────────────────────
 
 -- Accounts are keyed by the lower-case name, so Ann and ANN are one.
 let account name (w: World) = Map.get (String.lower name) w.accounts
 
-let add_account name body (w: World) =
-  World(w, accounts = Map.set (String.lower name) Account(name, body) w.accounts)
+let add_account (a: Account) (w: World) =
+  World(w, accounts = Map.set (String.lower a.name) a w.accounts)
 
 -- ── Sessions ───────────────────────────────────────────────────────────
 
@@ -225,3 +254,20 @@ let close sid at (w: World) =
     World(w, sessions = Map.delete sid w.sessions, outboxes = Map.delete sid w.outboxes)
     |> queue (Gone sid at s.body)
     |> emit Event(at = at, event = "disconnect", actor = sid, object = s.body)
+
+-- ── Snapshots ──────────────────────────────────────────────────────────
+
+-- Keep what an object's `save` gave, until the object changes again.
+let keep_saved id (j: JSON) (w: World) =
+  match instance id w with
+  | Some i -> put Instance(i, saved = Some j) w
+  | None -> w
+
+let snapshot_due (w: World) = World(w, snapshot_due = true)
+
+let snapshot_taken (w: World) = World(w, snapshot_due = false)
+
+let snapshot_due? (w: World) = w.snapshot_due
+
+-- A new world that hashes passwords with `pepper`.
+let with_pepper pepper = World(empty, pepper = pepper)

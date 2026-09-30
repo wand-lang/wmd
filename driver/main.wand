@@ -1,13 +1,13 @@
-uses {Clock, FS.Read, FS.Write, IO, Net.Listen, Random, Shared}
+uses {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Random, Shared}
 
--- The server: the telnet listener, the driver loop and the event logger,
--- side by side, over one Shared World.
+-- The server: the telnet listener, the driver loop, the snapshot timer and
+-- the event logger, side by side, over one Shared World.
 
 import Clock
+import Env
 import FS
 import IO
 import List
-import Map
 import Net
 import Par
 import Resource
@@ -17,34 +17,67 @@ let engine = import ./engine
 let log = import ./log
 let scan = import ./scan
 let session = import ./session
+let snapshot = import ./snapshot
 let world = import ./world
 
 -- The flags of `wmd`. Each field is a flag: --port 4000 --logs ./logs.
-type Opts(port: Port = :4000, logs: Path = ./logs, lib: Path = ./lib)
+type Opts(
+  port: Port = :4000,
+  logs: Path = ./logs,
+  lib: Path = ./lib,
+  world: Path = ./world.json
+)
+
+let _now () = "%{Clock.now ()}"
 
 -- Why the server must not start, if it must not. A missing mudlib is an
 -- error rather than an empty world, so a typo in the path shows. A list of
--- blueprints that no longer matches the files would run old code.
+-- blueprints that no longer matches the files would run old code. And
+-- without the pepper no password can be checked or kept.
 let problem! (o: Opts) paths =
-  if !(FS.dir? o.lib) then Some "no mudlib at %{o.lib}"
+  if !(FS.dir? o.lib) then Some "no mudlib at %{o.lib}; run wmd init to make a world"
   else if List.map (fn (b: scan.Blueprint) -> b.path) (scan.blueprints! o.lib) != paths then
     Some
       "the blueprints in %{o.lib} changed; run: wand tools/blueprints.wand --lib %{o.lib}"
+  else if Env.get "WMD_PEPPER" == None then
+    Some "WMD_PEPPER is not set; it is the secret every password is hashed with"
   else None
+
+-- A snapshot is written by the driver loop, between inputs. The timer only
+-- says one is due. A snapshot that cannot be written is reported, and the
+-- server goes on.
+let _snapshot state path =
+  match try engine.snapshot! state path (_now ()) with
+  | Ok _ -> ()
+  | Error why -> IO.println_err "wmd: snapshot to %{path} failed: %{why}"
+
+let _drive (lib: engine.Lib) state path = (
+  engine.step lib state;
+  if world.snapshot_due? (Shared.get state) then _snapshot state path
+)
 
 -- The driver looks for input every 20ms: nothing can wait on a Shared for
 -- a change.
 let run! (o: Opts) (lib: engine.Lib) = (
   FS.mkdir! o.logs;
-  IO.println "wmd listening on %{o.port}, logging to %{o.logs}";
-  with Shared.make world.empty as state ->
-  -- On the way out, SIGTERM included, the events not yet written are
-  -- written. The release runs before the Shared above is closed.
-  with Resource.make (fn () -> ()) (fn () -> log.flush! state o.logs) as _ -> (
-    engine.boot lib state "%{Clock.now ()}";
+  with Shared.make (world.with_pepper (Env.get! "WMD_PEPPER")) as state ->
+  -- On the way out, SIGTERM included, the world is saved and the events not
+  -- yet written are written. The release runs before the Shared above is
+  -- closed, and after the driver loop has stopped.
+  with Resource.make
+    (fn () -> ())
+    (fn () -> (_snapshot state o.world; log.flush! state o.logs)) as _ -> (
+    (
+      match snapshot.read! o.world with
+      | Some f -> (let _ = engine.restore lib state f (_now ()); ())
+      | None -> ()
+    );
+    engine.boot lib state (_now ());
+    IO.println "wmd listening on %{o.port}, world in %{o.world}, logging to %{o.logs}";
     Par.all! [
       fn () -> Net.listen o.port |> Par.each_stream 256 (session.serve state),
-      fn () -> Clock.every 20ms (fn () -> engine.step lib state),
+      fn () -> Clock.every 20ms (fn () -> _drive lib state o.world),
+      fn () -> Clock.every 60s (fn () -> Shared.update state world.snapshot_due),
       fn () -> Clock.every 1s (fn () -> log.flush! state o.logs)
     ]
   )

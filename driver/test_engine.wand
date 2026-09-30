@@ -5,6 +5,7 @@ uses {Random, Shared}
 -- driver take what was queued, as its loop does.
 
 import List
+import Option
 import Random
 import Shared
 import String
@@ -22,26 +23,44 @@ let bo = world.session_id 1
 
 let line sid text = world.queue (world.Line sid at text)
 
--- Boot the world, then apply each change and let the driver take it.
+-- Boot a world whose passwords are hashed with a test pepper, then apply
+-- each change and let the driver take it.
 let played changes =
-  with Shared.make world.empty as state -> (
+  with Shared.make (world.with_pepper "test pepper") as state -> (
     engine.boot blueprints.lib state at;
     List.each (fn f -> (Shared.update state f; engine.step blueprints.lib state)) changes;
     Shared.get state
   )
 
-let heard sid (w: world.World) = world.outbox sid w
+-- What a session was sent, without the telnet bytes that turn the
+-- client's echo off and on around a password.
+let heard sid (w: world.World) =
+  List.filter
+    (fn l -> l != "")
+    (List.map
+      (fn l -> String.replace "\xff\xfc\x01" "" (String.replace "\xff\xfb\x01" "" l))
+      (world.outbox sid w))
 
 let heard? sid text (w: world.World) = List.any? (fn l -> l == text) (heard sid w)
 
 let events (w: world.World) = List.map (fn (e: world.Event) -> e.event) w.events
 
+-- A new account for `name`, born long enough ago, from a session that just
+-- connected.
+let signed_up sid name = [
+  world.open_next at,
+  line sid name,
+  line sid "2000-05-01",
+  line sid "%{name}-password",
+  line sid "%{name}-password"
+]
+
 -- Ann logged in, and everything she was told so far forgotten.
-let ann_in = [world.open_next at, line ann "ann", world.emptied ann]
+let ann_in = List.concat (signed_up ann "ann") [world.emptied ann]
 
 -- Ann and Bo both logged in, with nothing heard yet.
 let both_in =
-  List.concat ann_in [world.open_next at, line bo "bo", world.emptied ann, world.emptied bo]
+  List.concat ann_in (List.concat (signed_up bo "bo") [world.emptied ann, world.emptied bo])
 
 group "login" (fn () -> [
   test "a new connection is asked for a name" (fn t ->
@@ -52,29 +71,92 @@ group "login" (fn () -> [
     t.eq
       ["A name is 2 to 16 letters. What is your name?"]
       (heard ann (played [world.open_next at, world.emptied ann, line ann "x1"]))),
-  test "a good name wakes a body in the Commons" (fn t ->
-    let w = played [world.open_next at, world.emptied ann, line ann "ann"];
+  test "a new name is asked for a date of birth" (fn t ->
     t.eq
-      [
-        "Hello, Ann.",
-        "The Commons",
-        "A wide, quiet square. Doors of every size stand along its edges, all of them shut for now.",
-        "You see a brass lever.",
-        "Exits: north."
-      ]
-      (heard ann w)),
-  test "the name of someone connected is refused" (fn t ->
+      ["Welcome, Ann. What is your date of birth? Write it as YYYY-MM-DD."]
+      (heard ann (played [world.open_next at, world.emptied ann, line ann "ann"]))),
+  test "a date that is not YYYY-MM-DD is asked again" (fn t ->
+    t.ok
+      (heard?
+        ann
+        "Write it as YYYY-MM-DD, as 2010-04-30."
+        (played [world.open_next at, line ann "ann", line ann "May 1"]))),
+  -- The test's time is 2026-09-30: a thirteenth birthday that day is in,
+  -- and one a day later is out.
+  test "someone 13 today may sign up" (fn t ->
+    t.ok
+      (heard?
+        ann
+        "Choose a password."
+        (played [world.open_next at, line ann "ann", line ann "2013-09-30"]))),
+  test "someone 13 tomorrow is refused, and the session ends" (fn t ->
+    let w = played [world.open_next at, line ann "kid", line ann "2013-10-01"];
+    t.eq (true, true, false) (
+      heard? ann "Sorry, WMD is for people 13 and older. Goodbye." w,
+      world.closing? ann w,
+      Option.some? (world.account "kid" w)
+    )),
+  test "two passwords that differ are asked again" (fn t ->
+    t.ok
+      (heard?
+        ann
+        "They did not match. Choose a password."
+        (played [
+          world.open_next at,
+          line ann "ann",
+          line ann "2000-05-01",
+          line ann "ann-password",
+          line ann "annpass2"
+        ]))),
+  test "signing up wakes a body in the Commons" (fn t ->
+    let w = played (signed_up ann "ann");
+    t.eq (true, true, true) (
+      heard? ann "Hello, Ann." w,
+      heard? ann "The Commons" w,
+      heard? ann "You see a brass lever." w
+    )),
+  test "the account keeps only a hash of the password" (fn t ->
+    t.eq
+      (Some true)
+      (Option.map
+        (fn (a: world.Account) -> String.starts_with? "hmac-sha256$" a.password
+        && !(String.contains? "ann-password" a.password))
+        (world.account "ann" (played (signed_up ann "ann"))))),
+  test "the right password logs in again" (fn t ->
+    let w =
+      played
+        (List.concat ann_in [
+          line ann "/quit",
+          world.close ann at,
+          world.open_next at,
+          line bo "ann",
+          line bo "ann-password"
+        ]);
+    t.ok (heard? bo "Hello, Ann." w)),
+  test "a wrong password does not, and says nothing of which was wrong" (fn t ->
+    let w =
+      played
+        (List.concat ann_in [
+          line ann "/quit",
+          world.close ann at,
+          world.open_next at,
+          line bo "ann",
+          line bo "nope"
+        ]);
+    t.eq (true, false, ["login_failed"]) (
+      heard? bo "That name and password do not match. What is your name?" w,
+      heard? bo "Hello, Ann." w,
+      List.filter (fn e -> e == "login_failed") (events w)
+    )),
+  test "a name already connected cannot log in twice" (fn t ->
     t.ok
       (heard?
         bo
         "Ann is here already. What is your name?"
-        (played (List.concat ann_in [world.open_next at, line bo "ANN"])))),
+        (played
+          (List.concat ann_in [world.open_next at, line bo "ann", line bo "ann-password"])))),
   test "others see the arrival" (fn t ->
-    t.ok
-      (heard?
-        ann
-        "Bo arrives."
-        (played (List.concat ann_in [world.open_next at, line bo "bo"])))),
+    t.ok (heard? ann "Bo arrives." (played (List.concat ann_in (signed_up bo "bo"))))),
   test "the login is logged, at the time it arrived" (fn t ->
     t.eq
       [at]
@@ -150,7 +232,8 @@ group "driver commands" (fn () -> [
         (List.concat both_in [
           world.close ann at,
           world.open_next at,
-          line (world.session_id 2) "ann"
+          line (world.session_id 2) "ann",
+          line (world.session_id 2) "ann-password"
         ]);
     t.eq (true, true) (heard? bo "Ann falls asleep." w, heard? bo "Ann wakes up." w))
 ])

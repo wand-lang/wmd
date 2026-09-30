@@ -299,3 +299,48 @@ Observed
 
 Candidate wand issues
 - None open.
+
+## 2026-09-30 · milestone 2 · part 2: accounts, snapshots, restart, init
+
+Files: lib/std/login.wand, driver/{password,snapshot,init,engine,world,
+main}.wand, wmd, and tests.
+
+Observed
+- Two more wand bugs, each filed:
+  - #63: `core.Ctx(world = view w viewer, time = w.now)` failed with
+    `core.World and world.World are not the same type`. A field read inside
+    a qualified constructor's arguments resolved against that module's
+    types. Reading `w.now` into a name first works around it.
+  - #64: on restart the lever's `State.decoder` decoded into the player's
+    `State`: `.name: expected String, got Int`. A silent wrong value when
+    the fields line up. Fixed on the wand branch derived-by-module, not yet
+    released; the snapshot tests need it.
+- One test-helper mistake: a 7-character password in the sign-up helper
+  was refused by the 8-character rule, and seven tests failed on it.
+- A real run: sign-up with a date of birth, a 12-year-old refused and hung
+  up on, a wrong password answered without saying which half was wrong, and
+  after SIGTERM and a restart the lever's pulls went from 2 to 3.
+- The admin's password prompt in `wmd init` shows what is typed: there is
+  no IO.read_secret, and `stty -echo` would be another language.
+- Tests: 63 pass, 5 runs of 5.
+
+Easy, and why
+- Derived `Account.encoder` and `File.decoder` made world.json one type
+  and two functions.
+- `Hash.hmac` and `Hash.equal?` made the password module 20 lines, with
+  a constant-time compare.
+
+Hard, and why
+- #63 and #64 are the same kind of bug as #50: a name resolved in the
+  wrong module's scope. Each file declaring its own `State`, as the design
+  asks, is what finds them.
+
+Candidate wand issues
+- #64 needs a release before wmd can require it.
+- IO.read_secret, from the design doc, is not filed yet.
+- Later the same day: #63 and #64 were fixed and released in wand 0.95.2,
+  and the #63 workaround (reading `w.now` into a name before building a
+  `core.Ctx`) came out. Fixing #63 found one more place with #50's bug: a
+  record update through a module, `core.World(base, n = v)`, built the
+  other module's `World`. It had never been reachable, because such code
+  did not typecheck before.

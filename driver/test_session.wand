@@ -38,7 +38,7 @@ let _serve! state = Par.all! [
 -- Serve one fake connection per script. `write_ok` false makes every write
 -- fail, as when the other end has gone.
 let run! scripts write_ok =
-  with Shared.make world.empty as state ->
+  with Shared.make (world.with_pepper "test pepper") as state ->
   with Shared.make scripts as input ->
   with Shared.make Map.empty as sent -> (
     engine.boot blueprints.lib state at;
@@ -59,32 +59,43 @@ let run! scripts write_ok =
 
 let sent name (r: Run) = Option.default [] (Map.get name r.sent)
 
-let one! lines = run! (Map.from_list [("ann", lines)]) true
+-- The lines that sign up a new account.
+let signup name = [name, "2000-05-01", "%{name}-password", "%{name}-password"]
+
+-- Ann signs up, then sends `lines`.
+let one! lines = run! (Map.from_list [("ann", List.concat (signup "ann") lines)]) true
 
 group "one session" (fn () -> [
   test "logs in and looks" (fn t ->
-    t.ok (List.any? (fn l -> l == "Hello, Ann.") (sent "ann" (one! ["ann", "look"])))),
+    t.ok (List.any? (fn l -> l == "Hello, Ann.") (sent "ann" (one! ["look"])))),
   test "the goodbye is sent before the connection closes" (fn t ->
-    t.eq (Some "Goodbye.") (List.head (List.reverse (sent "ann" (one! ["ann", "/quit"]))))),
+    t.eq (Some "Goodbye.") (List.head (List.reverse (sent "ann" (one! ["/quit"]))))),
   test "nothing is read after /quit" (fn t ->
     t.not_ok
-      (List.any?
-        (fn l -> String.contains? "dance" l)
-        (sent "ann" (one! ["ann", "/quit", "dance"])))),
+      (List.any? (fn l -> String.contains? "dance" l) (sent "ann" (one! ["/quit", "dance"])))),
   test "telnet bytes are dropped before the line is read" (fn t ->
-    t.ok (List.any? (fn l -> l == "Hello, Ann.") (sent "ann" (one! ["\xff\xfb\x01ann\r"])))),
+    t.ok
+      (List.any?
+        (fn l -> l == "Hello, Ann.")
+        (sent
+          "ann"
+          (run!
+            (Map.from_list [
+              ("ann", List.concat ["\xff\xfb\x01ann\r"] (List.drop 1 (signup "ann")))
+            ])
+            true)))),
   test "the session is gone once the connection ends" (fn t ->
-    let w = (one! ["ann", "look"]).after;
+    let w = (one! ["look"]).after;
     t.eq (true, true) (Map.empty? w.sessions, Map.empty? w.outboxes)),
   test "every step is logged" (fn t ->
     t.eq
-      ["connect", "login", "command", "disconnect"]
-      (List.map (fn (e: world.Event) -> e.event) (one! ["ann", "look"]).after.events))
+      ["connect", "signup", "login", "command", "disconnect"]
+      (List.map (fn (e: world.Event) -> e.event) (one! ["look"]).after.events))
 ])
 
 group "two sessions" (fn () -> [
   test "each is served" (fn t ->
-    let r = run! (Map.from_list [("ann", ["ann"]), ("bo", ["bo"])]) true;
+    let r = run! (Map.from_list [("ann", signup "ann"), ("bo", signup "bo")]) true;
     t.eq (true, true) (
       List.any? (fn l -> l == "Hello, Ann.") (sent "ann" r),
       List.any? (fn l -> l == "Hello, Bo.") (sent "bo" r)
@@ -95,7 +106,7 @@ group "two sessions" (fn () -> [
 -- the writer can see that the connection is gone. If it did not end the
 -- session, this would never finish, so a deadline guards it.
 let dropped! () =
-  with Shared.make world.empty as state -> (
+  with Shared.make (world.with_pepper "test pepper") as state -> (
     engine.boot blueprints.lib state at;
     let _ =
       Par.timeout 5s (fn () ->

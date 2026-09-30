@@ -1,7 +1,8 @@
 #!/usr/bin/env wand
-uses {Clock, FS.Read, FS.Write, IO, Net.Listen, Proc, Random, Shared}
+uses {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Proc, Random, Shared}
 
--- The wmd server. Run it from the repo as ./wmd.
+-- The wmd server. Run it from the repo as ./wmd, and make a new world
+-- first with ./wmd init --admin <name>.
 --
 -- The mudlib is loaded through driver/blueprints.wand, which
 -- tools/blueprints.wand writes from the mudlib directory.
@@ -11,12 +12,27 @@ import IO
 import Proc
 
 let blueprints = import ./driver/blueprints
+let init = import ./driver/init
 let main = import ./driver/main
 
-match Args.parse main.Opts.decoder (Proc.args ()) with
-| Error e -> (IO.println_err "wmd: %{e}"; Proc.exit 2)
-| Ok o -> (
-  match main.problem! o blueprints.paths with
-  | Some why -> (IO.println_err "wmd: %{why}"; Proc.exit 2)
-  | None -> main.run! o blueprints.lib
+let stop why = (IO.println_err "wmd: %{why}"; Proc.exit 2)
+
+match Proc.args () with
+| ["init" :: rest] -> (
+  match Args.parse init.InitOpts.decoder rest with
+  | Error e -> stop e
+  | Ok o -> (
+    match init.run! o blueprints.lib with
+    | Error why -> stop why
+    | Ok _ -> ()
+  )
+)
+| rest -> (
+  match Args.parse main.Opts.decoder rest with
+  | Error e -> stop e
+  | Ok o -> (
+    match main.problem! o blueprints.paths with
+    | Some why -> stop why
+    | None -> main.run! o blueprints.lib
+  )
 )

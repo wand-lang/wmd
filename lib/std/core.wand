@@ -34,13 +34,17 @@ type World(
   long_of: ObjId -> String,
   exits_of: ObjId -> Map Exit,
   player?: ObjId -> Bool,
-  players: Unit -> List ObjId
+  players: Unit -> List ObjId,
+  -- Whether an account of this name exists. Nothing else about an account
+  -- is readable: no mudlib code sees a password hash.
+  account?: String -> Bool
 )
 
--- Who is asking, about what, and where. `self` is the object the call is
--- on. `actor` is the player who typed the command, or `self` when the
--- driver calls an object on its own.
-type Ctx(self: ObjId, actor: ObjId, here: ObjId, world: World)
+-- Who is asking, about what, where and when. `self` is the object the call
+-- is on. `actor` is the player who typed the command, or `self` when the
+-- driver calls an object on its own. `time` is when the command arrived:
+-- mudlib code reads no clock of its own.
+type Ctx(self: ObjId, actor: ObjId, here: ObjId, world: World, time: DateTime)
 
 -- A way out of a room. A message left as None gets the driver's default.
 -- `check` refuses with the message the mover sees, as in
@@ -62,8 +66,14 @@ type Action =
   | Move ObjId ObjId
   -- Make a new instance of a blueprint, inside an object.
   | Spawn String ObjId
-  -- A login succeeded for this name. Only /std/login may ask this.
-  | Login String
+  -- Log a session in as an account, with the password it gave. Only
+  -- /std/login may ask this; the driver checks the password.
+  | Login ObjId String String
+  -- Make an account for a session, with its name and password. Only
+  -- /std/login may ask this.
+  | Register ObjId String String
+  -- End a session. Only /std/login may ask this.
+  | Hangup ObjId
 
 -- A command the object answers to. `run` gets the parsed command, with
 -- dobj and iobj already matched to objects.

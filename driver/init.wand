@@ -1,0 +1,95 @@
+uses {Clock, Env, FS.Read, FS.Write, IO, Random, Shared}
+
+-- `wmd init`: a new world, with its first admin. Nothing is made
+-- implicitly on a first run, so a typo in a path is an error rather than a
+-- new, empty world.
+
+import Clock
+import Env
+import FS
+import IO
+import Random
+import Regex
+import Shared
+import String
+
+let engine = import ./engine
+let snapshot = import ./snapshot
+let world = import ./world
+
+-- The flags of `wmd init`. `--password` is for tests and throwaway worlds
+-- that cannot answer a prompt.
+type InitOpts(
+  lib: Path = ./lib,
+  world: Path = ./world.json,
+  admin: String,
+  password: Option String = None
+)
+
+let _capitalize name =
+  String.upper (String.slice 0 1 name) ++ String.lower (String.slice 1 (String.length name) name)
+
+-- The prompt shows what is typed: wand cannot turn off a terminal's echo,
+-- and running `stty -echo` would mean a program in another language.
+let _prompt! question = (
+  IO.print "%{question} (it will show as you type) ";
+  IO.flush ();
+  IO.read_line! ()
+)
+
+let _password! (o: InitOpts) name =
+  match o.password with
+  | Some p -> (
+    IO.println_err
+      "wmd: the password is now in your shell history and visible to ps; use it only for a throwaway world";
+    Ok p
+  )
+  | None -> (
+    let first = _prompt! "Password for %{name}:";
+    let again = _prompt! "Again:";
+    if first != again then Error "the two passwords do not match" else Ok first
+  )
+
+-- Why init must not run, if it must not.
+let _problem (o: InitOpts) =
+  if FS.exists? o.world then
+    Some "a world already exists at %{o.world}; init will not overwrite it"
+  else if !(FS.dir? o.lib) then Some "no mudlib at %{o.lib}"
+  else if !(Regex.match? r/^[A-Za-z]{2,16}$/ o.admin) then Some "--admin is 2 to 16 letters"
+  else None
+
+-- The pepper: WMD_PEPPER, or a new one, printed once. It is never written
+-- to a file.
+let _pepper () =
+  match Env.get "WMD_PEPPER" with
+  | Some p -> p
+  | None -> (
+    let p = Random.hex 64;
+    IO.println
+      "WMD_PEPPER was not set, so here is a new one. Set it before you start the server,";
+    IO.println "and keep it with your other secrets: without it no password can be checked.";
+    IO.println "";
+    IO.println "  export WMD_PEPPER=%{p}";
+    IO.println "";
+    p
+  )
+
+let run! (o: InitOpts) (lib: engine.Lib) =
+  match _problem o with
+  | Some why -> Error why
+  | None -> (
+    let name = _capitalize o.admin;
+    match _password! o name with
+    | Error why -> Error why
+    | Ok typed -> if String.length typed < 8 then Error "a password is at least 8 characters"
+      else (
+        let at = "%{Clock.now ()}";
+        with Shared.make (world.with_pepper (_pepper ())) as state -> (
+          engine.boot lib state at;
+          engine.make_account lib state name typed "admin" at;
+          engine.snapshot! state o.world at;
+          IO.println "Made %{o.world}, with %{name} as admin.";
+          Ok()
+        )
+      )
+  )

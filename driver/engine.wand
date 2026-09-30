@@ -1,4 +1,4 @@
-uses {Random, Shared}
+uses {FS.Read, FS.Write, Random, Shared}
 
 -- The driver proper: the one fiber that runs mudlib code.
 --
@@ -18,6 +18,8 @@ import String
 
 let core = import ../lib/std/core
 let parse = import ./parse
+let password = import ./password
+let snapshot = import ./snapshot
 let world = import ./world
 
 -- Every blueprint the driver can spawn, by path, such as /std/player.
@@ -38,8 +40,14 @@ let arrival = "/realm/commons/square#0"
 -- the meantime: the two kinds of change do not touch the same things.
 type Tx(w: world.World, changes: List (world.World -> world.World ! {}), at: String)
 
--- Work that starts at `at`, the time its input arrived.
-let begin (w: world.World) at = Tx(w = w, changes = [], at = at)
+-- Work that starts at `at`, the time its input arrived. The working copy
+-- carries that time, for `ctx.time`.
+let begin (w: world.World) at =
+  Tx(
+    w = world.World(w, now = Result.default 1970-01-01T00:00:00Z (String.to_datetime at)),
+    changes = [],
+    at = at
+  )
 
 let change f (tx: Tx) = Tx(tx, w = f tx.w, changes = f :: tx.changes)
 
@@ -93,14 +101,21 @@ let view (w: world.World) viewer =
       | Some i -> i.object.exits
       | None -> Map.empty,
     player? = player?,
-    players = fn () -> _players w
+    players = fn () -> _players w,
+    account? = fn name -> Option.some? (world.account name w)
   )
 and _text (w: world.World) viewer id short =
   match world.instance id w with
   | None -> "nothing"
   | Some i -> (
     let ctx =
-      core.Ctx(self = i.id, actor = viewer, here = room_of i.id w, world = view w viewer);
+      core.Ctx(
+        self = i.id,
+        actor = viewer,
+        here = room_of i.id w,
+        world = view w viewer,
+        time = w.now
+      );
     if short then i.object.short ctx else i.object.long ctx
   )
 
@@ -111,7 +126,8 @@ let ctx_for (w: world.World) self actor =
     self = world.resolve self,
     actor = actor,
     here = room_of actor w,
-    world = view w actor
+    world = view w actor,
+    time = w.now
   )
 
 -- ── Spawning ───────────────────────────────────────────────────────────
@@ -173,9 +189,15 @@ and _act (lib: Lib) (ctx: core.Ctx) (a: core.Action) (tx: Tx) =
     )
   )
   | core.Spawn bp dest -> tx |> _ensure lib dest |> spawn lib bp (Some (world.resolve dest)) None
-  | core.Login name ->
+  | core.Login sid name typed ->
     if world.blueprint_of ctx.self != "/std/login" then _refuse ctx "only /std/login may log in" tx
-    else login lib ctx.actor name tx
+    else login lib sid name typed tx
+  | core.Register sid name typed ->
+    if world.blueprint_of ctx.self != "/std/login" then _refuse ctx "only /std/login may register" tx
+    else register lib sid name typed tx
+  | core.Hangup sid ->
+    if world.blueprint_of ctx.self != "/std/login" then _refuse ctx "only /std/login may hang up" tx
+    else change (world.close_soon sid) tx
 
 and _apply_actions (lib: Lib) (ctx: core.Ctx) actions (tx: Tx) =
   List.fold_left (fn acc a -> _act lib ctx a acc) tx actions
@@ -218,25 +240,40 @@ and look (lib: Lib) body (tx: Tx) = verb lib body body "look" tx
 
 -- Attach a session to the body of `name`, making the account and its body
 -- the first time.
-and login (lib: Lib) sid name (tx: Tx) =
+-- Log a session in, when the password is the account's. A wrong one is
+-- logged, with the name tried and never the password.
+and login (lib: Lib) sid name typed (tx: Tx) =
   match world.account name tx.w with
-  | Some acct ->
+  | Some acct when password.matches? tx.w.pepper acct.password typed ->
     if Option.some? (world.session_of acct.body tx.w) then
-      change (world.tell sid "%{name} is here already. What is your name?") tx
-    else _wake lib sid name acct.body "%{name} wakes up." tx
-  | None -> (
+      change (world.tell sid "%{acct.name} is here already. What is your name?") tx
+    else _wake lib sid acct.name acct.body "%{acct.name} wakes up." tx
+  | _ ->
+    tx
+    |> _event (world.Event(at = "", event = "login_failed", actor = sid, name = Some name))
+    |> change (world.tell sid "That name and password do not match. What is your name?")
+
+-- Make an account and its body. The password is kept only as its hash,
+-- with a salt made for it and the server's pepper.
+and register (lib: Lib) sid name typed (tx: Tx) =
+  if Option.some? (world.account name tx.w) then
+    change (world.tell sid "%{name} was taken just now. What is your name?") tx
+  else (
     let body = "%{player_bp}#%{world.next_number player_bp tx.w}";
     let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
+    let hashed = password.hash tx.w.pepper (Random.hex 32) typed;
     tx
     |> _ensure lib arrival
     |> _create lib body player_bp (Some saved) (Some arrival)
-    |> change (world.add_account name body)
+    |> change (world.add_account (world.Account(name = name, body = body, password = hashed)))
+    |> _event (world.Event(at = "", event = "signup", actor = sid, name = Some name, object = Some body))
     |> _wake lib sid name body "%{name} arrives."
   )
 
 and _wake (lib: Lib) sid name body news (tx: Tx) =
   tx
   |> change (world.attach sid body)
+  |> verb lib login_id sid "done"
   |> _event (world.Event(at = "", event = "login", actor = sid, name = Some name, object = Some body))
   |> change (world.tell body "Hello, %{name}.")
   |> _tell_room (room_of body tx.w) body news
@@ -376,7 +413,13 @@ let _to_login (lib: Lib) sid line (tx: Tx) =
     | None -> tx
     | Some f -> (
       let ctx =
-        core.Ctx(self = login_id, actor = sid, here = login_id, world = view tx.w sid);
+        core.Ctx(
+          self = login_id,
+          actor = sid,
+          here = login_id,
+          world = view tx.w sid,
+          time = tx.w.now
+        );
       run lib ctx (fn () -> f ctx line) tx
     )
   )
@@ -396,10 +439,10 @@ let run_input (lib: Lib) (i: world.Input) (tx: Tx) =
       | Some body -> _play lib sid body at (String.trim line) tx
     )
   )
-  | world.Gone _ _ body -> (
+  | world.Gone sid _ body -> (
     match body with
     | Some b -> _tell_room (room_of b tx.w) b "%{short_of b tx.w} falls asleep." tx
-    | None -> tx
+    | None -> verb lib login_id sid "done" tx
   )
 
 -- ── The loop ───────────────────────────────────────────────────────────
@@ -419,3 +462,71 @@ let step (lib: Lib) state =
       let tx = run_input lib i (begin (Shared.get state) (world.at_of i));
       Shared.update state (fn cur -> world.dequeued 1 (commit tx cur)))
     w.inputs
+
+-- ── Snapshots ──────────────────────────────────────────────────────────
+
+-- Call `save` on every object that changed since the last snapshot, and
+-- write the file. The driver fiber runs this between inputs, and it is the
+-- only fiber that changes an object, so no object is caught halfway
+-- through a change. A `save` that faults is logged, and that object is
+-- left out of the file.
+let snapshot! state path at = (
+  let (w: world.World) = Shared.get state;
+  let results =
+    List.filter_map
+      (fn (i: world.Instance) -> match i.saved with
+        | Some _ -> None
+        | None -> Some (i.id, _call (fn () -> i.object.save ()))
+      )
+      (Map.values w.instances);
+  let kept (cur: world.World) =
+    List.fold_left
+      (fn acc (id, r) -> match r with
+        | Ok j -> world.keep_saved id j acc
+        | Error why ->
+          world.emit
+            world.Event(at = at, event = "fault", actor = id, text = Some "save: %{why}")
+            acc
+      )
+      cur
+      results;
+  Shared.update state (fn cur -> world.snapshot_taken (kept cur));
+  snapshot.write! path (snapshot.of_world (Shared.get state))
+)
+
+-- Bring back what a snapshot kept: the accounts, then every object, made
+-- again by its blueprint's `create` from its saved state.
+let restore (lib: Lib) state (f: snapshot.File) at =
+  let accounts =
+    List.fold_left
+      (fn t (a: world.Account) -> change (world.add_account a) t)
+      (begin (Shared.get state) at)
+      f.accounts;
+  let tx =
+    List.fold_left
+      (fn t (s: snapshot.Saved) -> t
+      |> _create lib s.id s.blueprint (Some s.state) s.env
+      |> change (world.keep_saved s.id s.state))
+      accounts
+      f.instances;
+  Shared.update state (commit tx)
+
+-- Make an account and its body in the arrival room, with no session: how
+-- `wmd init` makes the first admin.
+let make_account (lib: Lib) state name typed role at =
+  let t = begin (Shared.get state) at;
+  let body = "%{player_bp}#%{world.next_number player_bp t.w}";
+  let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
+  let hashed = password.hash t.w.pepper (Random.hex 32) typed;
+  let tx =
+    t
+    |> _ensure lib arrival
+    |> _create lib body player_bp (Some saved) (Some arrival)
+    |> change
+      (world.add_account world.Account(
+        name = name,
+        body = body,
+        password = hashed,
+        role = role
+      ));
+  Shared.update state (commit tx)
