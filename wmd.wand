@@ -1,0 +1,37 @@
+#!/usr/bin/env wand
+uses {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Proc, Random, Shared}
+
+-- The wmd server. Run it from the repo as ./wmd, and make a new world
+-- first with ./wmd init --admin <name>.
+--
+-- The Library is loaded while the server runs: each file is checked and
+-- gated as it loads, at start and on /update.
+
+import ./driver/Init
+import ./driver/Main
+import Args
+
+import IO
+import Proc
+
+let stop why = (IO.println_err "wmd: %{why}"; Proc.exit 2)
+
+match Proc.args () with
+| ["init" :: rest] -> (
+  match Args.parse Init.InitOpts.decoder rest with
+  | Error e -> stop e
+  | Ok o -> (
+    match Init.run! o with
+    | Error why -> stop why
+    | Ok _ -> ()
+  )
+)
+| rest -> (
+  match Args.parse Main.Opts.decoder rest with
+  | Error e -> stop e
+  | Ok o -> (
+    match Main.problem o with
+    | Some why -> stop why
+    | None -> Main.run! o
+  )
+)
