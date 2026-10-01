@@ -25,5 +25,5 @@ let append! dir (e: World.Event) = FS.append! (file dir e) (line e)
 -- Write the events not yet logged. They are taken out in one step: the
 -- update answers the world before it emptied them.
 let flush! state dir =
-  let (before: World.World) = Shared.update state World.all_logged;
+  let (before: World.Current) = Shared.update state World.all_logged;
   List.each (fn e -> append! dir e) before.events

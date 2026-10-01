@@ -47,7 +47,7 @@ let found_id f =
   | Found x -> Some x
   | _ -> None
 
-let _names id (w: World.World) =
+let _names id (w: World.Current) =
   match World.instance id w with
   | Some i -> i.object.names
   | None -> []
@@ -67,7 +67,7 @@ let _pick phrase index matches =
 -- dropped. `me`, `here` and an exact id always work. Otherwise it looks in
 -- what the actor carries, then the room, then the room itself, and an
 -- exact name beats the start of one.
-let resolve (w: World.World) actor here words =
+let resolve (w: World.Current) actor here words =
   let lower =
     List.filter
       (fn x -> !(List.any? (fn a -> a == x) _articles))

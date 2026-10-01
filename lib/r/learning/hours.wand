@@ -10,7 +10,7 @@ uses {Random}
 import DateTime
 import JSON
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Room = import ../../std/room
 
 -- The part of the day an hour is in.
@@ -21,14 +21,14 @@ let part hour =
   else "evening"
 
 let hours =
-  Core.Object(
+  Driver.Object(
     names = [],
     short = Room.text "Lesson 1: The Room of Hours",
-    long = fn (ctx: Core.Context) -> "A round room with one tall window. It is %{part (DateTime.hour ctx.time)} outside, and the clock on the wall says %{DateTime.time_string ctx.time}. This room is the example: /copy here makes it yours. Read /help lesson1.",
+    long = fn (ctx: Driver.Context) -> "A round room with one tall window. It is %{part (DateTime.hour ctx.time)} outside, and the clock on the wall says %{DateTime.time_string ctx.time}. This room is the example: /copy here makes it yours. Read /help lesson1.",
     exits = {hall = Room.exit "/r/learning/hall"},
     details = {clock = Room.text "A plain clock with a loud tick. It is always right."},
     save = fn () -> JSON.null
   )
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = hours)
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = hours)

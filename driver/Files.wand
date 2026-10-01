@@ -1,6 +1,6 @@
 uses {FS.Read, FS.Write}
 
--- Mudlib files by blueprint path: checking and saving them for the editor,
+-- Library files by blueprint path: checking and saving them for the editor,
 -- and moving one to another directory. Who may edit which is the realms'
 -- to say.
 --
@@ -17,16 +17,16 @@ import Result
 import String
 import Wand
 
-let Core = import ../lib/std/core
+let Driver = import ../driver
 
 -- Lower-case words of letters, digits and _ between slashes, as
--- /r/home/ann/lamp. There is no `..`, so a path cannot leave the mudlib.
+-- /r/home/ann/lamp. There is no `..`, so a path cannot leave the Library.
 let valid? path = Regex.match? r/^(\/[a-z0-9_]+)+$/ path
 
--- The file of a blueprint path under the mudlib root `lib`.
+-- The file of a blueprint path under the Library root `lib`.
 let file_of (lib: Path) path = Path.join lib (Path.of_string ".%{path}.wand")
 
--- The directories a blueprint's file is in, from the mudlib root: r and
+-- The directories a blueprint's file is in, from the Library root: r and
 -- learning for /r/learning/lever.
 let _dir path =
   List.reverse
@@ -41,41 +41,28 @@ let _follow dir rel =
     dir
     (String.split "/" rel)
 
--- How many leading directories two lists share.
-let _common xs ys =
-  match (xs, ys) with
-  | ([x :: xt], [y :: yt]) when x == y -> 1 + _common xt yt
-  | _ -> 0
-
--- The relative import from the directories `dir` to the file `to`.
-let _relative dir to =
-  let shared = _common dir to;
-  let rest = String.join "/" (List.drop shared to);
-  let up = List.length dir - shared;
-  if up == 0 then "./%{rest}" else "%{String.repeat up "../"}%{rest}"
-
 -- `source`, the file of `from`, written as the file of `to`: each relative
 -- import names the same file from its new directory. /r/learning/lever
--- imports ../../std/core, and its copy in /r/home/ann imports
--- ../../../std/core.
+-- imports ../../std/driver, and its copy in /r/home/ann imports
+-- ../../../std/driver.
 let moved from to source =
   let fixed line =
     match Regex.capture r/^(.*import )(\.\.?\/\S+)(.*)$/ line with
-    | [_, head, rel, tail] -> "%{head}%{_relative (_dir to) (_follow (_dir from) rel)}%{tail}"
+    | [_, head, rel, tail] -> "%{head}%{Driver.import_from to "/%{String.join "/" (_follow (_dir from) rel)}"}%{tail}"
     | _ -> line
   in
   String.join "\n" (List.map fixed (String.lines source))
 
--- The effects mudlib code may perform. Raise is not in a check's effects:
--- a mudlib call that raises is a fault the driver catches.
+-- The effects Library code may perform. Raise is not in a check's effects:
+-- a Library call that raises is a fault the driver catches.
 let allowed_effects = ["Random"]
 
 let _problem message =
-  Core.Problem(severity = "error", line = 1, col = 1, message = message)
+  Driver.Problem(severity = "error", line = 1, col = 1, message = message)
 
 let _problems (c: Wand.Checked) =
   List.map
-    (fn (d: Wand.Diagnostic) -> Core.Problem(
+    (fn (d: Wand.Diagnostic) -> Driver.Problem(
       severity = d.severity,
       line = d.line,
       col = d.col,
@@ -83,14 +70,14 @@ let _problems (c: Wand.Checked) =
     ))
     c.diagnostics
 
-let _errors? problems = List.any? (fn (p: Core.Problem) -> p.severity == "error") problems
+let _errors? problems = List.any? (fn (p: Driver.Problem) -> p.severity == "error") problems
 
 -- Check `source` as the file of `path` in `lib`, then gate it: a file that
 -- performs any effect but Random is refused, whatever its `uses` line
 -- says.
 let check (lib: Path) path source =
   match Wand.check_at (file_of lib path) source with
-  | Error why -> Core.Outcome(
+  | Error why -> Driver.Outcome(
     action = "check",
     path = path,
     ok = false,
@@ -103,9 +90,9 @@ let check (lib: Path) path source =
       List.concat
         (_problems c)
         (List.map
-          (fn e -> _problem "the file performs %{e}; mudlib code may perform only Random")
+          (fn e -> _problem "the file performs %{e}; Library code may perform only Random")
           refused);
-    Core.Outcome(
+    Driver.Outcome(
       action = "check",
       path = path,
       ok = !(_errors? problems),
@@ -121,14 +108,14 @@ let _write (lib: Path) path text =
 
 -- Check, gate, format and save. Nothing is written unless all pass.
 let save (lib: Path) path source = (
-  let checked = Core.Outcome(check lib path source, action = "save");
+  let checked = Driver.Outcome(check lib path source, action = "save");
   if !checked.ok then checked
   else match Wand.format source with
-    | Error why -> Core.Outcome(checked, ok = false, problems = [_problem why])
+    | Error why -> Driver.Outcome(checked, ok = false, problems = [_problem why])
     | Ok text -> (
       match _write lib path text with
-      | Error why -> Core.Outcome(checked, ok = false, problems = [_problem why])
-      | Ok _ -> Core.Outcome(checked, text = Some text)
+      | Error why -> Driver.Outcome(checked, ok = false, problems = [_problem why])
+      | Ok _ -> Driver.Outcome(checked, text = Some text)
     )
 )
 
@@ -136,13 +123,13 @@ let save (lib: Path) path source = (
 let draft (lib: Path) path source = (
   let text = Result.default source (Wand.format source);
   match _write lib path text with
-  | Error why -> Core.Outcome(
+  | Error why -> Driver.Outcome(
     action = "draft",
     path = path,
     ok = false,
     problems = [_problem why]
   )
-  | Ok _ -> Core.Outcome(action = "draft", path = path, ok = true, text = Some text)
+  | Ok _ -> Driver.Outcome(action = "draft", path = path, ok = true, text = Some text)
 )
 
 -- What is in the directory of blueprint path `path`, sorted: each directory
@@ -171,39 +158,6 @@ let read (lib: Path) path =
   let file = file_of lib path;
   if FS.exists? file then Result.to_option (FS.read_file file) else None
 
--- The relative import from the file of `path` to the file of blueprint path
--- `target`: ../../../../std/core from /r/home/ann/shop/front to /std/core.
-let import_to path target =
-  _relative (_dir path) (List.filter (fn s -> s != "") (String.split "/" target))
-
--- The line above the exits that /dig may add to.
-let dig_marker = "-- The exits. /dig adds one here, and you can change them by hand."
-
--- The source of a room /dig makes at `path`, with one exit, `back`, to the
--- room it was dug from.
-let dug_room path back from = `
-uses {Random}
-
--- A room made by /dig. Give it a name and a description with /edit here.
-
-let Core = import %{import_to path "/std/core"}
-let Room = import %{import_to path "/std/room"}
-
-%{dig_marker}
-let exits = {
-  %{back} = Room.exit "%{from}"
-}
-
-let room =
-  Core.Object(
-    Room.room "A new room" "Nothing is here yet. Describe it with /edit here.",
-    exits = exits
-  )
-
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = room)
-`
-
 -- `s` split at the first `sep`: what is before it and what is after.
 let _split_once sep s =
   match String.split sep s with
@@ -219,8 +173,8 @@ let _escaped v =
 -- shows, when it has a view.
 let exit_line name to (view: Option String) =
   match view with
-  | Some v -> `%{name} = Core.Exit(Room.exit "%{to}", view = Some "%{_escaped v}")`
-  | None -> `%{name} = Room.exit "%{to}"`
+  | Some v -> `%{name} = Driver.Exit(to = "%{to}", view = Some "%{_escaped v}")`
+  | None -> `%{name} = Driver.Exit(to = "%{to}")`
 
 -- `source` with the exit `name` to `to` added to the exits below its
 -- /dig marker, or None when it has no marker, as a room written by hand.
@@ -232,6 +186,6 @@ let with_exit name to (view: Option String) source =
       (fn (between, rest) ->
         let added =
           if String.starts_with? "}" (String.trim_left rest) then entry else "\n  %{entry},";
-        "%{before}%{dig_marker}%{between}%{opening}%{added}%{rest}")
+        "%{before}%{Driver.dig_marker}%{between}%{opening}%{added}%{rest}")
       (_split_once opening after))
-    (_split_once dig_marker source)
+    (_split_once Driver.dig_marker source)

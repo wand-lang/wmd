@@ -8,13 +8,14 @@ import Clock
 import Env
 import FS
 import IO
+import Path
 import Random
 import Regex
 import Shared
 import String
 
 import ./Engine
-import ./Mudlib
+import ./Library
 import ./World
 
 -- The flags of `wmd init`. `--password` is for tests and throwaway worlds
@@ -54,7 +55,9 @@ let _password! (o: InitOpts) name =
 let _problem (o: InitOpts) =
   if FS.exists? o.world then
     Some "a world already exists at %{o.world}; init will not overwrite it"
-  else if !(FS.dir? o.lib) then Some "no mudlib at %{o.lib}"
+  else if !(FS.dir? o.lib) then Some "no Library at %{o.lib}"
+  else if !(FS.exists? (Path.join o.lib ./init.wand)) then
+    Some "no init.wand in %{o.lib}: a game's lib says where its files are in init.wand"
   else if !(Regex.match? r/^[A-Za-z]{2,16}$/ o.admin) then Some "--admin is 2 to 16 letters"
   else None
 
@@ -84,14 +87,12 @@ let run! (o: InitOpts) =
     | Ok typed -> if String.length typed < 8 then Error "a password is at least 8 characters"
       else (
         let at = "%{Clock.now ()}";
-        let loaded = Mudlib.load_all! o.lib;
+        let loaded = Library.load_all! o.lib;
         let start =
-          World.World(
+          Library.into loaded World.Current(
             World.with_pepper (_pepper ()),
             lib_root = o.lib,
-            lib = loaded.lib,
-            realms = loaded.realms,
-            help = Mudlib.help! o.lib
+            help = Library.help! o.lib
           );
         with Shared.make start as state -> (
           Engine.boot state at;

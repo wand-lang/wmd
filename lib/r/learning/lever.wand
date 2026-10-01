@@ -11,22 +11,22 @@ uses {Random}
 import JSON
 import Result
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Text = import ../../std/text
 
 type State(pulls: Int = 0)
 
 let make (s: State) =
-  Core.Object(
+  Driver.Object(
     names = ["lever", "brass lever"],
     short = fn _ -> "brass lever",
     long = fn _ -> "It has been pulled %{s.pulls} times.",
     props = Some (fn _ -> {pulls = JSON.of_int s.pulls}),
     verbs = [
-      Core.Verb(
+      Driver.Verb(
         names = ["pull", "yank"],
-        dobj = Core.This,
-        run = fn ctx _ -> Core.Reply(
+        dobj = Driver.This,
+        run = fn ctx _ -> Driver.Reply(
           actions =
             Text.act
               ctx
@@ -39,7 +39,7 @@ let make (s: State) =
     save = fn () -> State.encoder s
   )
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create _ saved = match saved with
-  | None -> Core.Init(object = make State())
-  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+  | None -> Driver.Init(object = make State())
+  | Some j -> Driver.Init(object = make (Result.get! (JSON.decode State.decoder j)))

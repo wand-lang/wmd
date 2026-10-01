@@ -12,7 +12,7 @@ import Option
 import Regex
 import String
 
-let Core = import ./core
+let Driver = import ./driver
 
 -- Where one session is in the dialogue.
 type Stage =
@@ -75,10 +75,10 @@ let _thirteen? (y, m, d) now =
 
 -- The dialogue, over where each session is in it.
 let make (stages: Map Stage) = (
-  let at (ctx: Core.Context) stage = make (Map.set ctx.actor stage stages);
-  let tell (ctx: Core.Context) text next =
-    Core.Reply(actions = [Core.Tell ctx.actor text], next = Some next);
-  let line (ctx: Core.Context) typed = (
+  let at (ctx: Driver.Context) stage = make (Map.set ctx.actor stage stages);
+  let tell (ctx: Driver.Context) text next =
+    Driver.Reply(actions = [Driver.Tell ctx.actor text], next = Some next);
+  let line (ctx: Driver.Context) typed = (
     let text = String.trim typed;
     match Option.default AskName (Map.get ctx.actor stages) with
     | AskName ->
@@ -93,8 +93,8 @@ let make (stages: Map Stage) = (
             (at ctx (AskBirth name))
       )
     | AskPassword name ->
-      Core.Reply(
-        actions = [Core.Tell ctx.actor _show, Core.Login ctx.actor name typed],
+      Driver.Reply(
+        actions = [Driver.Tell ctx.actor _show, Driver.Login ctx.actor name typed],
         next = Some (at ctx AskName)
       )
     | AskBirth name -> (
@@ -104,10 +104,10 @@ let make (stages: Map Stage) = (
         if _thirteen? birth ctx.time then
           tell ctx "Choose a password.\n%{_hide}Password:" (at ctx (NewPassword name))
         else
-          Core.Reply(
+          Driver.Reply(
             actions = [
-              Core.Tell ctx.actor "Sorry, WMD is for people 13 and older. Goodbye.",
-              Core.Hangup ctx.actor
+              Driver.Tell ctx.actor "Sorry, WMD is for people 13 and older. Goodbye.",
+              Driver.Hangup ctx.actor
             ],
             next = Some (at ctx Refused)
           )
@@ -119,27 +119,27 @@ let make (stages: Map Stage) = (
       if typed != first then
         tell ctx "They did not match. Choose a password.\nPassword:" (at ctx (NewPassword name))
       else
-        Core.Reply(
-          actions = [Core.Tell ctx.actor _show, Core.Register ctx.actor name first],
+        Driver.Reply(
+          actions = [Driver.Tell ctx.actor _show, Driver.Register ctx.actor name first],
           next = Some (at ctx AskName)
         )
-    | Refused -> Core.nothing
+    | Refused -> Driver.nothing
   );
   -- The driver runs `connect` when a session connects, and `done` when it
   -- logs in or goes away, so no stage outlives its session.
-  let connect (ctx: Core.Context) _ =
+  let connect (ctx: Driver.Context) _ =
     tell ctx "%{_banner}%{_ask}" (at ctx AskName);
-  let done (ctx: Core.Context) _ = Core.Reply(next = Some (make (Map.delete ctx.actor stages)));
-  Core.Object(
+  let done (ctx: Driver.Context) _ = Driver.Reply(next = Some (make (Map.delete ctx.actor stages)));
+  Driver.Object(
     names = [],
     short = fn _ -> "the login",
     long = fn _ -> "Where a connection waits to log in.",
-    verbs = [Core.Verb(names = ["connect"], run = connect), Core.Verb(names = ["done"], run = done)],
+    verbs = [Driver.Verb(names = ["connect"], run = connect), Driver.Verb(names = ["done"], run = done)],
     input = Some line,
     -- A dialogue belongs to a connection, and connections are not saved.
     save = fn () -> JSON.null
   )
 )
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = make Map.empty)
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = make Map.empty)

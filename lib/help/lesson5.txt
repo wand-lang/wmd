@@ -5,8 +5,8 @@ Go to the Orc Room: west from the Commons, then five. Poke the orc.
 `create` gives back an Init: the object, and actions to apply once it
 exists. A new Orc Room asks for an orc:
 
-  | None -> Core.Init(object = orcs, actions = [Core.Spawn "/r/learning/orc" self])
-  | Some _ -> Core.Init(object = orcs)
+  | None -> Driver.Init(object = orcs, actions = [Driver.Spawn "/r/learning/orc" self])
+  | Some _ -> Driver.Init(object = orcs)
 
 A room brought back after a restart gets its saved state, and spawns
 nothing, because its orc was saved too. Without that check, every restart
@@ -19,6 +19,6 @@ Try it:
 
   1. /copy here and /copy orc
   2. /edit /r/home/<you>/orcs, change the Spawn to "/r/home/<you>/orc", then w.
-  3. /eval [Core.Move ctx.actor "/r/home/<you>/orcs"]. Your room is made the
+  3. /eval [Driver.Move ctx.actor "/r/home/<you>/orcs"]. Your room is made the
      first time you go in, and it spawns your orc. /reset here makes it
      again, as new, and it spawns one more.

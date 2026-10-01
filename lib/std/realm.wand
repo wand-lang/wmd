@@ -1,24 +1,24 @@
--- Helpers for a realm's file. A realm implements Core.Blueprint, for its
--- one object, and Core.Realm, for its rules:
+-- Helpers for a realm's file. A realm implements Driver.Blueprint, for its
+-- one object, and Driver.Realm, for its rules:
 --
---   implement Core.Blueprint =
---     let create _ _ = Core.Init(object = Realm.object "the Learning realm" [])
+--   implement Driver.Blueprint =
+--     let create _ _ = Driver.Init(object = Realm.object "the Learning realm" [])
 --
---   implement Core.Realm =
+--   implement Driver.Realm =
 --     let commands = Realm.anything;
 --     let allows = Realm.anything;
---     let allowed = Core.Everyone;
+--     let allowed = Driver.Everyone;
 --     let contracts = [];
 --     let charter = Realm.no_charter
 
 import JSON
 
-let Core = import ./core
+let Driver = import ./driver
 
 -- A realm's object: what to call it, and the verbs every room in the realm
 -- answers to after its own. No one stands in it, and it keeps nothing.
 let object short verbs =
-  Core.Object(
+  Driver.Object(
     names = [],
     short = fn _ -> short,
     long = fn _ -> short,
@@ -32,4 +32,4 @@ let anything _ _ = Ok()
 -- The charter of a realm with no realms inside it, or of one the realm
 -- says nothing of: the Keymasters own its files, and it has no Stewards
 -- and no grants.
-let no_charter _ = Core.Charter()
+let no_charter _ = Driver.Charter()

@@ -4,19 +4,19 @@ uses {Random}
 
 import JSON
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Text = import ../../std/text
 
 let orc =
-  Core.Object(
+  Driver.Object(
     names = ["orc"],
     short = fn _ -> "orc",
     long = fn _ -> "A short green orc in a knitted hat. It is eating cabbage.",
     verbs = [
-      Core.Verb(
+      Driver.Verb(
         names = ["poke"],
-        dobj = Core.This,
-        run = fn ctx _ -> Core.Reply(
+        dobj = Driver.This,
+        run = fn ctx _ -> Driver.Reply(
           actions =
             Text.act
               ctx
@@ -28,5 +28,5 @@ let orc =
     save = fn () -> JSON.null
   )
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = orc)
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = orc)

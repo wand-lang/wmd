@@ -12,16 +12,16 @@ import Shared
 import String
 
 let {test, group} = import Test
-import ../Mudlib
+import ../Library
 import ../Engine
 import ../Snapshot
 import ../World
 
-let Core = import ../../lib/std/core
+let Driver = import ../../driver
 
--- A new world, with the mudlib in lib/ loaded and passwords hashed with a
+-- A new world, with the Library in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -59,10 +59,10 @@ let restored! path =
   | Some f -> (Engine.restore state f at; Engine.boot state at)
   | None -> Shared.get state
 
-let _where (w: World.World) =
+let _where (w: World.Current) =
   List.sort (List.map (fn (i: World.Instance) -> (i.id, i.env)) (Map.values w.instances))
 
-let _lever (w: World.World) =
+let _lever (w: World.Current) =
   Option.and_then (fn (i: World.Instance) -> i.saved) (World.instance "/r/lever#0" w)
 
 group "a snapshot" (fn () -> [
@@ -98,7 +98,7 @@ group "a snapshot" (fn () -> [
         Engine.snapshot! state path at;
         Shared.update state (line "pull lever");
         Engine.step state;
-        let (w: World.World) = Shared.get state;
+        let (w: World.Current) = Shared.get state;
         t.eq ([], []) (
           List.filter
             (fn (i: World.Instance) -> Option.none? i.saved && i.id != "/r/lever#0")
@@ -116,7 +116,7 @@ test "brings back who made each object and when, and each account's home" (fn t 
     let path = Path.join d ./world.json;
     let before = saved! path;
     let after = restored! path;
-    let made (w: World.World) =
+    let made (w: World.Current) =
       Option.map
         (fn (i: World.Instance) -> (i.creator, i.created, i.modified))
         (World.instance "/r/lever#0" w);
@@ -141,7 +141,7 @@ test "a file without the newer fields still reads" (fn t ->
         (Snapshot.read! path))
   ))
 
-let _owners (w: World.World) =
+let _owners (w: World.Current) =
   List.sort
     (List.map (fn (i: World.Instance) -> (i.id, i.owner, i.size)) (Map.values w.instances))
 
@@ -171,7 +171,7 @@ test "a file without owners gets them on restore" (fn t ->
     )
   ))
 
-let _access (w: World.World) =
+let _access (w: World.Current) =
   List.sort
     (List.map
       (fn (i: World.Instance) -> (i.id, i.allowed, i.locked))
@@ -186,7 +186,7 @@ test "brings back which rooms are private, who is invited, and which things are 
         _play state;
         Shared.update state (fn w ->
           w
-          |> World.set_allowed "/r/square#0" (Core.Only [])
+          |> World.set_allowed "/r/square#0" (Driver.Only [])
           |> World.invite "/r/square#0" "Bo"
           |> World.set_locked "/r/lever#0" false);
         Engine.snapshot! state path at;
@@ -220,7 +220,7 @@ test "brings back flags, held things, signings, notices and pauses" (fn t ->
         Shared.get state
       );
     let after = restored! path;
-    let held (w: World.World) =
+    let held (w: World.Current) =
       Option.map (fn (i: World.Instance) -> i.held) (World.instance "/r/lever#0" w);
     t.eq (before.flags, held before, Map.values before.accounts) (
       after.flags,

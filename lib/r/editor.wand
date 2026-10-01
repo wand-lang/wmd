@@ -4,18 +4,18 @@ uses {Random}
 -- an instance. Only its objects may check, save and run source, and they
 -- move no one but the person at the editor.
 
-let Core = import ../std/core
+let Driver = import ../std/driver
 let Realm = import ../std/realm
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = Realm.object "the Editor realm" [])
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = Realm.object "the Editor realm" [])
 
-implement Core.Realm =
+implement Driver.Realm =
   let commands = Realm.anything;
-  let allows (ctx: Core.Context) (a: Core.Action) = match a with
-  | Core.Move o _ when ctx.world.player? o && o != ctx.actor ->
+  let allows (ctx: Driver.Context) (a: Driver.Action) = match a with
+  | Driver.Move o _ when ctx.world.player? o && o != ctx.actor ->
     Error "the editor moves no one but the person at it"
   | _ -> Ok();
-  let allowed = Core.Everyone;
+  let allowed = Driver.Everyone;
   let contracts = [];
   let charter = Realm.no_charter

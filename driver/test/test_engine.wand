@@ -1,6 +1,6 @@
 uses {FS.Read, FS.Write, Random, Shared}
 
--- Commands through the driver and the real mudlib in ../lib, with no
+-- Commands through the driver and the real Library in ../lib, with no
 -- socket: a test changes the world as a session would, then lets the
 -- driver take what was queued, as its loop does.
 
@@ -11,14 +11,14 @@ import Shared
 import String
 
 let {test, group} = import Test
-import ../Mudlib
-let Core = import ../../lib/std/core
+import ../Library
+let Driver = import ../../driver
 import ../Engine
 import ../World
 
--- A new world, with the mudlib in lib/ loaded and passwords hashed with a
+-- A new world, with the Library in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -39,16 +39,16 @@ let played changes =
 
 -- What a session was sent, without the telnet bytes that turn the
 -- client's echo off and on around a password.
-let heard sid (w: World.World) =
+let heard sid (w: World.Current) =
   List.filter
     (fn l -> l != "")
     (List.map
       (fn l -> String.replace "\xff\xfc\x01" "" (String.replace "\xff\xfb\x01" "" l))
       (World.outbox sid w))
 
-let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid w)
+let heard? sid text (w: World.Current) = List.any? (fn l -> l == text) (heard sid w)
 
-let events (w: World.World) = List.map (fn (e: World.Event) -> e.event) w.events
+let events (w: World.Current) = List.map (fn (e: World.Event) -> e.event) w.events
 
 -- A new account for `name`, born long enough ago, from a session that just
 -- connected.
@@ -250,9 +250,9 @@ group "driver commands" (fn () -> [
     t.eq (true, true) (heard? bo "Ann falls asleep." w, heard? bo "Ann wakes up." w))
 ])
 
--- All mudlib calls share one generator, so a seed in one would fix every
+-- All Library calls share one generator, so a seed in one would fix every
 -- die in the world. The driver answers a seed with nothing.
-test "a Random.seed inside a mudlib call does not change the driver's next draw" (fn t ->
+test "a Random.seed inside a Library call does not change the driver's next draw" (fn t ->
   let draw () = Engine.guarded (fn () -> (Random.seed 1; Random.int 1 1000000000));
   let seeded = (Random.seed 1; Random.int 1 1000000000);
   t.ok (List.any? (fn d -> d != seeded) [draw (), draw (), draw ()]))
@@ -328,23 +328,23 @@ group "home" (fn () -> [
 ])
 
 group "the action policy" (fn () -> [
-  test "no one but /std/login may tell a session" (fn t ->
+  test "no one but the login may tell a session" (fn t ->
     let ctx = Engine.ctx_for (played []) "/r/lever#0" "/r/lever#0";
     t.eq
-      (Error "only /std/login may tell a session")
-      (Engine.allowed ctx (Core.Tell ann "hi") (played []))),
+      (Error "only the login may tell a session")
+      (Engine.allowed ctx (Driver.Tell ann "hi") (played []))),
   test "no object may spawn a body" (fn t ->
     let w = played [];
     let ctx = Engine.ctx_for w "/r/lever#0" "/r/lever#0";
     t.eq
       (Error "may not spawn /std/player")
-      (Engine.allowed ctx (Core.Spawn "/std/player" "/r/square") w)),
+      (Engine.allowed ctx (Driver.Spawn "/std/player" "/r/square") w)),
   test "an object may not move what it does not hold" (fn t ->
     let w = played [];
     let ctx = Engine.ctx_for w "/r/garden#0" "/r/garden#0";
     t.eq
       (Error "may not move /r/lever#0")
-      (Engine.allowed ctx (Core.Move "/r/lever" "/r/garden") w))
+      (Engine.allowed ctx (Driver.Move "/r/lever" "/r/garden") w))
 ])
 
 group "more driver commands" (fn () -> [

@@ -2,10 +2,10 @@ uses {FS.Read, FS.Write, Random, Shared}
 
 -- The editor through the driver: /edit, the ed commands, and the checks
 -- and saves they ask for. Each test works on a copy of lib/ in a
--- temporary directory, so a save never touches the real mudlib.
+-- temporary directory, so a save never touches the real Library.
 
 import ../Engine
-import ../Mudlib
+import ../Library
 import ../Snapshot
 import ../World
 import FS
@@ -20,7 +20,7 @@ import Shared
 import String
 
 let {test, group} = import Test
-let Core = import ../../lib/std/core
+let Driver = import ../../driver
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -51,7 +51,7 @@ let both_in =
   List.concat ann_in (List.concat (signed_up bo "bo") [World.emptied ann, World.emptied bo])
 
 -- Ann as a Keymaster, who may edit any file.
-let keymaster (w: World.World) =
+let keymaster (w: World.Current) =
   match World.account "ann" w with
   | Some a -> World.add_account World.Account(a, role = "keymaster") w
   | None -> w
@@ -59,22 +59,22 @@ let keymaster (w: World.World) =
 -- Ann in the editor on a new file, /r/home/ann/lamp, with nothing heard yet.
 let editing = List.concat ann_in [line ann "/edit /r/home/ann/lamp", World.emptied ann]
 
-let heard sid (w: World.World) =
+let heard sid (w: World.Current) =
   List.filter
     (fn l -> l != "")
     (List.map
       (fn l -> String.replace "\xff\xfc\x01" "" (String.replace "\xff\xfb\x01" "" l))
       (World.outbox sid w))
 
-let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid w)
+let heard? sid text (w: World.Current) = List.any? (fn l -> l == text) (heard sid w)
 
--- The mudlib, loaded once. It is the real lib/, because a file loads only
--- when it imports the driver's own std/core.wand: a copy of lib/ would
--- declare another Core.Blueprint.
-let loaded = Mudlib.load_all! ./lib
+-- The Library, loaded once. It is the real lib/, because a file loads only
+-- when it imports the driver's own std/driver.wand: a copy of lib/ would
+-- declare another Driver.Blueprint.
+let loaded = Library.load_all! ./lib
 
 -- Ann's home, where a test saves. It must not exist before a test, and
--- it is removed after one, so the mudlib is left as it was found.
+-- it is removed after one, so the Library is left as it was found.
 let home = ./lib/r/home/ann
 
 let _clean () = (
@@ -91,13 +91,13 @@ let keeping! kept changes check =
   with Resource.make (fn () -> ()) (fn () -> List.each (fn (f, text) -> FS.write_file! f text) before) as _ ->
   on_lib! changes check
 
--- Play `changes` on the mudlib, then give `check` the world and the
--- mudlib's root.
+-- Play `changes` on the Library, then give `check` the world and the
+-- Library's root.
 and on_lib! changes check =
   if FS.exists? home then
     Result.get! (Error "%{home} exists: the editor tests save there, and remove it after")
   else with Resource.make (fn () -> ()) (fn () -> _clean ()) as _ ->
-  with Shared.make World.World(World.with_pepper "test pepper", lib = loaded.lib, realms = loaded.realms) as state -> (
+  with Shared.make (Library.into loaded (World.with_pepper "test pepper")) as state -> (
     Engine.boot state at;
     List.each (fn f -> (Shared.update state f; Engine.step state)) changes;
     check (Shared.get state) ./lib
@@ -113,11 +113,11 @@ group "opening" (fn () -> [
           "You may not edit /r/garden. A Citizen edits the files in their home, /r/home/<name>/."
         ]
         (heard ann w))),
-  test "a path that is not a mudlib path" (fn t ->
-    on_lib! (List.concat ann_in [line ann "/edit /r/home/ann/../../std/core"]) (fn w _ ->
+  test "a path that is not a Library path" (fn t ->
+    on_lib! (List.concat ann_in [line ann "/edit /r/home/ann/../../std/driver"]) (fn w _ ->
       t.eq
         [
-          "'/r/home/ann/../../std/core' is not a mudlib path. One looks like /r/home/ann/lamp."
+          "'/r/home/ann/../../std/driver' is not a Library path. One looks like /r/home/ann/lamp."
         ]
         (heard ann w))),
   test "a new file in your home opens the editor, and the room sees you go" (fn t ->
@@ -141,7 +141,7 @@ group "opening" (fn () -> [
       let ctx = Engine.ctx_for w "/std/player#1" "/std/player#1";
       t.eq
         (Error "may not move /std/player#1 into %{editor}")
-        (Engine.allowed ctx (Core.Move "/std/player#1" editor) w)))
+        (Engine.allowed ctx (Driver.Move "/std/player#1" editor) w)))
 ])
 
 group "the buffer" (fn () -> [
@@ -238,7 +238,7 @@ group "checking and saving" (fn () -> [
       ]) [World.emptied ann, line ann "w"])
     ) (fn w lib ->
       t.eq (true, false) (
-        heard? ann "1:1: the file performs FS.Write; mudlib code may perform only Random" w,
+        heard? ann "1:1: the file performs FS.Write; Library code may perform only Random" w,
         FS.exists? (lamp lib)
       ))),
   test "w formats and saves" (fn t ->
@@ -263,10 +263,10 @@ group "checking and saving" (fn () -> [
         "a",
         "uses {Random}",
         "import JSON",
-        "let Core = import ../../../std/core",
+        "let Driver = import ../../../std/driver",
         "let Room = import ../../../std/room",
-        "implement Core.Blueprint =",
-        `  let create _ _ = Core.Init(object = Room.room "A lamp" "It is off.")`,
+        "implement Driver.Blueprint =",
+        `  let create _ _ = Driver.Init(object = Room.room "A lamp" "It is off.")`,
         ".",
         "w"
       ])
@@ -356,13 +356,9 @@ group "leaving" (fn () -> [
         let path = Path.join d ./world.json;
         with Shared.make w as state -> (
           Engine.snapshot! state path at;
-          with Shared.make World.World(
-            World.with_pepper "test pepper",
-            lib = loaded.lib,
-            realms = loaded.realms
-          ) as again -> (
+          with Shared.make (Library.into loaded (World.with_pepper "test pepper")) as again -> (
             let _ = Option.map (fn f -> Engine.restore again f at) (Snapshot.read! path);
-            let saved (x: World.World) =
+            let saved (x: World.Current) =
               Option.map
                 (fn (i: World.Instance) -> i.object.save ())
                 (World.instance editor x);
@@ -377,7 +373,7 @@ let lever = ./lib/r/lever.wand
 -- Ann as a Keymaster in the editor on the lever's file, after one pull.
 let on_lever = List.concat ann_in [keymaster, line ann "pull lever", line ann "/edit lever"]
 
-let lever_pulls (w: World.World) =
+let lever_pulls (w: World.Current) =
   Option.map
     (fn (i: World.Instance) -> i.object.long (Engine.ctx_for w i.id ann_body))
     (World.instance "/r/lever#0" w)
@@ -472,7 +468,7 @@ let looping_lever = List.concat ann_in [
     ",s/let make (s: State) =/let spin (n: Int) = spin (n + 1) and make (s: State) =/",
   line
     ann
-    ",s/run = fn ctx _ -> Core.Reply(/run = fn ctx _ -> if spin 0 then Core.nothing else Core.Reply(/",
+    ",s/run = fn ctx _ -> Driver.Reply(/run = fn ctx _ -> if spin 0 then Driver.nothing else Driver.Reply(/",
   line ann "w",
   line ann "q",
   World.emptied ann
@@ -480,7 +476,7 @@ let looping_lever = List.concat ann_in [
 
 let pulls n = List.map (fn _ -> line ann "pull lever") (List.range 1 n)
 
-let faults_of (w: World.World) =
+let faults_of (w: World.Current) =
   List.filter_map
     (fn (e: World.Event) -> if e.event == "fault" then e.text else None)
     w.events

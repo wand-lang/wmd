@@ -2,11 +2,11 @@ uses {Random}
 
 -- The arrival room: where everyone first stands.
 
-let Core = import ../std/core
+let Driver = import ../std/driver
 let Room = import ../std/room
 
 let square =
-  Core.Object(
+  Driver.Object(
     Room.room
       "The Commons"
       "A wide, quiet square. Doors of every size stand along its edges, all of them shut for now, but for one to the west, with LEARNING painted over it.",
@@ -14,7 +14,7 @@ let square =
       north = Room.exit "/r/garden",
       -- What `look west` shows: the exit's own view, as through a window.
       west =
-        Core.Exit(
+        Driver.Exit(
           Room.exit "/r/learning/hall",
           view = Some "Through the open door to the west, a long hall lined with numbered doors."
         )
@@ -27,7 +27,7 @@ let square =
   )
 
 -- A new square gets its lever. A restored one already has it.
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = square, actions = [Core.Spawn "/r/lever" self])
-  | Some _ -> Core.Init(object = square)
+  | None -> Driver.Init(object = square, actions = [Driver.Spawn "/r/lever" self])
+  | Some _ -> Driver.Init(object = square)

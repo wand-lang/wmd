@@ -5,7 +5,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 -- nothing else.
 
 import ../Engine
-import ../Mudlib
+import ../Library
 import ../World
 import FS
 import List
@@ -21,34 +21,34 @@ let {test, group} = import Test
 let guild = `
 uses {Random}
 
-let Core = import ../std/core
+let Driver = import ../std/driver
 let Realm = import ../std/realm
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = Realm.object "the Guild" [])
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = Realm.object "the Guild" [])
 
-implement Core.Realm =
+implement Driver.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
-  let allowed = Core.Everyone;
+  let allowed = Driver.Everyone;
   let contracts = [];
   let charter path =
-    if path == "/r/guild/inner" then Core.Charter(stewards = ["Bo"]) else Core.Charter()
+    if path == "/r/guild/inner" then Driver.Charter(stewards = ["Bo"]) else Driver.Charter()
 `
 
 let inner = `
 uses {Random}
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Realm = import ../../std/realm
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = Realm.object "the Inner realm" [])
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = Realm.object "the Inner realm" [])
 
-implement Core.Realm =
+implement Driver.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
-  let allowed = Core.Everyone;
+  let allowed = Driver.Everyone;
   let contracts = [];
   let charter = Realm.no_charter
 `
@@ -56,14 +56,14 @@ implement Core.Realm =
 let hall = `
 uses {Random}
 
-let Core = import ../../../std/core
+let Driver = import ../../../std/driver
 let Room = import ../../../std/room
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create _ _ =
-    Core.Init(
+    Driver.Init(
       object =
-        Core.Object(Room.room "The Guild Hall" "A hall.", exits = {out = Room.exit "/r/square"})
+        Driver.Object(Room.room "The Guild Hall" "A hall.", exits = {out = Room.exit "/r/square"})
     )
 `
 
@@ -72,13 +72,13 @@ let lib = (
   FS.write_file! ./lib/r/guild.wand guild;
   FS.write_file! ./lib/r/guild/inner.wand inner;
   FS.write_file! ./lib/r/guild/inner/hall.wand hall;
-  let loaded = Mudlib.load_all! ./lib;
+  let loaded = Library.load_all! ./lib;
   let _ = FS.delete_tree ./lib/r/guild;
   let _ = FS.delete ./lib/r/guild.wand;
   loaded
 )
 
-let start = World.World(World.with_pepper "test pepper", lib = lib.lib, realms = lib.realms)
+let start = Library.into lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -99,7 +99,7 @@ let played changes =
     Shared.get state
   )
 
-let heard sid (w: World.World) = List.filter (fn l -> l != "") (World.outbox sid w)
+let heard sid (w: World.Current) = List.filter (fn l -> l != "") (World.outbox sid w)
 
 let signed_up sid name = [
   World.open_next at,
@@ -115,8 +115,8 @@ let in_hall = List.flatten [
   signed_up ann "ann",
   signed_up bo "bo",
   [
-    line ann `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
-    line bo `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
+    line ann `/eval [Driver.Move ctx.actor "/r/guild/inner/hall"]`,
+    line bo `/eval [Driver.Move ctx.actor "/r/guild/inner/hall"]`,
     line ann "/flag here a rude sign",
     World.emptied ann,
     World.emptied bo
@@ -150,7 +150,7 @@ group "a Steward" (fn () -> [
     let w =
       played
         (List.concat in_hall [
-          line ann `/eval [Core.Spawn "/r/lever" ctx.here]`,
+          line ann `/eval [Driver.Spawn "/r/lever" ctx.here]`,
           line ann "/flag lever loud",
           World.emptied bo,
           line bo "/resolve 2 pause"

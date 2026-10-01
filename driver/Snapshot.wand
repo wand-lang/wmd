@@ -15,7 +15,7 @@ import Result
 
 import ./World
 
-let Core = import ../lib/std/core
+let Driver = import ../driver
 
 -- One object as the file keeps it.
 type Saved(
@@ -51,7 +51,7 @@ type File(
 -- The file for a world whose every instance has its saved state. An
 -- instance with none -- its `save` faulted -- is left out, rather than
 -- written as something it never said.
-let of_world (w: World.World) =
+let of_world (w: World.Current) =
   File(
     version = 2,
     accounts = Map.values w.accounts,
@@ -74,8 +74,8 @@ let of_world (w: World.World) =
             owner = i.owner,
             public = Some (World.public? i),
             invited = match i.allowed with
-              | Core.Only names -> names
-              | Core.Everyone -> [],
+              | Driver.Only names -> names
+              | Driver.Everyone -> [],
             locked = i.locked,
             held = i.held
           ))

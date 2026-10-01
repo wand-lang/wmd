@@ -12,42 +12,44 @@ import Option
 import Result
 import String
 
-let Core = import ./core
+let Driver = import ./driver
 let Text = import ./text
 
 type State(name: String = "someone")
 
 -- The people already in `room`, who see someone arrive.
-let _in (ctx: Core.Context) room = List.filter ctx.world.player? (ctx.world.contents room)
+let _in (ctx: Driver.Context) room = List.filter ctx.world.player? (ctx.world.contents room)
 
 -- ── home ───────────────────────────────────────────────────────────────
 
-let _home (s: State) (ctx: Core.Context) _ =
+let _home (s: State) (ctx: Driver.Context) _ =
   let home = ctx.world.home_of ctx.actor;
-  if home == ctx.here then Core.tell ctx "You are home already."
-  else Core.Reply(
+  if home == ctx.here then Driver.tell ctx "You are home already."
+  else Driver.Reply(
     actions = List.flatten [
-      List.map (fn o -> Core.Tell o "%{s.name} goes home.") (Text.others ctx),
-      List.map (fn o -> Core.Tell o "%{s.name} comes home.") (_in ctx home),
-      [Core.Move ctx.actor home]
+      List.map (fn o -> Driver.Tell o "%{s.name} goes home.") (Text.others ctx),
+      List.map (fn o -> Driver.Tell o "%{s.name} comes home.") (_in ctx home),
+      [Driver.Move ctx.actor home]
     ]
   )
 
 -- ── talk ───────────────────────────────────────────────────────────────
 
-let _say (s: State) (ctx: Core.Context) (p: Core.Parsed) =
-  if p.rest == "" then Core.tell ctx "Say what?"
-  else Core.Reply(actions = Text.act ctx `You say "%{p.rest}"` `%{s.name} says "%{p.rest}"`)
+let _say (s: State) (ctx: Driver.Context) (p: Driver.Parsed) =
+  if p.rest == "" then Driver.tell ctx "Say what?"
+  else Driver.Reply(
+    actions = Text.act ctx `You say "%{p.rest}"` `%{s.name} says "%{p.rest}"`
+  )
 
 -- `pose sits down.` shows "Ann sits down." to everyone, Ann too.
-let _pose (s: State) (ctx: Core.Context) (p: Core.Parsed) =
-  if p.rest == "" then Core.tell ctx "Pose what?"
-  else Core.Reply(actions = Text.act ctx "%{s.name} %{p.rest}" "%{s.name} %{p.rest}")
+let _pose (s: State) (ctx: Driver.Context) (p: Driver.Parsed) =
+  if p.rest == "" then Driver.tell ctx "Pose what?"
+  else Driver.Reply(actions = Text.act ctx "%{s.name} %{p.rest}" "%{s.name} %{p.rest}")
 
 -- `semipose 's cat purrs.` shows "Ann's cat purrs.": no space after the name.
-let _semipose (s: State) (ctx: Core.Context) (p: Core.Parsed) =
-  if p.rest == "" then Core.tell ctx "Semipose what?"
-  else Core.Reply(actions = Text.act ctx "%{s.name}%{p.rest}" "%{s.name}%{p.rest}")
+let _semipose (s: State) (ctx: Driver.Context) (p: Driver.Parsed) =
+  if p.rest == "" then Driver.tell ctx "Semipose what?"
+  else Driver.Reply(actions = Text.act ctx "%{s.name}%{p.rest}" "%{s.name}%{p.rest}")
 
 -- ── socials ────────────────────────────────────────────────────────────
 
@@ -69,9 +71,9 @@ let _socials = Map.from_list [
 ]
 
 -- `wave` or `wave at Bo`. Bo sees "Ann waves at you.".
-let _social (s: State) (ctx: Core.Context) (p: Core.Parsed) =
+let _social (s: State) (ctx: Driver.Context) (p: Driver.Parsed) =
   match Map.get p.verb _socials with
-  | None -> Core.nothing
+  | None -> Driver.nothing
   | Some so -> (
     let target =
       (match p.iobj with
@@ -79,20 +81,20 @@ let _social (s: State) (ctx: Core.Context) (p: Core.Parsed) =
        | None -> p.dobj);
     match target with
     | None when p.prep == Some "at" ->
-      Core.tell
+      Driver.tell
         ctx
         "You don't see a '%{String.trim (String.slice 3 (String.length p.rest) p.rest)}' here."
-    | None -> Core.Reply(actions = Text.act ctx "You %{so.you}." "%{s.name} %{so.them}.")
-    | Some t when t == ctx.actor -> Core.Reply(
+    | None -> Driver.Reply(actions = Text.act ctx "You %{so.you}." "%{s.name} %{so.them}.")
+    | Some t when t == ctx.actor -> Driver.Reply(
       actions =
         Text.act ctx "You %{so.you} at yourself." "%{s.name} %{so.them} at themself."
     )
     | Some t -> (
       let name = ctx.world.short_of t;
-      Core.Reply(
+      Driver.Reply(
         actions =
-          Core.Tell ctx.actor "You %{so.you} at %{name}." :: List.map
-            (fn o -> Core.Tell
+          Driver.Tell ctx.actor "You %{so.you} at %{name}." :: List.map
+            (fn o -> Driver.Tell
               o
               (if o == t then "%{s.name} %{so.them} at you."
               else "%{s.name} %{so.them} at %{name}."))
@@ -103,10 +105,10 @@ let _social (s: State) (ctx: Core.Context) (p: Core.Parsed) =
 
 -- ── the body ───────────────────────────────────────────────────────────
 
-let _verb names run = Core.Verb(names, run)
+let _verb names run = Driver.Verb(names, run)
 
 let make (s: State) =
-  Core.Object(
+  Driver.Object(
     names = [String.lower s.name],
     short = fn _ -> s.name,
     long = fn _ -> "%{s.name} looks like a person.",
@@ -121,7 +123,7 @@ let make (s: State) =
   )
 
 -- The driver spawns a body with its name already in `saved`.
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create _ saved = match saved with
-  | None -> Core.Init(object = make State())
-  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+  | None -> Driver.Init(object = make State())
+  | Some j -> Driver.Init(object = make (Result.get! (JSON.decode State.decoder j)))

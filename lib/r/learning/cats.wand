@@ -3,11 +3,11 @@ uses {Random}
 -- The room of lesson 3. Its example is the cat, which may have wandered
 -- off.
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Room = import ../../std/room
 
 let cats =
-  Core.Object(
+  Driver.Object(
     Room.room
       "Lesson 3: The Cat Room"
       "A sunny room with a basket in one corner. A grey cat lives here, when it is not out wandering. Read /help lesson3, then /copy cat to make it yours.",
@@ -15,7 +15,7 @@ let cats =
     details = {basket = Room.text "A wicker basket, full of grey hair."}
   )
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = cats, actions = [Core.Spawn "/r/learning/cat" self])
-  | Some _ -> Core.Init(object = cats)
+  | None -> Driver.Init(object = cats, actions = [Driver.Spawn "/r/learning/cat" self])
+  | Some _ -> Driver.Init(object = cats)

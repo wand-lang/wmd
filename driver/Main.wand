@@ -11,11 +11,12 @@ import List
 import Net
 import Par
 import Resource
+import Result
 import Shared
 
 import ./Engine
 import ./Log
-import ./Mudlib
+import ./Library
 import ./Session
 import ./Snapshot
 import ./World
@@ -31,11 +32,11 @@ type Opts(
 
 let _now () = "%{Clock.now ()}"
 
--- Why the server must not start, if it must not. A missing mudlib is an
+-- Why the server must not start, if it must not. A missing Library is an
 -- error rather than an empty world, so a typo in the path shows. And
 -- without the pepper no password can be checked or kept.
 let problem (o: Opts) =
-  if !(FS.dir? o.lib) then Some "no mudlib at %{o.lib}; run wmd init to make a world"
+  if !(FS.dir? o.lib) then Some "no Library at %{o.lib}; run wmd init to make a world"
   else if Env.get "WMD_PEPPER" == None then
     Some "WMD_PEPPER is not set; it is the secret every password is hashed with"
   else None
@@ -48,21 +49,21 @@ let _snapshot state path =
   | Ok _ -> ()
   | Error why -> IO.println_err "wmd: snapshot to %{path} failed: %{why}"
 
--- The world before anything is restored: the pepper, the mudlib and where
+-- The world before anything is restored: the pepper, the Library and where
 -- its files are. A file that does not load is left out and said, and the
 -- rest of the world starts: a builder's broken file does not stop the
 -- server.
 let _start! (o: Opts) = (
-  let loaded = Mudlib.load_all! o.lib;
+  let loaded = Library.load_all! o.lib;
   List.each
     (fn (path, why) -> IO.println_err "wmd: %{path} did not load: %{why}")
     loaded.failed;
-  World.World(
+  -- Without its init.wand the driver does not know where anything is.
+  if loaded.library == None then Result.get! (Error "the game's init.wand did not load")
+  else Library.into loaded World.Current(
     World.with_pepper (Env.get! "WMD_PEPPER"),
     lib_root = o.lib,
-    lib = loaded.lib,
-    realms = loaded.realms,
-    help = Mudlib.help! o.lib
+    help = Library.help! o.lib
   )
 )
 
@@ -78,7 +79,7 @@ let _start! (o: Opts) = (
 -- Clock.timed, because a DateTime keeps whole seconds only, and a clock
 -- step would spoil two readings of Clock.now.
 let _driver state (o: Opts) left = (
-  let ready (w: World.World) = w.inputs != [] || World.snapshot_due? w;
+  let ready (w: World.Current) = w.inputs != [] || World.snapshot_due? w;
   let (slept, _) =
     Clock.timed (fn () ->
       let _ =

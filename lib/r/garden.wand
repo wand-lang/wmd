@@ -1,10 +1,10 @@
 uses {Random}
 
-let Core = import ../std/core
+let Driver = import ../std/driver
 let Room = import ../std/room
 
 let garden =
-  Core.Object(
+  Driver.Object(
     Room.room "The Garden" "A small walled garden. A path leads back south to the Commons.",
     exits = {south = Room.exit "/r/square"},
     details = {
@@ -12,10 +12,10 @@ let garden =
       path = Room.text "Gravel, raked smooth."
     },
     -- A robin looks up at whoever comes in.
-    on_enter = Some (fn (ctx: Core.Context) who ->
-      if ctx.world.player? who then Core.Reply(actions = [Core.Tell who "A robin looks up at you from the path."])
-      else Core.nothing)
+    on_enter = Some (fn (ctx: Driver.Context) who ->
+      if ctx.world.player? who then Driver.Reply(actions = [Driver.Tell who "A robin looks up at you from the path."])
+      else Driver.nothing)
   )
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = garden)
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = garden)

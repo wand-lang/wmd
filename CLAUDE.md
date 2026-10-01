@@ -6,7 +6,7 @@ with the docs tools before you change the design.
 
 ## Rules
 
-- Everything is Wand. The driver, the mudlib, the tests and every tool are
+- Everything is Wand. The driver, the Library, the tests and every tool are
   `.wand` files. Do not write Python, shell scripts or a Makefile.
 - When Wand cannot do something, do not use another language. Write it in
   Wand if you can. If the gap is general, propose a wand change.

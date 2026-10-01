@@ -3,7 +3,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 -- Signing the rules, /help, notices and paused accounts.
 
 import ../Engine
-import ../Mudlib
+import ../Library
 import ../World
 import List
 import Map
@@ -14,12 +14,12 @@ import Shared
 import String
 
 let {test, group} = import Test
-let Core = import ../../lib/std/core
+let Driver = import ../../driver
 
 let start =
-  World.World(
-    Mudlib.with_lib! ./lib (World.with_pepper "test pepper"),
-    help = Mudlib.help! ./lib
+  World.Current(
+    Library.with_lib! ./lib (World.with_pepper "test pepper"),
+    help = Library.help! ./lib
   )
 
 let at = "2026-09-30T12:00:00Z"
@@ -37,9 +37,9 @@ let played changes =
     Shared.get state
   )
 
-let heard sid (w: World.World) = List.filter (fn l -> l != "") (World.outbox sid w)
+let heard sid (w: World.Current) = List.filter (fn l -> l != "") (World.outbox sid w)
 
-let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid w)
+let heard? sid text (w: World.Current) = List.any? (fn l -> l == text) (heard sid w)
 
 -- Ann signed up, and not yet signed the rules.
 let unsigned = [
@@ -63,8 +63,8 @@ let again =
     line sid "ann-password"
   ]
 
-let rules_v2 (w: World.World) =
-  World.World(
+let rules_v2 (w: World.Current) =
+  World.Current(
     w,
     help =
       Map.set
@@ -79,7 +79,7 @@ let rules_v2 (w: World.World) =
 group "signing the rules" (fn () -> [
   test "a new account wakes in the Rules Hall, and reads them there" (fn t ->
     let w = played unsigned;
-    t.eq (Some Engine.rules_hall, true) (
+    t.eq (Some "/r/rules/hall#0", true) (
       World.env_of ann_body w,
       heard? ann "The rules of WMD, version 1." w
     )),
@@ -108,7 +108,7 @@ group "signing the rules" (fn () -> [
     t.eq (Some "/r/square#0") (World.env_of ann_body (played (List.concat signed again)))),
   test "new rules are signed again at the next login" (fn t ->
     t.eq
-      (Some Engine.rules_hall)
+      (Some "/r/rules/hall#0")
       (World.env_of ann_body (played (List.flatten [signed, [rules_v2], again])))),
   test "only the Rules Hall may say the rules were signed" (fn t ->
     let w = played signed;
@@ -116,12 +116,12 @@ group "signing the rules" (fn () -> [
       Result.ok?
         (Engine.allowed
           (Engine.ctx_for w "/r/square#0" ann_body)
-          (Core.Acknowledge ann_body)
+          (Driver.Acknowledge ann_body)
           w),
       Result.ok?
         (Engine.allowed
-          (Engine.ctx_for w Engine.rules_hall ann_body)
-          (Core.Acknowledge ann_body)
+          (Engine.ctx_for w "/r/rules/hall#0" ann_body)
+          (Driver.Acknowledge ann_body)
           w)
     ))
 ])

@@ -2,11 +2,11 @@ uses {Random}
 
 -- The Learning Hall: the way into the lessons, west of the Commons.
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Room = import ../../std/room
 
 let hall =
-  Core.Object(
+  Driver.Object(
     Room.room
       "The Learning Hall"
       "A long hall with six doors, numbered one to six. Behind each door is a lesson in building with Wand, and a working example to try. Type /help guide to begin, then go one.",
@@ -21,5 +21,5 @@ let hall =
     }
   )
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = hall)
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = hall)

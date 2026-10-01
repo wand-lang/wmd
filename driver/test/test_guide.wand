@@ -5,7 +5,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 
 import ../Engine
 import ../Files
-import ../Mudlib
+import ../Library
 import ../World
 import Duration
 import FS
@@ -21,7 +21,7 @@ import String
 
 let {test, group} = import Test
 
-let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
 
 let noon = 2026-09-30T12:00:00Z
 
@@ -63,7 +63,7 @@ let played steps =
     Shared.get state
   )
 
-let heard (w: World.World) =
+let heard (w: World.Current) =
   List.filter
     (fn l -> l != "")
     (List.map
@@ -74,12 +74,12 @@ let heard? text w = List.any? (fn l -> l == text) (heard w)
 
 let heard_some? part w = List.any? (fn l -> String.contains? part l) (heard w)
 
-let events (w: World.World) = List.map (fn (e: World.Event) -> e.event) w.events
+let events (w: World.Current) = List.map (fn (e: World.Event) -> e.event) w.events
 
-let prop id key (w: World.World) = (Engine.view w id).prop id key
+let prop id key (w: World.Current) = (Engine.view w id).prop id key
 
 -- Cy's home, where /copy writes. It must not exist before a test, and it is
--- removed after one, so the mudlib is left as it was found.
+-- removed after one, so the Library is left as it was found.
 let home = ./lib/r/home/cy
 
 let _clean () = (
@@ -185,7 +185,7 @@ group "/copy" (fn () -> [
     copying! [line "west", line "two", forget, line "/copy lever"] (fn w ->
       t.eq (true, true, true) (
         heard?
-          `Copied /r/learning/lever to /r/home/cy/lever. Make one with /eval [Core.Spawn "/r/home/cy/lever" ctx.here], and change it with /edit /r/home/cy/lever.`
+          `Copied /r/learning/lever to /r/home/cy/lever. Make one with /eval [Driver.Spawn "/r/home/cy/lever" ctx.here], and change it with /edit /r/home/cy/lever.`
           w,
         FS.exists? (Path.join home ./lever.wand),
         Map.has? "/r/home/cy/lever" w.lib
@@ -195,7 +195,7 @@ group "/copy" (fn () -> [
       line "west",
       line "two",
       line "/copy lever",
-      line `/eval [Core.Spawn "/r/home/cy/lever" ctx.here]`
+      line `/eval [Driver.Spawn "/r/home/cy/lever" ctx.here]`
     ] (fn w ->
       t.eq (Some "/r/learning/levers#0", Some "cy") (
         World.env_of "/r/home/cy/lever#0" w,
@@ -205,7 +205,7 @@ group "/copy" (fn () -> [
     copying! [line "west", line "one", forget, line "/copy here"] (fn w ->
       t.ok
         (heard?
-          `Copied /r/learning/hours to /r/home/cy/hours. Go there with /eval [Core.Move ctx.actor "/r/home/cy/hours"], and change it with /edit /r/home/cy/hours.`
+          `Copied /r/learning/hours to /r/home/cy/hours. Go there with /eval [Driver.Move ctx.actor "/r/home/cy/hours"], and change it with /edit /r/home/cy/hours.`
           w))),
   test "never writes over a file you have" (fn t ->
     copying! [line "west", line "two", line "/copy lever", forget, line "/copy lever"] (fn w ->
@@ -235,7 +235,7 @@ group "the guide" (fn () -> [
         (FS.glob_in *.wand ./lib/r/learning);
     t.eq [] failed),
   test "has a help topic for itself and for each lesson" (fn t ->
-    let topics = Mudlib.help! ./lib;
+    let topics = Library.help! ./lib;
     t.eq
       []
       (List.filter (fn n -> !(Map.has? n topics)) [

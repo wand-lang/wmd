@@ -1,19 +1,19 @@
 -- Rooms. A room file starts from `room` and changes what it needs with
 -- record update:
 --
---   Core.Object(Room.room "The Garden" "A small walled garden.",
+--   Driver.Object(Room.room "The Garden" "A small walled garden.",
 --     exits = {south = Room.exit "/r/square"})
 
 import JSON
 
-let Core = import ./core
+let Driver = import ./driver
 
 -- A description that never changes.
-let text s = fn (_: Core.Context) -> s
+let text s = fn (_: Driver.Context) -> s
 
 -- An exit with the default messages and no check.
-let exit to = Core.Exit(to = to)
+let exit to = Driver.Exit(to = to)
 
 -- A room with no exits and nothing to save.
 let room short long =
-  Core.Object(names = [], short = text short, long = text long, save = fn () -> JSON.null)
+  Driver.Object(names = [], short = text short, long = text long, save = fn () -> JSON.null)

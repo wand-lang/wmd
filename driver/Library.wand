@@ -1,0 +1,88 @@
+uses {FS.Read}
+
+-- Loading the Library: its init.wand, which says where its files are, every
+-- file under the Library directory that claims Driver.Blueprint, as its
+-- module, and every one that also claims Driver.Realm, as a realm. Each file is checked and gated as it loads, so a file that
+-- fails is left out and says why, and the rest of the world still starts.
+
+import FS
+import List
+import Path
+import String
+import Map
+import Option
+import Wand
+
+let Driver = import ../driver
+import ./Scan
+import ./World
+
+-- What the game's init.wand says, the blueprints and realms that loaded,
+-- by path, and each file that did not, with why.
+type Loaded(
+  library: Option Driver.Library = None,
+  lib: Map Driver.Blueprint = {},
+  realms: Map Driver.Realm = {},
+  failed: List (String, String) = []
+)
+
+let _realm (l: Loaded) (b: Scan.Blueprint) =
+  if !b.realm then l
+  else match Wand.load Driver.Realm.loader b.file with
+    | Ok r -> Loaded(l, realms = Map.set b.path r l.realms)
+    | Error why -> Loaded(l, failed = List.concat l.failed [(b.path, why)])
+
+let load_all! root =
+  let init = Path.join root ./init.wand;
+  let started =
+    if !(FS.exists? init) then Loaded(failed = [("/init", "there is no init.wand")])
+    else match Wand.load Driver.Library.loader init with
+      | Ok l -> Loaded(library = Some l)
+      | Error why -> Loaded(failed = [("/init", why)])
+  in
+  List.fold_left
+    (fn (l: Loaded) (b: Scan.Blueprint) -> match Wand.load Driver.Blueprint.loader b.file with
+      | Ok bp -> _realm Loaded(l, lib = Map.set b.path bp l.lib) b
+      | Error why -> Loaded(l, failed = List.concat l.failed [(b.path, why)])
+    )
+    started
+    (Scan.blueprints! root)
+
+-- `w` with what `loaded` holds: where the game's files are, its
+-- blueprints and its realms.
+let into (loaded: Loaded) (w: World.Current) =
+  let with_start =
+    match Option.map (fn (l: Driver.Library) -> l.start) loaded.library with
+    | Some s -> World.Current(
+      w,
+      paths = World.Paths(
+        login = s.login,
+        player = s.player,
+        arrival = s.arrival,
+        rules = s.rules,
+        editor = s.editor,
+        examples = s.examples,
+        homes = s.homes,
+        driver = s.driver
+      ),
+      library = loaded.library
+    )
+    | None -> w
+  in
+  World.Current(with_start, lib = loaded.lib, realms = loaded.realms)
+
+-- `w` with the game at `root`.
+let with_lib! root (w: World.Current) = into (load_all! root) w
+
+-- The help topics: each text file in the Library's help/, by its name, as
+-- rules for help/rules.txt. No help/ is no topics.
+let help! root =
+  let dir = Path.join root ./help;
+  if !(FS.dir? dir) then Map.empty
+  else
+    Map.from_list
+      (List.map
+        (fn f ->
+          let name = Path.to_string (Path.basename f);
+          (String.slice 0 (String.length name - 4) name, FS.read_file! f))
+        (FS.glob_in *.txt dir))

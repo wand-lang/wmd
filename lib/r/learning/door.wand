@@ -11,40 +11,40 @@ import JSON
 import List
 import Result
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Text = import ../../std/text
 
 type State(open: Bool = false)
 
 let make (s: State) =
-  Core.Object(
+  Driver.Object(
     names = ["door", "green door"],
     short = fn _ -> "green door",
     long = fn _ -> if s.open then "A green door, standing open." else "A green door, shut.",
     -- What others may read: the room's exit asks whether the door is open.
     props = Some (fn _ -> {open = JSON.of_bool s.open}),
     verbs = [
-      Core.Verb(
+      Driver.Verb(
         names = ["open"],
-        dobj = Core.This,
-        run = fn ctx _ -> if s.open then Core.tell ctx "It is open already."
-          else Core.Reply(
+        dobj = Driver.This,
+        run = fn ctx _ -> if s.open then Driver.tell ctx "It is open already."
+          else Driver.Reply(
             actions =
               List.concat
                 (Text.act
                   ctx
                   "You open the green door."
                   "%{ctx.world.short_of ctx.actor} opens the green door.")
-                [Core.After 30s "close"],
+                [Driver.After 30s "close"],
             next = Some (make State(open = true))
           )
       ),
-      Core.Verb(
+      Driver.Verb(
         names = ["close", "shut"],
-        dobj = Core.This,
-        run = fn ctx _ -> if !s.open then Core.tell ctx "It is shut already."
-          else Core.Reply(
-            actions = [Core.Say "The green door swings shut."],
+        dobj = Driver.This,
+        run = fn ctx _ -> if !s.open then Driver.tell ctx "It is shut already."
+          else Driver.Reply(
+            actions = [Driver.Say "The green door swings shut."],
             next = Some (make State(open = false))
           )
       )
@@ -52,7 +52,7 @@ let make (s: State) =
     save = fn () -> State.encoder s
   )
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create _ saved = match saved with
-  | None -> Core.Init(object = make State())
-  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+  | None -> Driver.Init(object = make State())
+  | Some j -> Driver.Init(object = make (Result.get! (JSON.decode State.decoder j)))

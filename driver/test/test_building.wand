@@ -3,7 +3,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 -- Building out a home: /dig, /files, and the file a room is in.
 
 import ../Engine
-import ../Mudlib
+import ../Library
 import ../World
 import FS
 import List
@@ -13,7 +13,7 @@ import Shared
 
 let {test, group} = import Test
 
-let loaded = Mudlib.load_all! ./lib
+let loaded = Library.load_all! ./lib
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -24,7 +24,7 @@ let dee_body = "/std/player#0"
 let line text = World.queue (World.Line dee at text)
 
 -- Dee's home, where these tests build. It must not exist before a test,
--- and it is removed after one, so the mudlib is left as it was found.
+-- and it is removed after one, so the Library is left as it was found.
 let home = ./lib/r/home/dee
 
 let _clean () = (
@@ -40,11 +40,7 @@ let built! changes check =
     Result.get!
       (Error "%{home} exists: the building tests build there, and remove it after")
   else with Resource.make (fn () -> ()) (fn () -> _clean ()) as _ ->
-  with Shared.make World.World(
-    World.with_pepper "test pepper",
-    lib = loaded.lib,
-    realms = loaded.realms
-  ) as state -> (
+  with Shared.make (Library.into loaded (World.with_pepper "test pepper")) as state -> (
     Engine.boot state at;
     List.each
       (fn f -> (Shared.update state f; Engine.step state))
@@ -62,14 +58,14 @@ let built! changes check =
     check (Shared.get state)
   )
 
-let heard (w: World.World) = List.filter (fn l -> l != "") (World.outbox dee w)
+let heard (w: World.Current) = List.filter (fn l -> l != "") (World.outbox dee w)
 
-let where (w: World.World) = World.env_of dee_body w
+let where (w: World.Current) = World.env_of dee_body w
 
 -- Dee's first room, dug from the Commons, and Dee in it.
 let in_hall = [
   line "/dig hall hall",
-  line `/eval [Core.Move ctx.actor "/r/home/dee/hall"]`,
+  line `/eval [Driver.Move ctx.actor "/r/home/dee/hall"]`,
   World.emptied dee
 ]
 
@@ -78,7 +74,7 @@ group "/dig" (fn () -> [
     built! [line "/dig hall hall"] (fn w ->
       t.eq
         [
-          `Dug a room at /r/home/dee/hall. No exit leads there from The Commons. Go there with /eval [Core.Move ctx.actor "/r/home/dee/hall"]`
+          `Dug a room at /r/home/dee/hall. No exit leads there from The Commons. Go there with /eval [Driver.Move ctx.actor "/r/home/dee/hall"]`
         ]
         (heard w))),
   test "from your own room, adds the exit and leads back" (fn t ->

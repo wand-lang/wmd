@@ -4,7 +4,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 -- realm adds to the driver's own.
 
 import ../Engine
-import ../Mudlib
+import ../Library
 import ../World
 import List
 import Map
@@ -12,11 +12,11 @@ import Option
 import Result
 import Shared
 
-let Core = import ../../lib/std/core
+let Driver = import ../../driver
 
 let {test, group} = import Test
 
-let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -97,7 +97,7 @@ group "a realm's rules" (fn () -> [
     let ctx = Engine.ctx_for w ann_body ann_body;
     t.eq
       (Error "may not move /std/player#0 into /r/home#0: a realm is no place")
-      (Engine.allowed ctx (Core.Move ann_body "/r/home#0") w)),
+      (Engine.allowed ctx (Driver.Move ann_body "/r/home#0") w)),
   test "are asked after the driver's own policy" (fn t ->
     -- Bo in Ann's editor, where the driver's policy would let the editor
     -- move him.
@@ -109,24 +109,24 @@ group "a realm's rules" (fn () -> [
     let editor = Engine.ctx_for w "/r/editor/room#0" ann_body;
     t.eq
       (Error "the editor moves no one but the person at it")
-      (Engine.allowed editor (Core.Move bo_body "/r/garden") w)),
+      (Engine.allowed editor (Driver.Move bo_body "/r/garden") w)),
   test "grant only to the realm's own objects" (fn t ->
     let w = played both_in;
     t.eq (false, true) (
       Result.ok?
         (Engine.allowed
           (Engine.ctx_for w "/r/square#0" ann_body)
-          (Core.Check "/r/home/ann/den" "")
+          (Driver.Check "/r/home/ann/den" "")
           w),
       Result.ok?
         (Engine.allowed
           (Engine.ctx_for w "/r/editor/room#0" ann_body)
-          (Core.Check "/r/home/ann/den" "")
+          (Driver.Check "/r/home/ann/den" "")
           w)
     ))
 ])
 
-let heard sid (w: World.World) = List.filter (fn l -> l != "") (World.outbox sid w)
+let heard sid (w: World.Current) = List.filter (fn l -> l != "") (World.outbox sid w)
 
 group "a realm's verbs" (fn () -> [
   test "answer after the player's and the room's: look and go are the Commons'" (fn t ->
@@ -134,7 +134,7 @@ group "a realm's verbs" (fn () -> [
     t.eq (Some "/r/learning/hall#0", false) (
       World.env_of ann_body w,
       List.any?
-        (fn (v: Core.Verb) -> List.any? (fn n -> n == "go") v.names)
+        (fn (v: Driver.Verb) -> List.any? (fn n -> n == "go") v.names)
         (Option.default
           []
           (Option.map (fn (i: World.Instance) -> i.object.verbs) (World.instance ann_body w)))

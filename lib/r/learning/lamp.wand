@@ -10,13 +10,13 @@ uses {Random}
 import JSON
 import Result
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Text = import ../../std/text
 
 type State(lit: Bool = false, oil: Int = 30)
 
 let make (s: State) =
-  Core.Object(
+  Driver.Object(
     names = ["lamp", "brass lamp"],
     short = fn _ -> if s.lit then "brass lamp, lit" else "brass lamp",
     long = fn _ -> "A brass lamp with %{s.oil} drops of oil left.",
@@ -26,12 +26,12 @@ let make (s: State) =
       oil = JSON.of_int s.oil
     }),
     verbs = [
-      Core.Verb(
+      Driver.Verb(
         names = ["light"],
-        dobj = Core.This,
-        run = fn ctx _ -> if s.lit then Core.tell ctx "It is lit already."
-          else if s.oil == 0 then Core.tell ctx "It has no oil. Try fill lamp."
-          else Core.Reply(
+        dobj = Driver.This,
+        run = fn ctx _ -> if s.lit then Driver.tell ctx "It is lit already."
+          else if s.oil == 0 then Driver.tell ctx "It has no oil. Try fill lamp."
+          else Driver.Reply(
             actions =
               Text.act
                 ctx
@@ -40,21 +40,21 @@ let make (s: State) =
             next = Some (make State(s, lit = true))
           )
       ),
-      Core.Verb(
+      Driver.Verb(
         names = ["fill"],
-        dobj = Core.This,
-        run = fn ctx _ -> Core.Reply(
-          actions = [Core.Tell ctx.actor "You fill the lamp from the oil jar by the wall."],
+        dobj = Driver.This,
+        run = fn ctx _ -> Driver.Reply(
+          actions = [Driver.Tell ctx.actor "You fill the lamp from the oil jar by the wall."],
           next = Some (make State(s, oil = 30))
         )
       ),
       -- The call-out runs this, and so may anyone: douse lamp.
-      Core.Verb(
+      Driver.Verb(
         names = ["out", "douse"],
-        dobj = Core.This,
-        run = fn _ _ -> if !s.lit then Core.nothing
-          else Core.Reply(
-            actions = [Core.Say "The lamp goes out."],
+        dobj = Driver.This,
+        run = fn _ _ -> if !s.lit then Driver.nothing
+          else Driver.Reply(
+            actions = [Driver.Say "The lamp goes out."],
             next = Some (make State(s, lit = false))
           )
       )
@@ -66,14 +66,14 @@ let make (s: State) =
 -- One heartbeat of a lit lamp. The drop that empties it starts the
 -- flicker; after that it waits for the call-out.
 and burn (s: State) =
-  if s.oil == 0 then Core.nothing
-  else if s.oil == 1 then Core.Reply(
-    actions = [Core.Say "The lamp flickers.", Core.After 4s "out"],
+  if s.oil == 0 then Driver.nothing
+  else if s.oil == 1 then Driver.Reply(
+    actions = [Driver.Say "The lamp flickers.", Driver.After 4s "out"],
     next = Some (make State(s, oil = 0))
   )
-  else Core.Reply(next = Some (make State(s, oil = s.oil - 1)))
+  else Driver.Reply(next = Some (make State(s, oil = s.oil - 1)))
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create _ saved = match saved with
-  | None -> Core.Init(object = make State())
-  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+  | None -> Driver.Init(object = make State())
+  | Some j -> Driver.Init(object = make (Result.get! (JSON.decode State.decoder j)))

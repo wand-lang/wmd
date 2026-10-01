@@ -20,7 +20,7 @@ else in the room.
 Try it:
 
   1. /copy lever
-  2. /eval [Core.Spawn "/r/home/<you>/lever" ctx.here] makes one here.
+  2. /eval [Driver.Spawn "/r/home/<you>/lever" ctx.here] makes one here.
   3. Pull your lever. /edit /r/home/<you>/lever, make it say something else,
      then w. Your lever keeps its count: the driver moves it onto the new
      code with its saved state.

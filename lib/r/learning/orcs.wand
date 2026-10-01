@@ -7,18 +7,18 @@ uses {Random}
 -- itself. A room brought back after a restart gets `saved`, and spawns
 -- nothing, because its orc was saved too.
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Room = import ../../std/room
 
 let orcs =
-  Core.Object(
+  Driver.Object(
     Room.room
       "Lesson 5: The Orc Room"
       "A low stone room that smells of cabbage. This room is the example: it made its own orc. Read /help lesson5, then /copy here and /copy orc to make them yours.",
     exits = {hall = Room.exit "/r/learning/hall"}
   )
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = orcs, actions = [Core.Spawn "/r/learning/orc" self])
-  | Some _ -> Core.Init(object = orcs)
+  | None -> Driver.Init(object = orcs, actions = [Driver.Spawn "/r/learning/orc" self])
+  | Some _ -> Driver.Init(object = orcs)

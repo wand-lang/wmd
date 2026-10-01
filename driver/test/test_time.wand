@@ -5,7 +5,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 
 import ../Engine
 import ../Inspiration
-import ../Mudlib
+import ../Library
 import ../Snapshot
 import ../World
 import Duration
@@ -28,24 +28,24 @@ uses {Random}
 import JSON
 import Result
 
-let Core = import ../../../std/core
+let Driver = import ../../../std/driver
 
 type State(beats: Int = 0)
 
 let make (s: State) =
-  Core.Object(
+  Driver.Object(
     names = ["clock"],
     short = fn _ -> "clock",
     long = fn _ -> "A clock.",
     props = Some (fn _ -> {beats = JSON.of_int s.beats}),
-    heartbeat = Some (fn _ -> Core.Reply(next = Some (make State(beats = s.beats + 1)))),
+    heartbeat = Some (fn _ -> Driver.Reply(next = Some (make State(beats = s.beats + 1)))),
     save = fn () -> State.encoder s
   )
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create _ saved = match saved with
-  | None -> Core.Init(object = make State())
-  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+  | None -> Driver.Init(object = make State())
+  | Some j -> Driver.Init(object = make (Result.get! (JSON.decode State.decoder j)))
 `
 
 let timer = `
@@ -55,19 +55,19 @@ import JSON
 import List
 import Result
 
-let Core = import ../../../std/core
+let Driver = import ../../../std/driver
 
 type State(heard: List String = [])
 
-let after actions = Core.Verb(names = [], run = fn _ _ -> Core.Reply(actions = actions))
+let after actions = Driver.Verb(names = [], run = fn _ _ -> Driver.Reply(actions = actions))
 
 let make (s: State) =
   let heard name =
-    Core.Verb(
+    Driver.Verb(
       names = [name],
-      run = fn _ _ -> Core.Reply(next = Some (make State(heard = List.concat s.heard [name])))
+      run = fn _ _ -> Driver.Reply(next = Some (make State(heard = List.concat s.heard [name])))
     );
-  Core.Object(
+  Driver.Object(
     names = ["timer"],
     short = fn _ -> "timer",
     long = fn _ -> "A timer.",
@@ -76,17 +76,17 @@ let make (s: State) =
       heard "ring",
       heard "early",
       heard "late",
-      Core.Verb(after [Core.After 30s "ring"], names = ["set"]),
-      Core.Verb(after [Core.After 60s "late", Core.After 30s "early"], names = ["wind"]),
-      Core.Verb(after [Core.After 1s "nothing"], names = ["stray"])
+      Driver.Verb(after [Driver.After 30s "ring"], names = ["set"]),
+      Driver.Verb(after [Driver.After 60s "late", Driver.After 30s "early"], names = ["wind"]),
+      Driver.Verb(after [Driver.After 1s "nothing"], names = ["stray"])
     ],
     save = fn () -> State.encoder s
   )
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create _ saved = match saved with
-  | None -> Core.Init(object = make State())
-  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+  | None -> Driver.Init(object = make State())
+  | Some j -> Driver.Init(object = make (Result.get! (JSON.decode State.decoder j)))
 `
 
 let broken = `
@@ -95,10 +95,10 @@ uses {Random}
 import JSON
 import Result
 
-let Core = import ../../../std/core
+let Driver = import ../../../std/driver
 
 let thing =
-  Core.Object(
+  Driver.Object(
     names = ["gadget"],
     short = fn _ -> "gadget",
     long = fn _ -> "A gadget.",
@@ -106,8 +106,8 @@ let thing =
     save = fn () -> JSON.null
   )
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = thing)
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = thing)
 `
 
 let dir = ./lib/r/home/tock
@@ -119,7 +119,7 @@ let lib = (
     (./timer.wand, timer),
     (./broken.wand, broken)
   ];
-  let loaded = Mudlib.load_all! ./lib;
+  let loaded = Library.load_all! ./lib;
   let _ = FS.delete_tree dir;
   match FS.list_dir ./lib/r/home with
   | Ok [] -> (let _ = FS.delete_tree ./lib/r/home; ())
@@ -127,7 +127,7 @@ let lib = (
   loaded
 )
 
-let start = World.World(World.with_pepper "test pepper", lib = lib.lib, realms = lib.realms)
+let start = Library.into lib (World.with_pepper "test pepper")
 
 let noon = 2026-09-30T12:00:00Z
 
@@ -147,7 +147,7 @@ let on time f state =
   let _ = Shared.update state (Engine.commit (f (Engine.begin (Shared.get state) time)));
   ()
 
-let spawn bp owner = on at (Engine.spawn bp Engine.arrival "test" owner)
+let spawn bp owner = on at (Engine.spawn bp "/r/square#0" "test" owner)
 
 let verb id name time = on time (Engine.verb id id name)
 
@@ -174,7 +174,7 @@ let played steps =
     Shared.get state
   )
 
-let prop id key (w: World.World) = (Engine.view w id).prop id key
+let prop id key (w: World.Current) = (Engine.view w id).prop id key
 
 let beats w = prop clock_id "beats" w
 
@@ -182,7 +182,7 @@ let heard w = prop timer_id "heard" w
 
 let words xs = Some (JSON.of_list (List.map JSON.of_string xs))
 
-let events (w: World.World) = List.map (fn (e: World.Event) -> e.event) w.events
+let events (w: World.Current) = List.map (fn (e: World.Event) -> e.event) w.events
 
 group "heartbeats" (fn () -> [
   test "the test blueprints loaded" (fn t ->

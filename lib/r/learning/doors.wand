@@ -7,24 +7,24 @@ import JSON
 import Option
 import Result
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Room = import ../../std/room
 
 let door = "/r/learning/door#0"
 
 -- The exit checks the door's `open` prop. A room cannot change the door; it
 -- can only look.
-let _open? (ctx: Core.Context) =
+let _open? (ctx: Driver.Context) =
   Option.and_then (fn j -> Result.to_option (JSON.get_bool j)) (ctx.world.prop door "open") == Some true
 
 let doors =
-  Core.Object(
+  Driver.Object(
     Room.room
       "Lesson 4: The Door Room"
       "A narrow room. In the far wall is a green door, and through it a cupboard. Open the door and go through, but be quick. Read /help lesson4, then /copy door to make it yours.",
     exits = {
       hall = Room.exit "/r/learning/hall",
-      through = Core.Exit(
+      through = Driver.Exit(
         to = "/r/learning/cupboard",
         check = Some (fn ctx ->
           if _open? ctx then Ok() else Error "The green door is shut.")
@@ -32,7 +32,7 @@ let doors =
     }
   )
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = doors, actions = [Core.Spawn "/r/learning/door" self])
-  | Some _ -> Core.Init(object = doors)
+  | None -> Driver.Init(object = doors, actions = [Driver.Spawn "/r/learning/door" self])
+  | Some _ -> Driver.Init(object = doors)

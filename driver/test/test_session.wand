@@ -15,20 +15,20 @@ import Shared
 import String
 
 let {test, group} = import Test
-import ../Mudlib
+import ../Library
 import ../Engine
 import ../Session
 import ../World
 
--- A new world, with the mudlib in lib/ loaded and passwords hashed with a
+-- A new world, with the Library in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
 -- What each connection was sent, as lines, and the world after every
 -- session has ended.
-type Run(sent: Map (List String), after: World.World)
+type Run(sent: Map (List String), after: World.Current)
 
 let _lines text = List.filter (fn l -> l != "") (String.split "\r\n" text)
 

@@ -11,19 +11,19 @@ import List
 import Option
 import Result
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Room = import ../../std/room
 
-let _light (ctx: Core.Context) id =
+let _light (ctx: Driver.Context) id =
   Option.default
     0
     (Option.and_then (fn j -> Result.to_option (JSON.get_int j)) (ctx.world.prop id "light"))
 
-let _lit (ctx: Core.Context) =
+let _lit (ctx: Driver.Context) =
   List.fold_left (fn n id -> n + _light ctx id) 0 (ctx.world.contents ctx.self)
 
 let cave =
-  Core.Object(
+  Driver.Object(
     names = [],
     short = Room.text "Lesson 6: The Dark Cave",
     long = fn ctx -> if _lit ctx > 0 then
@@ -33,7 +33,7 @@ let cave =
     save = fn () -> JSON.null
   )
 
-implement Core.Blueprint =
+implement Driver.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = cave, actions = [Core.Spawn "/r/learning/lamp" self])
-  | Some _ -> Core.Init(object = cave)
+  | None -> Driver.Init(object = cave, actions = [Driver.Spawn "/r/learning/lamp" self])
+  | Some _ -> Driver.Init(object = cave)

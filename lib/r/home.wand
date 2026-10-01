@@ -3,16 +3,16 @@ uses {Random}
 -- The Home realm: every Citizen's home, as /r/home/ann/ for ann. Its
 -- charter, in the Commons, gives each Citizen the files in their own home.
 
-let Core = import ../std/core
+let Driver = import ../std/driver
 let Realm = import ../std/realm
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = Realm.object "the Home realm" [])
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = Realm.object "the Home realm" [])
 
-implement Core.Realm =
+implement Driver.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
   -- A Citizen's new room is private until they make it public.
-  let allowed = Core.Only [];
+  let allowed = Driver.Only [];
   let contracts = [];
   let charter = Realm.no_charter

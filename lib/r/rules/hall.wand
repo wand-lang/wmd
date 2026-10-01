@@ -6,15 +6,15 @@ uses {Random}
 import JSON
 import Option
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 
-let _rules (ctx: Core.Context) =
+let _rules (ctx: Driver.Context) =
   Option.default
     "The rules should be written here, but the wall is blank. Tell a Keymaster."
     (ctx.world.help_of "rules")
 
 let hall =
-  Core.Object(
+  Driver.Object(
     names = [],
     short = fn _ -> "The Rules Hall",
     long = fn ctx -> `
@@ -24,14 +24,14 @@ A quiet hall. The rules are written on the wall:
 
 When you have read them, type: sign rules`,
     verbs = [
-      Core.Verb(names = ["read"], run = fn ctx _ -> Core.tell ctx (_rules ctx)),
-      Core.Verb(
+      Driver.Verb(names = ["read"], run = fn ctx _ -> Driver.tell ctx (_rules ctx)),
+      Driver.Verb(
         names = ["sign"],
-        run = fn ctx p -> if p.rest != "rules" then Core.tell ctx "Type: sign rules"
-          else Core.Reply(
+        run = fn ctx p -> if p.rest != "rules" then Driver.tell ctx "Type: sign rules"
+          else Driver.Reply(
             actions = [
-              Core.Tell ctx.actor "You sign the rules. Thank you, and welcome.",
-              Core.Acknowledge ctx.actor
+              Driver.Tell ctx.actor "You sign the rules. Thank you, and welcome.",
+              Driver.Acknowledge ctx.actor
             ]
           )
       )
@@ -39,5 +39,5 @@ When you have read them, type: sign rules`,
     save = fn () -> JSON.null
   )
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = hall)
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = hall)

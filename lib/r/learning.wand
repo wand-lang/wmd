@@ -3,15 +3,15 @@ uses {Random}
 -- The Learning realm: the Learning Hall, west of the Commons, and its six
 -- lessons.
 
-let Core = import ../std/core
+let Driver = import ../std/driver
 let Realm = import ../std/realm
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = Realm.object "the Learning realm" [])
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = Realm.object "the Learning realm" [])
 
-implement Core.Realm =
+implement Driver.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
-  let allowed = Core.Everyone;
+  let allowed = Driver.Everyone;
   let contracts = [];
   let charter = Realm.no_charter

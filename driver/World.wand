@@ -16,7 +16,7 @@ import String
 
 import ./Inspiration
 
-let Core = import ../lib/std/core
+let Driver = import ../driver
 
 -- One object in the world. `object` is what the blueprint's `create`
 -- built, or the `next` of its last reply. `saved` is what its `save` gave
@@ -38,7 +38,7 @@ let Core = import ../lib/std/core
 type Instance(
   id: String,
   blueprint: String,
-  object: Core.Object,
+  object: Driver.Object,
   env: Option String = None,
   saved: Option JSON = None,
   creator: Option String = None,
@@ -46,7 +46,7 @@ type Instance(
   modified: Option String = None,
   owner: Option String = None,
   size: Int = 0,
-  allowed: Core.Allowed = Core.Only [],
+  allowed: Driver.Allowed = Driver.Only [],
   locked: Bool = true,
   -- Held for review after enough flags: it shows as waiting for a Keymaster,
   -- and runs nothing, until a Keymaster resolves its flags.
@@ -147,7 +147,23 @@ type Event(
   object: Option String = None
 )
 
-type World(
+-- What the driver needs to know of the Library, from its init.wand: the
+-- blueprints of the login, a player's body, the room a new body arrives in,
+-- the room where the rules are signed, and the editor; the directory of
+-- the examples /copy copies from; and the directory of every home. The
+-- driver names no path of its own.
+type Paths(
+  login: String = "",
+  player: String = "",
+  arrival: String = "",
+  rules: String = "",
+  editor: String = "",
+  examples: String = "",
+  homes: String = "",
+  driver: String = ""
+)
+
+type Current(
   instances: Map Instance,
   sessions: Map Session,
   outboxes: Map (List String),
@@ -165,19 +181,23 @@ type World(
   -- When the input the driver is working on arrived: what `ctx.time` says.
   -- Set on the driver's working copy only; nothing else reads it.
   now: DateTime = 1970-01-01T00:00:00Z,
-  -- The mudlib directory, where the editor reads and saves files.
+  -- The Library directory, where the editor reads and saves files.
   lib_root: Path = ./lib,
   -- Every blueprint the driver can spawn, by path, such as /std/player:
   -- each file's module, as loaded at start or by /update since.
-  lib: Map Core.Blueprint = {},
+  lib: Map Driver.Blueprint = {},
+  -- Where the Library keeps what the driver needs, from its init.wand.
+  paths: Paths = Paths(),
+  -- The game's init.wand, as loaded: its `start` holds the room /dig makes.
+  library: Option Driver.Library = None,
   -- Every realm, by the path of its file, such as /r/home: the files that
-  -- implement Core.Realm as well as Core.Blueprint.
-  realms: Map Core.Realm = {},
+  -- implement Driver.Realm as well as Driver.Blueprint.
+  realms: Map Driver.Realm = {},
   -- The editor as it was before the last /update of it, for an editor that
   -- faults on its new code to go back to.
-  editor_before: Option Core.Blueprint = None
+  editor_before: Option Driver.Blueprint = None
 ,
-  -- Help topics, by name: the text files in the mudlib's help/.
+  -- Help topics, by name: the text files in the Library's help/.
   help: Map String = {},
   -- Every flag, oldest first, open and resolved.
   flags: List Flag = [],
@@ -204,7 +224,7 @@ type World(
 )
 
 let empty =
-  World(
+  Current(
     instances = Map.empty,
     sessions = Map.empty,
     outboxes = Map.empty,
@@ -230,93 +250,95 @@ let session? id = String.starts_with? "session:" id
 
 -- ── Instances ──────────────────────────────────────────────────────────
 
-let instance id (w: World) = Map.get (resolve id) w.instances
+let instance id (w: Current) = Map.get (resolve id) w.instances
 
-let put (i: Instance) (w: World) =
-  World(
+let put (i: Instance) (w: Current) =
+  Current(
     w,
     instances = Map.set i.id i w.instances,
     beating = if Option.some? i.object.heartbeat then Map.set i.id true w.beating
       else Map.delete i.id w.beating
   )
 
-let env_of id (w: World) = Option.and_then (fn (i: Instance) -> i.env) (instance id w)
+let env_of id (w: Current) = Option.and_then (fn (i: Instance) -> i.env) (instance id w)
 
-let contents id (w: World) =
+let contents id (w: Current) =
   List.map
     (fn (i: Instance) -> i.id)
     (List.filter (fn (i: Instance) -> i.env == Some (resolve id)) (Map.values w.instances))
 
-let set_object id (o: Core.Object) at (w: World) =
+let set_object id (o: Driver.Object) at (w: Current) =
   match instance id w with
   | Some i -> put Instance(i, object = o, saved = None, modified = Some at, faults = 0) w
   | None -> w
 
 -- A call on the object faulted, or one did not: how many in a row did.
-let faulted id (w: World) =
+let faulted id (w: Current) =
   match instance id w with
   | Some i -> put Instance(i, faults = i.faults + 1) w
   | None -> w
 
-let worked id (w: World) =
+let worked id (w: Current) =
   match instance id w with
   | Some i when i.faults > 0 -> put Instance(i, faults = 0) w
   | _ -> w
 
 -- Who made an object and when, as a snapshot kept them.
-let set_made id creator created modified (w: World) =
+let set_made id creator created modified (w: Current) =
   match instance id w with
   | Some i -> put Instance(i, creator = creator, created = created, modified = modified) w
   | None -> w
 
 -- ── Ownership ──────────────────────────────────────────────────────────
 
-let owner_of id (w: World) = Option.and_then (fn (i: Instance) -> i.owner) (instance id w)
+let owner_of id (w: Current) = Option.and_then (fn (i: Instance) -> i.owner) (instance id w)
 
-let set_owner id owner (w: World) =
+let set_owner id owner (w: Current) =
   match instance id w with
   | Some i -> put Instance(i, owner = owner) w
   | None -> w
 
 -- The instances `owner` owns.
-let owned owner (w: World) =
+let owned owner (w: Current) =
   List.filter (fn (i: Instance) -> i.owner == Some owner) (Map.values w.instances)
 
 -- How many bytes of saved state `owner`'s instances had at the last
 -- snapshot.
-let saved_bytes owner (w: World) =
+let saved_bytes owner (w: Current) =
   List.fold_left (fn n (i: Instance) -> n + i.size) 0 (owned owner w)
 
 -- The instances of blueprint `bp`, by id.
-let instances_of bp (w: World) =
+let instances_of bp (w: Current) =
   List.map
     (fn (i: Instance) -> i.id)
     (List.filter (fn (i: Instance) -> i.blueprint == bp) (Map.values w.instances))
 
 -- Use `b` for blueprint `path` from now on.
-let set_blueprint path (b: Core.Blueprint) (w: World) = World(w, lib = Map.set path b w.lib)
+let set_blueprint path (b: Driver.Blueprint) (w: Current) =
+  Current(w, lib = Map.set path b w.lib)
 
 -- Use `r` for the realm whose file is `path` from now on.
-let set_realm path (r: Core.Realm) (w: World) = World(w, realms = Map.set path r w.realms)
+let set_realm path (r: Driver.Realm) (w: Current) =
+  Current(w, realms = Map.set path r w.realms)
 
 -- Take an object out of the world, with its call-outs.
-let remove id (w: World) =
+let remove id (w: Current) =
   let full = resolve id;
-  World(
+  Current(
     w,
     instances = Map.delete full w.instances,
     beating = Map.delete full w.beating,
     callouts = List.filter (fn (c: Callout) -> c.target != full) w.callouts
   )
 
-let move id dest (w: World) =
+let move id dest (w: Current) =
   match instance id w with
   | Some i -> put Instance(i, env = Some (resolve dest)) w
   | None -> w
 
 -- The next free instance number of a blueprint: one past the highest in
 -- use, so a gap left by a restore or a removal is never filled twice.
-let next_number bp (w: World) =
+let next_number bp (w: Current) =
   List.fold_left
     (fn n (i: Instance) -> if i.blueprint != bp then n
       else match Result.to_option
@@ -330,39 +352,40 @@ let next_number bp (w: World) =
 -- ── Accounts ───────────────────────────────────────────────────────────
 
 -- Accounts are keyed by the lower-case name, so Ann and ANN are one.
-let account name (w: World) = Map.get (String.lower name) w.accounts
+let account name (w: Current) = Map.get (String.lower name) w.accounts
 
-let add_account (a: Account) (w: World) =
-  World(w, accounts = Map.set (String.lower a.name) a w.accounts)
+let add_account (a: Account) (w: Current) =
+  Current(w, accounts = Map.set (String.lower a.name) a w.accounts)
 
 -- The account whose body is `body`.
-let account_of body (w: World) =
+let account_of body (w: Current) =
   List.find (fn (a: Account) -> a.body == body) (Map.values w.accounts)
 
-let _put_account body f (w: World) =
+let _put_account body f (w: Current) =
   match account_of body w with
   | Some a -> add_account (f a) w
   | None -> w
 
-let set_home body room (w: World) =
+let set_home body room (w: Current) =
   _put_account body (fn a -> Account(a, home = Some room)) w
 
-let seen body at (w: World) = _put_account body (fn a -> Account(a, last_seen = Some at)) w
+let seen body at (w: Current) =
+  _put_account body (fn a -> Account(a, last_seen = Some at)) w
 
 -- Change the account with key `name`.
-let _put_named name f (w: World) =
+let _put_named name f (w: Current) =
   match account name w with
   | Some a -> add_account (f a) w
   | None -> w
 
-let spend name cost now (w: World) =
+let spend name cost now (w: Current) =
   _put_named
     name
     (fn a -> Account(a, inspiration = Inspiration.spend now cost a.inspiration))
     w
 
 -- An exploring bonus, for the first visit to `room`.
-let inspire name room now (w: World) =
+let inspire name room now (w: Current) =
   _put_named
     name
     (fn a -> Account(
@@ -374,38 +397,39 @@ let inspire name room now (w: World) =
 
 -- ── Sessions ───────────────────────────────────────────────────────────
 
-let session sid (w: World) = Map.get sid w.sessions
+let session sid (w: Current) = Map.get sid w.sessions
 
-let _put_session (s: Session) (w: World) = World(w, sessions = Map.set s.id s w.sessions)
+let _put_session (s: Session) (w: Current) =
+  Current(w, sessions = Map.set s.id s w.sessions)
 
 -- True when the session should end, or is gone already.
-let closing? sid (w: World) =
+let closing? sid (w: Current) =
   match session sid w with
   | Some s -> s.closing
   | None -> true
 
-let close_soon sid (w: World) =
+let close_soon sid (w: Current) =
   match session sid w with
   | Some s -> _put_session Session(s, closing = true) w
   | None -> w
 
 -- The session a body is attached to.
-let session_of body (w: World) =
+let session_of body (w: Current) =
   List.find (fn (s: Session) -> s.body == Some body) (Map.values w.sessions)
 
-let attach sid body (w: World) =
+let attach sid body (w: Current) =
   match session sid w with
   | Some s -> _put_session Session(s, body = Some body) w
   | None -> w
 
-let outbox sid (w: World) = Option.default [] (Map.get sid w.outboxes)
+let outbox sid (w: Current) = Option.default [] (Map.get sid w.outboxes)
 
 -- Add lines to one session's outbox. A full outbox closes the session
 -- instead, so one session that does not read cannot grow without bound.
-let tell_session sid text (w: World) =
+let tell_session sid text (w: Current) =
   match Map.get sid w.outboxes with
   | Some lines -> if List.length lines >= outbox_cap then close_soon sid w
-    else World(
+    else Current(
       w,
       outboxes = Map.set sid (List.concat lines (String.split "\n" text)) w.outboxes
     )
@@ -413,7 +437,7 @@ let tell_session sid text (w: World) =
 
 -- Tell a session, or the session a body is attached to. A body with no
 -- session is asleep and hears nothing.
-let tell id text (w: World) =
+let tell id text (w: Current) =
   if session? id then tell_session id text w
   else match session_of (resolve id) w with
     | Some s -> tell_session s.id text w
@@ -422,14 +446,14 @@ let tell id text (w: World) =
 -- Empty an outbox. Its writer takes the lines from the world this was
 -- applied to, which Shared.update answers. A session that closed in the
 -- meantime stays closed.
-let emptied sid (w: World) =
+let emptied sid (w: Current) =
   match Map.get sid w.outboxes with
-  | Some _ -> World(w, outboxes = Map.set sid [] w.outboxes)
+  | Some _ -> Current(w, outboxes = Map.set sid [] w.outboxes)
   | None -> w
 
 -- ── Input and events ───────────────────────────────────────────────────
 
-let queue (i: Input) (w: World) = World(w, inputs = List.concat w.inputs [i])
+let queue (i: Input) (w: Current) = Current(w, inputs = List.concat w.inputs [i])
 
 -- When an input arrived.
 let at_of (i: Input) =
@@ -439,7 +463,7 @@ let at_of (i: Input) =
   | Gone _ at _ -> at
 
 -- True while the driver has not finished with something a session sent.
-let pending? sid (w: World) =
+let pending? sid (w: Current) =
   List.any?
     (fn i -> match i with
       | Connect s _ -> s == sid
@@ -449,19 +473,19 @@ let pending? sid (w: World) =
     w.inputs
 
 -- Remove the first `n` inputs: the ones the driver took.
-let dequeued n (w: World) = World(w, inputs = List.drop n w.inputs)
+let dequeued n (w: Current) = Current(w, inputs = List.drop n w.inputs)
 
-let emit ev (w: World) = World(w, events = List.concat w.events [ev])
+let emit ev (w: Current) = Current(w, events = List.concat w.events [ev])
 
 -- Take every event out. The logger writes the ones in the world this was
 -- applied to, which Shared.update answers.
-let all_logged (w: World) = World(w, events = [])
+let all_logged (w: Current) = Current(w, events = [])
 
 -- ── Connections ────────────────────────────────────────────────────────
 
 -- A new session. The driver greets it when it takes the Connect.
-let open sid at (w: World) =
-  World(
+let open sid at (w: Current) =
+  Current(
     w,
     sessions = Map.set sid Session(id = sid) w.sessions,
     outboxes = Map.set sid [] w.outboxes
@@ -474,31 +498,32 @@ let session_id n = "session:%{n}"
 
 -- A new session, numbered in the order sessions opened. Its id is
 -- `session_id` of the `opened` in the world this was applied to.
-let open_next at (w: World) = open (session_id w.opened) at World(w, opened = w.opened + 1)
+let open_next at (w: Current) =
+  open (session_id w.opened) at Current(w, opened = w.opened + 1)
 
 -- Remove a session and its outbox. Its body stays in the world, asleep;
 -- the driver tells the room when it takes the Gone.
-let close sid at (w: World) =
+let close sid at (w: Current) =
   match session sid w with
   | None -> w
   | Some s ->
-    World(w, sessions = Map.delete sid w.sessions, outboxes = Map.delete sid w.outboxes)
+    Current(w, sessions = Map.delete sid w.sessions, outboxes = Map.delete sid w.outboxes)
     |> queue (Gone sid at s.body)
     |> emit Event(at = at, event = "disconnect", actor = sid, object = s.body)
 
 -- ── Snapshots ──────────────────────────────────────────────────────────
 
 -- Keep what an object's `save` gave, until the object changes again.
-let keep_saved id (j: JSON) (w: World) =
+let keep_saved id (j: JSON) (w: Current) =
   match instance id w with
   | Some i -> put Instance(i, saved = Some j, size = String.length (JSON.stringify j)) w
   | None -> w
 
-let snapshot_due (w: World) = World(w, snapshot_due = true)
+let snapshot_due (w: Current) = Current(w, snapshot_due = true)
 
-let snapshot_taken (w: World) = World(w, snapshot_due = false)
+let snapshot_taken (w: Current) = Current(w, snapshot_due = false)
 
-let snapshot_due? (w: World) = w.snapshot_due
+let snapshot_due? (w: Current) = w.snapshot_due
 
 -- ── Time ───────────────────────────────────────────────────────────────
 
@@ -507,8 +532,8 @@ let snapshot_due? (w: World) = w.snapshot_due
 let _soonest cs = List.sort_by (fn (c: Callout) -> c.due) cs
 
 -- Run the verb `verb` of `target` at `due`.
-let call_out target due verb (w: World) =
-  World(
+let call_out target due verb (w: Current) =
+  Current(
     w,
     callouts =
       _soonest
@@ -519,27 +544,27 @@ let call_out target due verb (w: World) =
   )
 
 -- The call-outs of `target` not yet run.
-let callouts_of target (w: World) =
+let callouts_of target (w: Current) =
   List.filter (fn (c: Callout) -> c.target == resolve target) w.callouts
 
 -- The call-outs whose time has come by `now`, oldest first.
-let due now (w: World) = List.filter (fn (c: Callout) -> c.due <= now) w.callouts
+let due now (w: Current) = List.filter (fn (c: Callout) -> c.due <= now) w.callouts
 
-let pending_callout? n (w: World) = List.any? (fn (c: Callout) -> c.id == n) w.callouts
+let pending_callout? n (w: Current) = List.any? (fn (c: Callout) -> c.id == n) w.callouts
 
 -- A call-out has run, or will not.
-let ran n (w: World) =
-  World(w, callouts = List.filter (fn (c: Callout) -> c.id != n) w.callouts)
+let ran n (w: Current) =
+  Current(w, callouts = List.filter (fn (c: Callout) -> c.id != n) w.callouts)
 
-let drop_callouts target (w: World) =
-  World(
+let drop_callouts target (w: Current) =
+  Current(
     w,
     callouts = List.filter (fn (c: Callout) -> c.target != resolve target) w.callouts
   )
 
 -- The call-outs a snapshot kept. New ones are numbered after them.
-let restore_callouts cs (w: World) =
-  World(
+let restore_callouts cs (w: Current) =
+  Current(
     w,
     callouts = _soonest cs,
     callouts_made =
@@ -548,102 +573,102 @@ let restore_callouts cs (w: World) =
 
 -- Whether there is anything to tick: an object with a heartbeat, or a
 -- call-out not yet run.
-let ticking? (w: World) = Map.size w.beating > 0 || w.callouts != []
+let ticking? (w: Current) = Map.size w.beating > 0 || w.callouts != []
 
 -- How long the driver may sleep before it must tick: `left`, the time to
 -- the next heartbeat, while some object has one, and otherwise until the
 -- soonest call-out. A call-out already due is 0s. None when there is
 -- nothing to tick.
-let sleep_for (left: Duration) (now: DateTime) (w: World) =
+let sleep_for (left: Duration) (now: DateTime) (w: Current) =
   if Map.size w.beating > 0 then Some left
   else Option.map (fn (c: Callout) -> c.due - now) (List.head w.callouts)
 
 -- A new world that hashes passwords with `pepper`.
-let with_pepper pepper = World(empty, pepper = pepper)
+let with_pepper pepper = Current(empty, pepper = pepper)
 
 -- ── Access ─────────────────────────────────────────────────────────────
 
-let _put_instance id f (w: World) =
+let _put_instance id f (w: Current) =
   match instance id w with
   | Some i -> put (f i) w
   | None -> w
 
-let set_allowed id (allowed: Core.Allowed) (w: World) =
+let set_allowed id (allowed: Driver.Allowed) (w: Current) =
   _put_instance id (fn i -> Instance(i, allowed = allowed)) w
 
 -- Whether a room is open to everyone.
-let public? (i: Instance) = i.allowed == Core.Everyone
+let public? (i: Instance) = i.allowed == Driver.Everyone
 
 -- Let one more account into a private room. A public room lets in everyone
 -- already.
-let invite id name (w: World) =
+let invite id name (w: Current) =
   _put_instance
     id
     (fn i -> match i.allowed with
-      | Core.Only names -> Instance(
+      | Driver.Only names -> Instance(
         i,
-        allowed = Core.Only(List.unique (List.concat names [String.lower name]))
+        allowed = Driver.Only(List.unique (List.concat names [String.lower name]))
       )
-      | Core.Everyone -> i
+      | Driver.Everyone -> i
     )
     w
 
-let uninvite id name (w: World) =
+let uninvite id name (w: Current) =
   _put_instance
     id
     (fn i -> match i.allowed with
-      | Core.Only names -> Instance(
+      | Driver.Only names -> Instance(
         i,
-        allowed = Core.Only(List.filter (fn n -> n != String.lower name) names)
+        allowed = Driver.Only(List.filter (fn n -> n != String.lower name) names)
       )
-      | Core.Everyone -> i
+      | Driver.Everyone -> i
     )
     w
 
-let set_locked id locked (w: World) =
+let set_locked id locked (w: Current) =
   _put_instance id (fn i -> Instance(i, locked = locked)) w
 
 -- Who may enter and the lock, as a snapshot kept them.
-let set_access id (allowed: Core.Allowed) locked (w: World) =
+let set_access id (allowed: Driver.Allowed) locked (w: Current) =
   _put_instance id (fn i -> Instance(i, allowed = allowed, locked = locked)) w
 
 -- Keep the account `banned` out of every room the account `by` owns, or no
 -- longer.
-let ban by banned (w: World) =
+let ban by banned (w: Current) =
   _put_named
     by
     (fn a -> Account(a, banned = List.unique (List.concat a.banned [String.lower banned])))
     w
 
-let unban by banned (w: World) =
+let unban by banned (w: Current) =
   _put_named
     by
     (fn a -> Account(a, banned = List.filter (fn n -> n != String.lower banned) a.banned))
     w
 
 -- Whether the account `owner` bans the account `key`.
-let banned? owner key (w: World) =
+let banned? owner key (w: Current) =
   match account owner w with
   | Some a -> List.any? (fn n -> n == key) a.banned
   | None -> false
 
 -- ── The rules, notices and pauses ──────────────────────────────────────
 
-let sign name version at (w: World) =
+let sign name version at (w: Current) =
   _put_named name (fn a -> Account(a, rules = Some Signed(version, at))) w
 
 -- Tell the account `name` something now if it is awake, and at its next
 -- login if not.
-let notice name text (w: World) =
+let notice name text (w: Current) =
   match account name w with
   | Some a -> if Option.some? (session_of a.body w) then tell a.body text w
     else add_account Account(a, notices = List.concat a.notices [text]) w
   | None -> w
 
 -- Take an account's notices out, to tell them.
-let noticed name (w: World) = _put_named name (fn a -> Account(a, notices = [])) w
+let noticed name (w: Current) = _put_named name (fn a -> Account(a, notices = [])) w
 
-let set_paused name paused (w: World) =
+let set_paused name paused (w: Current) =
   _put_named name (fn a -> Account(a, paused = paused)) w
 
 -- ── Flags ──────────────────────────────────────────────────────────────
@@ -652,16 +677,16 @@ let set_paused name paused (w: World) =
 let said_cap = 20
 
 -- Keep a line a body said, for a report.
-let said_by body text (w: World) =
+let said_by body text (w: Current) =
   let lines = List.concat (Option.default [] (Map.get body w.said)) [text];
-  World(w, said = Map.set body (List.drop (List.length lines - said_cap) lines) w.said)
+  Current(w, said = Map.set body (List.drop (List.length lines - said_cap) lines) w.said)
 
-let add_flag (f: Flag) (w: World) = World(w, flags = List.concat w.flags [f])
+let add_flag (f: Flag) (w: Current) = Current(w, flags = List.concat w.flags [f])
 
-let flag n (w: World) = List.find (fn (f: Flag) -> f.id == n) w.flags
+let flag n (w: Current) = List.find (fn (f: Flag) -> f.id == n) w.flags
 
-let resolve_flag n resolution (w: World) =
-  World(
+let resolve_flag n resolution (w: Current) =
+  Current(
     w,
     flags =
       List.map
@@ -671,20 +696,21 @@ let resolve_flag n resolution (w: World) =
   )
 
 -- The open flags on `target`.
-let open_flags target (w: World) =
+let open_flags target (w: Current) =
   List.filter (fn (f: Flag) -> f.open && f.target == target) w.flags
 
-let set_held id held (w: World) = _put_instance id (fn i -> Instance(i, held = held)) w
+let set_held id held (w: Current) = _put_instance id (fn i -> Instance(i, held = held)) w
 
 -- ── Requests ───────────────────────────────────────────────────────────
 
-let add_request (r: Request) (w: World) = World(w, requests = List.concat w.requests [r])
+let add_request (r: Request) (w: Current) =
+  Current(w, requests = List.concat w.requests [r])
 
-let request n (w: World) = List.find (fn (r: Request) -> r.id == n) w.requests
+let request n (w: Current) = List.find (fn (r: Request) -> r.id == n) w.requests
 
 -- Close request `n` with `outcome`.
-let close_request n outcome (w: World) =
-  World(
+let close_request n outcome (w: Current) =
+  Current(
     w,
     requests =
       List.map
@@ -694,8 +720,8 @@ let close_request n outcome (w: World) =
   )
 
 -- The file of `path` was saved: each open request it is in notes it.
-let touched path (w: World) =
-  World(
+let touched path (w: Current) =
+  Current(
     w,
     requests =
       List.map
@@ -706,22 +732,22 @@ let touched path (w: World) =
   )
 
 -- The rooms `rooms` join the realm `realm`, or leave the realm they joined.
-let adopt rooms realm (w: World) =
-  World(w, adopted = List.fold_left (fn m p -> Map.set p realm m) w.adopted rooms)
+let adopt rooms realm (w: Current) =
+  Current(w, adopted = List.fold_left (fn m p -> Map.set p realm m) w.adopted rooms)
 
-let unadopt rooms (w: World) =
-  World(w, adopted = List.fold_left (fn m p -> Map.delete p m) w.adopted rooms)
+let unadopt rooms (w: Current) =
+  Current(w, adopted = List.fold_left (fn m p -> Map.delete p m) w.adopted rooms)
 
 -- The Citizen `key` built the file of `path`.
-let set_built path key (w: World) = World(w, built = Map.set path key w.built)
+let set_built path key (w: Current) = Current(w, built = Map.set path key w.built)
 
 -- A reviewer who came from `room` visits, or is back.
-let visit body room (w: World) = World(w, visiting = Map.set body room w.visiting)
+let visit body room (w: Current) = Current(w, visiting = Map.set body room w.visiting)
 
-let back body (w: World) = World(w, visiting = Map.delete body w.visiting)
+let back body (w: Current) = Current(w, visiting = Map.delete body w.visiting)
 
 -- What the builder of a room earns when someone new first visits it.
-let reward name now (w: World) =
+let reward name now (w: Current) =
   _put_named
     name
     (fn a -> Account(a, inspiration = Inspiration.earn now Inspiration.bonus a.inspiration))

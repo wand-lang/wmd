@@ -1,23 +1,26 @@
 uses {FS.Read, FS.Write}
 
--- Mudlib files by blueprint path.
+-- Library files by blueprint path.
 
 import ../Files
+
 import FS
 import Option
 import Path
 import String
+
+let Driver = import ../../driver
 
 let {test, group} = import Test
 
 group "a file moved to another directory" (fn () -> [
   test "imports the same files from its new place" (fn t ->
     t.eq
-      "let Core = import ../../../std/core\nlet Room = import ../../../std/room"
+      "let Driver = import ../../../std/driver\nlet Room = import ../../../std/room"
       (Files.moved
         "/r/learning/lever"
         "/r/home/ann/lever"
-        "let Core = import ../../std/core\nlet Room = import ../../std/room")),
+        "let Driver = import ../../std/driver\nlet Room = import ../../std/room")),
   test "keeps an import of a file beside it beside it" (fn t ->
     t.eq
       "import ../../learning/orc"
@@ -31,34 +34,32 @@ group "a file moved to another directory" (fn () -> [
         "uses {Random}\n\nimport JSON\nlet x = 1")),
   test "goes up as far as the two places differ" (fn t ->
     t.eq
-      "let Core = import ../std/core"
-      (Files.moved "/r/home/ann/lever" "/r/lever" "let Core = import ../../../std/core"))
+      "let Driver = import ../std/driver"
+      (Files.moved "/r/home/ann/lever" "/r/lever" "let Driver = import ../../../std/driver"))
 ])
 
 group "a room /dig makes" (fn () -> [
-  test "imports std from its own directory" (fn t ->
-    t.eq "../../../../std/core" (Files.import_to "/r/home/ann/shop/front" "/std/core")),
+  test "imports from its own directory" (fn t ->
+    t.eq
+      "../../../../std/driver"
+      (Driver.import_from "/r/home/ann/shop/front" "/std/driver")),
   test "takes one more exit below the marker" (fn t ->
-    let made = Files.dug_room "/r/home/ann/shop/front" "west" "/r/home/ann/hall";
+    let made =
+      "%{Driver.dig_marker}\nlet exits = {\n  west = Room.exit \"/r/home/ann/hall\"\n}";
     t.eq
       (Some true)
       (Option.map
-        (fn s -> String.contains? `east = Room.exit "/r/home/ann/shop/back",` s)
+        (fn s -> String.contains? `east = Driver.Exit(to = "/r/home/ann/shop/back"),` s)
         (Files.with_exit "east" "/r/home/ann/shop/back" None made))),
   test "fills an empty exits block" (fn t ->
     t.eq
-      (Some
-        "-- The exits. /dig adds one here, and you can change them by hand.\nlet exits = {up = Room.exit \"/r/a\"}")
-      (Files.with_exit
-        "up"
-        "/r/a"
-        None
-        "-- The exits. /dig adds one here, and you can change them by hand.\nlet exits = {}")),
+      (Some "%{Driver.dig_marker}\nlet exits = {up = Driver.Exit(to = \"/r/a\")}")
+      (Files.with_exit "up" "/r/a" None "%{Driver.dig_marker}\nlet exits = {}")),
   test "leaves a room written by hand alone" (fn t ->
-    t.eq (None (Files.with_exit "up" "/r/a" None "let exits = {}"))),
+    t.ok (Files.with_exit "up" "/r/a" None "let exits = {}" == None)),
   test "writes a view, escaped, so it reads back as typed" (fn t ->
     t.eq
-      "up = Core.Exit(Room.exit \"/r/a\", view = Some \"A sign: \\\"Keep out\\\" \\\\ \\\%{name}\")"
+      "up = Driver.Exit(to = \"/r/a\", view = Some \"A sign: \\\"Keep out\\\" \\\\ \\\%{name}\")"
       (Files.exit_line "up" "/r/a" (Some "A sign: \"Keep out\" \\ \%{name}")))
 ])
 

@@ -3,7 +3,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 -- Flagging a room, a thing or a person, and a Keymaster's review.
 
 import ../Engine
-import ../Mudlib
+import ../Library
 import ../World
 import List
 
@@ -13,7 +13,7 @@ import String
 
 let {test, group} = import Test
 
-let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -38,11 +38,11 @@ let played changes =
     Shared.get state
   )
 
-let heard sid (w: World.World) = List.filter (fn l -> l != "") (World.outbox sid w)
+let heard sid (w: World.Current) = List.filter (fn l -> l != "") (World.outbox sid w)
 
-let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid w)
+let heard? sid text (w: World.Current) = List.any? (fn l -> l == text) (heard sid w)
 
-let heard_any? sid part (w: World.World) = List.any? (String.contains? part) (heard sid w)
+let heard_any? sid part (w: World.Current) = List.any? (String.contains? part) (heard sid w)
 
 let signed_up sid name = [
   World.open_next at,
@@ -53,7 +53,7 @@ let signed_up sid name = [
   line sid "sign rules"
 ]
 
-let make_keymaster name (w: World.World) =
+let make_keymaster name (w: World.Current) =
   match World.account name w with
   | Some a -> World.add_account World.Account(a, role = "keymaster") w
   | None -> w
@@ -75,7 +75,7 @@ let all_in = List.flatten [
 
 let after changes = played (List.concat all_in changes)
 
-let only_flag (w: World.World) = List.head w.flags
+let only_flag (w: World.Current) = List.head w.flags
 
 -- Three people flag the lever.
 let three_flags = [

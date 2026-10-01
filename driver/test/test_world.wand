@@ -11,7 +11,7 @@ let {test, group} = import Test
 
 let at = "2026-09-30T12:00:00Z"
 
-let events (w: World.World) = List.map (fn (e: World.Event) -> e.event) w.events
+let events (w: World.Current) = List.map (fn (e: World.Event) -> e.event) w.events
 
 group "sessions" (fn () -> [
   test "are numbered in the order they open" (fn t ->
@@ -60,7 +60,7 @@ test "all_logged takes every event out" (fn t ->
 let noon = 2026-09-30T12:00:00Z
 
 -- A world where `/clock#0` has a heartbeat.
-let beating = World.World(World.empty, beating = Map.set "/clock#0" true Map.empty)
+let beating = World.Current(World.empty, beating = Map.set "/clock#0" true Map.empty)
 
 group "how long the driver may sleep" (fn () -> [
   test "for ever, with nothing to tick" (fn t ->

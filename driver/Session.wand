@@ -35,7 +35,7 @@ let _drained? state sid conn =
 -- and wakes on the update that makes it so.
 let _writer state sid conn =
   let _ =
-    Shared.wait state (fn (w: World.World) ->
+    Shared.wait state (fn (w: World.Current) ->
       World.outbox sid w != [] || World.closing? sid w);
   if !(_drained? state sid conn) then ()
   else if World.closing? sid (Shared.get state) then ()
@@ -44,7 +44,7 @@ let _writer state sid conn =
 -- Wait until the driver has finished with every line this session sent,
 -- so a client that sends a command and then closes still gets the answer.
 let _settle state sid =
-  let _ = Shared.wait state (fn (w: World.World) -> !(World.pending? sid w));
+  let _ = Shared.wait state (fn (w: World.Current) -> !(World.pending? sid w));
   ()
 
 -- Lines go to the driver, which runs them in the order they came.
@@ -63,7 +63,7 @@ let _reader state sid conn =
 -- inside the session is caught here, because a raise from one element of
 -- Par.each_stream would stop every other session too.
 let serve state conn =
-  let (before: World.World) = Shared.update state (World.open_next (_now ()));
+  let (before: World.Current) = Shared.update state (World.open_next (_now ()));
   let sid = World.session_id before.opened;
   let _ = try Par.all! [fn () -> _reader state sid conn, fn () -> _writer state sid conn];
   let _ = try _drained? state sid conn;

@@ -25,7 +25,7 @@ group "a line" (fn () -> [
 
 -- Log what the world holds, and give back each (path, text) appended and
 -- the events left in the world.
-let flushed! (w: World.World) =
+let flushed! (w: World.Current) =
   with Shared.make w as state ->
   with Shared.make [] as appended -> (
     handle Log.flush! state ./logs with

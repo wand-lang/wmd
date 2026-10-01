@@ -5,7 +5,9 @@ uses {FS.Read, FS.Write, Random, Shared}
 
 import ../Engine
 import ../Files
-import ../Mudlib
+
+let Driver = import ../../driver
+import ../Library
 import ../World
 import FS
 import List
@@ -23,39 +25,50 @@ let {test, group} = import Test
 let guild = `
 uses {Random}
 
-let Core = import ../std/core
+let Driver = import ../std/driver
 let Realm = import ../std/realm
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = Realm.object "the Guild" [])
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = Realm.object "the Guild" [])
 
-implement Core.Realm =
+implement Driver.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
-  let allowed = Core.Everyone;
+  let allowed = Driver.Everyone;
   let contracts = [];
   let charter path =
-    if path == "/r/guild/inner" then Core.Charter(stewards = ["Bo"]) else Core.Charter()
+    if path == "/r/guild/inner" then Driver.Charter(stewards = ["Bo"]) else Driver.Charter()
 `
 
 let inner = `
 uses {Random}
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Realm = import ../../std/realm
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = Realm.object "the Inner Guild" [])
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = Realm.object "the Inner Guild" [])
 
-implement Core.Realm =
+implement Driver.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
-  let allowed = Core.Everyone;
-  let contracts = [Core.Contract(path = "/r/guild/inner/forge", builder = "Dee")];
+  let allowed = Driver.Everyone;
+  let contracts = [Driver.Contract(path = "/r/guild/inner/forge", builder = "Dee")];
   let charter = Realm.no_charter
 `
 
-let hall = Files.dug_room "/r/guild/inner/hall" "out" "/r/square"
+let hall = `
+uses {Random}
+
+let Driver = import ../../../std/driver
+let Room = import ../../../std/room
+
+%{Driver.dig_marker}
+let exits = {out = Room.exit "/r/square"}
+
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = Driver.Object(Room.room "The Hall" "A hall.", exits = exits))
+`
 
 let _write! () = (
   FS.mkdir! ./lib/r/guild/inner;
@@ -73,7 +86,7 @@ let _clean () = (
   | _ -> ()
 )
 
-let loaded = (_write! (); let l = Mudlib.load_all! ./lib; _clean (); l)
+let loaded = (_write! (); let l = Library.load_all! ./lib; _clean (); l)
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -100,7 +113,7 @@ let signed_up sid name = [
 -- room east of it.
 let shop = [
   said dee "/dig shop shop/front",
-  said dee `/eval [Core.Move ctx.actor "/r/home/dee/shop/front"]`,
+  said dee `/eval [Driver.Move ctx.actor "/r/home/dee/shop/front"]`,
   said dee "/dig east back"
 ]
 
@@ -118,21 +131,17 @@ let played! changes check =
     Result.get!
       (Error "./lib/r/home/dee exists: these tests build there, and remove it after")
   else with Resource.make (fn () -> _write! ()) (fn () -> _clean ()) as _ ->
-  with Shared.make World.World(
-    World.with_pepper "test pepper",
-    lib = loaded.lib,
-    realms = loaded.realms
-  ) as state -> (
+  with Shared.make (Library.into loaded (World.with_pepper "test pepper")) as state -> (
     Engine.boot state at;
     List.each (fn f -> (Shared.update state f; Engine.step state)) changes;
     check (Shared.get state)
   )
 
-let heard sid (w: World.World) = List.filter (fn l -> l != "") (World.outbox sid w)
+let heard sid (w: World.Current) = List.filter (fn l -> l != "") (World.outbox sid w)
 
-let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid w)
+let heard? sid text (w: World.Current) = List.any? (fn l -> l == text) (heard sid w)
 
-let where body (w: World.World) = World.env_of body w
+let where body (w: World.Current) = World.env_of body w
 
 group "asking" (fn () -> [
   test "covers the rooms of the entrance's directory its exits reach" (fn t ->
@@ -231,7 +240,7 @@ group "/link" (fn () -> [
   test "adds an exit from a room of the realm to the rooms" (fn t ->
     played! (List.concat asked [
       said bo "/approve 1",
-      said bo `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
+      said bo `/eval [Driver.Move ctx.actor "/r/guild/inner/hall"]`,
       said bo "/link shop /r/home/dee/shop/front",
       said bo "shop"
     ]) (fn w ->
@@ -244,7 +253,7 @@ group "/link" (fn () -> [
 group "/approve with an exit" (fn () -> [
   test "connects the rooms from the room of the realm the Steward stands in" (fn t ->
     played! (List.concat asked [
-      said bo `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
+      said bo `/eval [Driver.Move ctx.actor "/r/guild/inner/hall"]`,
       said bo "/approve 1 shop",
       said bo "shop"
     ]) (fn w ->
@@ -264,7 +273,7 @@ group "/approve with an exit" (fn () -> [
 group "a view" (fn () -> [
   test "/approve writes one on the exit it adds" (fn t ->
     played! (List.concat asked [
-      said bo `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
+      said bo `/eval [Driver.Move ctx.actor "/r/guild/inner/hall"]`,
       said bo `/approve 1 shop Through the arch, a "small" shop.`,
       World.emptied bo,
       said bo "look shop"

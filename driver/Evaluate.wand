@@ -1,10 +1,10 @@
 uses {FS.Read, FS.Write}
 
--- /eval: an expression, run as mudlib code runs.
+-- /eval: an expression, run as Library code runs.
 --
 -- The expression becomes the body of `run ctx`, in a module written for it
--- that implements Core.Evaluation. The module is checked first, which
--- gives the expression's type, and then loaded as a mudlib file is: held
+-- that implements Driver.Evaluation. The module is checked first, which
+-- gives the expression's type, and then loaded as a Library file is: held
 -- to the effects `evaluate` allows. A list of actions comes back as
 -- actions; anything else comes back as text, with its type.
 
@@ -16,11 +16,11 @@ import Result
 import String
 import Wand
 
-let Core = import ../lib/std/core
+let Driver = import ../driver
 
 -- The lines before the expression, which it is indented under: the pure
--- standard modules, Random, which mudlib code may use, and the contract.
-let _head core_path = [
+-- standard modules, Random, which Library code may use, and the contract.
+let _head driver_path = [
   "import Int",
   "import JSON",
   "import List",
@@ -29,15 +29,15 @@ let _head core_path = [
   "import Random",
   "import Result",
   "import String",
-  "let Core = import %{core_path}",
+  "let Driver = import %{driver_path}",
   "",
-  "let run (ctx: Core.Context) = ("
+  "let run (ctx: Driver.Context) = ("
 ]
 
 let _indent expr = String.join "\n" (List.map (fn l -> "  %{l}") (String.lines expr))
 
 -- `run` itself, and nothing that uses it: what the check reads.
-let _body core_path expr = "%{String.join "\n" (_head core_path)}\n%{_indent expr}\n)\n"
+let _body driver_path expr = "%{String.join "\n" (_head driver_path)}\n%{_indent expr}\n)\n"
 
 -- The type an /eval shows: `run`'s result, without the `Context -> ` before it,
 -- and without what `run` performs, which a type writes at its end. When
@@ -55,11 +55,11 @@ let result_type t =
 let _quoted s = String.replace `"` `\"` (String.replace `\` `\\` s)
 
 -- The module for `expr`, whose result has type `t`.
-let source core_path expr t =
+let source driver_path expr t =
   let evaluate =
-    if t == "List Action" then "Core.Acts (run ctx)"
-    else "Core.Shown \"\%{run ctx} : %{_quoted t}\"";
-  "%{_body core_path expr}\nimplement Core.Evaluation =\n  let evaluate ctx = %{evaluate}\n"
+    if t == "List Action" then "Driver.Acts (run ctx)"
+    else "Driver.Shown \"\%{run ctx} : %{_quoted t}\"";
+  "%{_body driver_path expr}\nimplement Driver.Evaluation =\n  let evaluate ctx = %{evaluate}\n"
 
 -- What the check found wrong with the expression, each error at its line
 -- in the expression rather than in the module written for it. An error
@@ -75,31 +75,37 @@ let _errors (c: Wand.Checked) =
       else None)
     c.diagnostics
 
--- The expression's module, loaded, or what was wrong with it. `lib` is the
--- mudlib root, whose std/core.wand the module imports, so its types are
--- the driver's.
-let load (lib: Path) expr = (
-  let core_path =
-    Path.to_string
-      (Path.normalize
-        (Path.join (if Path.absolute? lib then lib else Path.join (FS.cwd ()) lib) ./std/core));
-  -- The module's file is needed only while it loads.
+-- The expression's module, loaded, or what was wrong with it. It is written
+-- in `lib`, the Library root, in a directory of its own, and imports the
+-- contract as the game's files do, with `driver` from the game's init.wand,
+-- so its types are the driver's. The file is there only while it loads.
+let load (lib: Path) driver expr = (
+  let dir = Path.join lib ./.eval;
+  let driver_path =
+    if String.starts_with? "./" driver then
+      "../%{String.slice 2 (String.length driver) driver}"
+    else if String.starts_with? "../" driver then "../%{driver}"
+    else driver;
   let loaded =
-    try with FS.temp_dir "wmd_eval_" as dir -> (
+    try (
+      FS.mkdir! dir;
       let file = Path.join dir ./eval.wand;
-      match Wand.check_at file "%{_body core_path expr}run\n" with
-      | Error why -> Error [why]
-      | Ok c -> (
-        match (_errors c, c.type) with
-        | ([], Some t) -> (
-          match FS.write_file file (source core_path expr (result_type t)) with
-          | Error why -> Error [why]
-          | Ok _ ->
-            Result.map_error (fn why -> [why]) (Wand.load Core.Evaluation.loader file)
-        )
-        | ([], None) -> Error ["the expression has no type"]
-        | (errors, _) -> Error errors
-      )
+      let answer =
+        (match Wand.check_at file "%{_body driver_path expr}run\n" with
+         | Error why -> Error [why]
+         | Ok c -> (
+           match (_errors c, c.type) with
+           | ([], Some t) -> (
+             match FS.write_file file (source driver_path expr (result_type t)) with
+             | Error why -> Error [why]
+             | Ok _ ->
+               Result.map_error (fn why -> [why]) (Wand.load Driver.Evaluation.loader file)
+           )
+           | ([], None) -> Error ["the expression has no type"]
+           | (errors, _) -> Error errors
+         ));
+      let _ = FS.delete_tree dir;
+      answer
     );
   match loaded with
   | Ok r -> r

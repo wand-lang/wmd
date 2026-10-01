@@ -6,19 +6,19 @@ uses {Random}
 
 import List
 
-let Core = import ../std/core
+let Driver = import ../std/driver
 let Realm = import ../std/realm
 
 -- The commands that work before the rules are signed.
 let _open = ["look", "l", "read", "sign", "/help", "/quit"]
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = Realm.object "the Rules realm" [])
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = Realm.object "the Rules realm" [])
 
-implement Core.Realm =
+implement Driver.Realm =
   let commands _ verb = if List.any? (fn v -> v == verb) _open then Ok()
   else Error "First read the rules on the wall, then sign them: sign rules.";
   let allows = Realm.anything;
-  let allowed = Core.Everyone;
+  let allowed = Driver.Everyone;
   let contracts = [];
   let charter = Realm.no_charter

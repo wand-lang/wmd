@@ -5,7 +5,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 
 import ../Engine
 import ../Inspiration
-import ../Mudlib
+import ../Library
 import ../World
 import List
 import Map
@@ -17,9 +17,9 @@ import String
 
 let {test, group} = import Test
 
-let Core = import ../../lib/std/core
+let Driver = import ../../driver
 
-let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -48,14 +48,14 @@ let played changes =
     Shared.get state
   )
 
-let heard sid (w: World.World) =
+let heard sid (w: World.Current) =
   List.filter
     (fn l -> l != "")
     (List.map
       (fn l -> String.replace "\xff\xfc\x01" "" (String.replace "\xff\xfb\x01" "" l))
       (World.outbox sid w))
 
-let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid w)
+let heard? sid text (w: World.Current) = List.any? (fn l -> l == text) (heard sid w)
 
 let signed_up sid name = [
   World.open_next at,
@@ -72,7 +72,7 @@ let both_in =
   List.concat ann_in (List.concat (signed_up bo "bo") [World.emptied ann, World.emptied bo])
 
 -- Ann's Inspiration, set to `n` at noon.
-let ann_has n (w: World.World) =
+let ann_has n (w: World.Current) =
   match World.account "ann" w with
   | Some a ->
     World.add_account
@@ -80,17 +80,17 @@ let ann_has n (w: World.World) =
       w
   | None -> w
 
-let ann_keymaster (w: World.World) =
+let ann_keymaster (w: World.Current) =
   match World.account "ann" w with
   | Some a -> World.add_account World.Account(a, role = "keymaster") w
   | None -> w
 
-let inspiration name (w: World.World) =
+let inspiration name (w: World.Current) =
   match World.account name w with
   | Some a -> Inspiration.amount noon a.inspiration
   | None -> 0
 
-let spawn_lever = line ann `/eval [Core.Spawn "/r/lever" ctx.here]`
+let spawn_lever = line ann `/eval [Driver.Spawn "/r/lever" ctx.here]`
 
 group "owners" (fn () -> [
   test "a body is its account's, and the commons are the Keymasters'" (fn t ->
@@ -123,31 +123,31 @@ group "the policy" (fn () -> (
     test "an object may not move a player whose command it is not running" (fn t ->
       let bo_square = World.set_owner square (Some "bo") w;
       t.eq (false, true) (
-        ok (Engine.allowed (Engine.ctx_for bo_square square bo_body) (Core.Move ann_body garden) bo_square),
-        ok (Engine.allowed (Engine.ctx_for bo_square square ann_body) (Core.Move ann_body garden) bo_square)
+        ok (Engine.allowed (Engine.ctx_for bo_square square bo_body) (Driver.Move ann_body garden) bo_square),
+        ok (Engine.allowed (Engine.ctx_for bo_square square ann_body) (Driver.Move ann_body garden) bo_square)
       )),
     test "unless its owner is the player's account" (fn t ->
       let ann_square = World.set_owner square (Some "ann") w;
       t.ok
-        (ok (Engine.allowed (Engine.ctx_for ann_square square bo_body) (Core.Move ann_body garden) ann_square))),
+        (ok (Engine.allowed (Engine.ctx_for ann_square square bo_body) (Driver.Move ann_body garden) ann_square))),
     test "the Keymasters' rooms may move anyone in them" (fn t ->
       t.eq (Some "bo", true) (
         World.owner_of lever w,
-        ok (Engine.allowed (Engine.ctx_for w square bo_body) (Core.Move bo_body square) w)
+        ok (Engine.allowed (Engine.ctx_for w square bo_body) (Driver.Move bo_body square) w)
       )),
     test "an object tells the players in its room, and its owner" (fn t ->
       t.eq (true, true, false) (
-        ok (Engine.allowed (as_lever ann_body) (Core.Tell ann_body "Clunk.") w),
-        ok (Engine.allowed (as_lever ann_body) (Core.Tell bo_body "Clunk.") w),
-        ok (Engine.allowed (as_lever ann_body) (Core.Tell "/std/player#2" "Clunk.") w)
+        ok (Engine.allowed (as_lever ann_body) (Driver.Tell ann_body "Clunk.") w),
+        ok (Engine.allowed (as_lever ann_body) (Driver.Tell bo_body "Clunk.") w),
+        ok (Engine.allowed (as_lever ann_body) (Driver.Tell "/std/player#2" "Clunk.") w)
       )),
     test "a player's own body may tell anyone" (fn t ->
-      t.ok (ok (Engine.allowed (Engine.ctx_for w ann_body ann_body) (Core.Tell bo_body "Hi.") w))),
+      t.ok (ok (Engine.allowed (Engine.ctx_for w ann_body ann_body) (Driver.Tell bo_body "Hi.") w))),
     test "an object spawns here, and in what its owner owns, and nowhere else" (fn t ->
       t.eq (true, true, false) (
-        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/r/lever" square) w),
-        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/r/lever" "/r/home/bo/hall") w),
-        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/r/lever" garden) w)
+        ok (Engine.allowed (as_lever ann_body) (Driver.Spawn "/r/lever" square) w),
+        ok (Engine.allowed (as_lever ann_body) (Driver.Spawn "/r/lever" "/r/home/bo/hall") w),
+        ok (Engine.allowed (as_lever ann_body) (Driver.Spawn "/r/lever" garden) w)
       ))
   ]
 ))
@@ -186,7 +186,7 @@ group "Inspiration" (fn () -> [
 group "Capacity" (fn () -> [
   test "a builder who owns the most objects may spawn no more" (fn t ->
     -- 199 more objects, and Ann's body makes 200.
-    let fill (w: World.World) =
+    let fill (w: World.Current) =
       match World.instance lever w with
       | Some l ->
         List.fold_left

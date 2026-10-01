@@ -1,10 +1,10 @@
 uses {FS.Read, FS.Write, Random, Shared}
 
 -- /eval through the driver: an expression, checked, gated and run under
--- the limits, as a mudlib file is.
+-- the limits, as a Library file is.
 
 import ../Engine
-import ../Mudlib
+import ../Library
 import ../World
 import List
 
@@ -20,7 +20,7 @@ let ann = World.session_id 0
 
 let line text = World.queue (World.Line ann at text)
 
-let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
 
 -- Ann logged in, with nothing heard yet, then `lines` typed.
 let played lines =
@@ -42,7 +42,7 @@ let played lines =
     Shared.get state
   )
 
-let heard (w: World.World) = List.filter (fn l -> l != "") (World.outbox ann w)
+let heard (w: World.Current) = List.filter (fn l -> l != "") (World.outbox ann w)
 
 group "/eval" (fn () -> [
   test "a value is shown with its type" (fn t ->
@@ -54,7 +54,7 @@ group "/eval" (fn () -> [
   test "the standard modules and Random can be used" (fn t ->
     t.eq ["=> true : Bool"] (heard (played ["/eval Random.int 1 6 <= 6"]))),
   test "a list of actions is applied as the player's" (fn t ->
-    let w = played [`/eval [Core.Spawn "/r/lever" ctx.here]`];
+    let w = played [`/eval [Driver.Spawn "/r/lever" ctx.here]`];
     t.eq (["=> 1 actions"], 2) (heard w, List.length (World.instances_of "/r/lever" w))),
   test "an expression that does not check says why" (fn t ->
     t.ok

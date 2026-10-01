@@ -4,7 +4,7 @@ Go to the Room of Hours: west from the Commons, then one. Look at it now,
 and again in an hour.
 
 A room is an Object, made in a file that starts with
-"implement Core.Blueprint". Its `short` is its name and its `long` is
+"implement Driver.Blueprint". Its `short` is its name and its `long` is
 what look shows. Both are functions that get a Context, `ctx`.
 
 Text that never changes needs no function of your own:
@@ -23,7 +23,7 @@ Exits are a map from a name to a place:
 Try it:
 
   1. /copy here
-  2. /eval [Core.Move ctx.actor "/r/home/<you>/hours"] to go into your copy.
+  2. /eval [Driver.Move ctx.actor "/r/home/<you>/hours"] to go into your copy.
   3. /edit here, find the long text with ,n, change it with c, then w.
   4. look. Your room says what you wrote.
 

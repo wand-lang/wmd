@@ -12,12 +12,12 @@ import Map
 import Random
 import String
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Text = import ../../std/text
 
 -- The ways out of the room the cat is in. It stays in the Learning Hall
 -- and its lessons.
-let _ways (ctx: Core.Context) =
+let _ways (ctx: Driver.Context) =
   List.filter
     (fn (_, e) -> String.starts_with? "/r/learning/" e.to)
     (Map.to_list (ctx.world.exits_of ctx.here))
@@ -25,27 +25,27 @@ let _ways (ctx: Core.Context) =
 -- Leave by a way picked at random. The first Say is heard in the room the
 -- cat leaves. The Move takes it away, so the second Say is heard where it
 -- arrives.
-let _wander (ctx: Core.Context) =
+let _wander (ctx: Driver.Context) =
   match Random.choose (_ways ctx) with
-  | Some(name, e) -> Core.Reply(
+  | Some(name, e) -> Driver.Reply(
     actions = [
-      Core.Say "The grey cat pads off to the %{name}.",
-      Core.Move ctx.self e.to,
-      Core.Say "A grey cat pads in and looks around."
+      Driver.Say "The grey cat pads off to the %{name}.",
+      Driver.Move ctx.self e.to,
+      Driver.Say "A grey cat pads in and looks around."
     ]
   )
-  | None -> Core.nothing
+  | None -> Driver.nothing
 
 let cat =
-  Core.Object(
+  Driver.Object(
     names = ["cat", "grey cat"],
     short = fn _ -> "grey cat",
     long = fn _ -> "A grey cat with one white paw. It looks at you as if you were late.",
     verbs = [
-      Core.Verb(
+      Driver.Verb(
         names = ["pet", "stroke"],
-        dobj = Core.This,
-        run = fn ctx _ -> Core.Reply(
+        dobj = Driver.This,
+        run = fn ctx _ -> Driver.Reply(
           actions =
             Text.act
               ctx
@@ -56,12 +56,12 @@ let cat =
     ],
     heartbeat = Some (fn ctx ->
       match Random.int 0 29 with
-      | 0 -> Core.Reply(actions = [Core.Say "The grey cat washes its white paw."])
-      | 1 -> Core.Reply(actions = [Core.Say "The grey cat yawns."])
+      | 0 -> Driver.Reply(actions = [Driver.Say "The grey cat washes its white paw."])
+      | 1 -> Driver.Reply(actions = [Driver.Say "The grey cat yawns."])
       | 2 -> _wander ctx
-      | _ -> Core.nothing),
+      | _ -> Driver.nothing),
     save = fn () -> JSON.null
   )
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = cat)
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = cat)

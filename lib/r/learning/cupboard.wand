@@ -2,16 +2,16 @@ uses {Random}
 
 -- Behind the green door of lesson 4.
 
-let Core = import ../../std/core
+let Driver = import ../../std/driver
 let Room = import ../../std/room
 
 let cupboard =
-  Core.Object(
+  Driver.Object(
     Room.room
       "A Cupboard"
       "A cupboard full of brooms. You made it through the door in time. Go out to go back.",
     exits = {out = Room.exit "/r/learning/doors"}
   )
 
-implement Core.Blueprint =
-  let create _ _ = Core.Init(object = cupboard)
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = cupboard)

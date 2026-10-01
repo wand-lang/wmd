@@ -1,6 +1,6 @@
 uses {FS.Read}
 
--- Finding the blueprints in a mudlib directory.
+-- Finding the blueprints in a Library directory.
 
 import FS
 import List
@@ -18,15 +18,15 @@ let path_in lib (file: Path) =
   let inside = String.slice (String.length l) (String.length f) f;
   String.slice 0 (String.length inside - 5) inside
 
--- Whether a source claims `iface`, as `implement Core.Blueprint`.
+-- Whether a source claims `iface`, as `implement Driver.Blueprint`.
 let claims? iface source =
-  List.any? (String.starts_with? "implement Core.%{iface}") (String.lines source)
+  List.any? (String.starts_with? "implement Driver.%{iface}") (String.lines source)
 
 -- Every .wand file in `lib` and under it. `**/*.wand` alone leaves out the
 -- files in `lib` itself, such as r.wand.
 let files lib = List.unique (List.concat (FS.glob_in *.wand lib) (FS.glob_in **/*.wand lib))
 
--- Every file under `lib` with a line that starts `implement Core.Blueprint`,
+-- Every file under `lib` with a line that starts `implement Driver.Blueprint`,
 -- sorted by path.
 -- Helpers such as std/room.wand implement nothing, and tests are not part
 -- of the world.
@@ -36,7 +36,9 @@ let blueprints! lib =
     (List.filter_map
       (fn f ->
         let name = Path.to_string (Path.basename f);
-        let source = if String.starts_with? "test_" name then "" else FS.read_file! f;
+        -- A test, and the game's init.wand, are not blueprints.
+        let skip = String.starts_with? "test_" name || path_in lib f == "/init";
+        let source = if skip then "" else FS.read_file! f;
         if claims? "Blueprint" source then
           Some Blueprint(path = path_in lib f, file = f, realm = claims? "Realm" source)
         else None)

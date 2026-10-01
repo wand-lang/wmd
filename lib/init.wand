@@ -1,0 +1,42 @@
+-- What this game tells the driver as it starts: where its files are, and
+-- the room /dig makes.
+
+let Driver = import ./std/driver
+
+-- A room /dig makes at `path`, with an exit `back` to the room it was dug
+-- from.
+let _dug path back from = `
+uses {Random}
+
+-- A room made by /dig. Give it a name and a description with /edit here.
+
+let Driver = import %{Driver.import_from path "/std/driver"}
+let Room = import %{Driver.import_from path "/std/room"}
+
+%{Driver.dig_marker}
+let exits = {
+  %{back} = Room.exit "%{from}"
+}
+
+let room =
+  Driver.Object(
+    Room.room "A new room" "Nothing is here yet. Describe it with /edit here.",
+    exits = exits
+  )
+
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = room)
+`
+
+implement Driver.Library =
+  let start = Driver.Start(
+    login = "/std/login",
+    player = "/std/player",
+    arrival = "/r/square",
+    rules = "/r/rules/hall",
+    editor = "/r/editor/room",
+    examples = "/r/learning",
+    homes = "/r/home",
+    driver = "./std/driver",
+    dig = _dug
+  )

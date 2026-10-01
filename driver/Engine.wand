@@ -1,10 +1,10 @@
 uses {FS.Read, FS.Write, Random, Shared}
 
--- The driver proper: the one fiber that runs mudlib code.
+-- The driver proper: the one fiber that runs Library code.
 --
--- It takes each input the sessions queued, runs the mudlib code it calls
+-- It takes each input the sessions queued, runs the Library code it calls
 -- for, checks the actions that come back, and applies them. Only this fiber
--- runs mudlib code or changes an object, so the world it reads cannot
+-- runs Library code or changes an object, so the world it reads cannot
 -- change under it before it writes.
 
 import ./Evaluate
@@ -30,17 +30,17 @@ import Size
 import String
 import Wand
 
-let Core = import ../lib/std/core
+let Driver = import ../driver
 
-let login_id = "/std/login#0"
+let login_id (w: World.Current) = "%{w.paths.login}#0"
 
-let player_bp = "/std/player"
+let player_bp (w: World.Current) = w.paths.player
 
 -- Where a body wakes until its account has signed the current rules.
-let rules_hall = "/r/rules/hall#0"
+let rules_hall (w: World.Current) = "%{w.paths.rules}#0"
 
 -- Where every new body first stands.
-let arrival = "/r/square#0"
+let arrival (w: World.Current) = "%{w.paths.arrival}#0"
 
 -- ── Changes ────────────────────────────────────────────────────────────
 
@@ -51,32 +51,32 @@ let arrival = "/r/square#0"
 -- `hooks` is false while a hook runs, so the moves it makes call no more
 -- hooks.
 type Tx(
-  w: World.World,
-  changes: List (World.World -> World.World ! {}),
+  w: World.Current,
+  changes: List (World.Current -> World.Current ! {}),
   at: String,
   hooks: Bool = true
 )
 
 -- Work that starts at `at`, the time its input arrived. The working copy
 -- carries that time, for `ctx.time`.
-let begin (w: World.World) at =
+let begin (w: World.Current) at =
   Tx(
-    w = World.World(w, now = Result.default 1970-01-01T00:00:00Z (String.to_datetime at)),
+    w = World.Current(w, now = Result.default 1970-01-01T00:00:00Z (String.to_datetime at)),
     changes = [],
     at = at
   )
 
 let change f (tx: Tx) = Tx(tx, w = f tx.w, changes = f :: tx.changes)
 
-let commit (tx: Tx) (w: World.World) = List.fold_right (fn f acc -> f acc) tx.changes w
+let commit (tx: Tx) (w: World.Current) = List.fold_right (fn f acc -> f acc) tx.changes w
 
 -- Every event of one input carries the time the input arrived.
 let _event (ev: World.Event) (tx: Tx) = change (World.emit World.Event(ev, at = tx.at)) tx
 
--- ── Running mudlib code ────────────────────────────────────────────────
+-- ── Running Library code ────────────────────────────────────────────────
 
--- Every mudlib call runs under this. Draws come from the driver's own
--- generator, and a seed does nothing: all mudlib calls share one generator,
+-- Every Library call runs under this. Draws come from the driver's own
+-- generator, and a seed does nothing: all Library calls share one generator,
 -- so one file calling Random.seed would otherwise fix every die in the
 -- world.
 let guarded body =
@@ -85,19 +85,19 @@ let guarded body =
   | Random!float _ k -> k (Random.float ())
   | Random!seed _ k -> k ()
 
--- How much one mudlib call may do before the driver stops it, as MudOS
+-- How much one Library call may do before the driver stops it, as MudOS
 -- stops a "too long evaluation": steps, which bound time and the size of
 -- what it builds, and how deep its calls may nest.
 let limits = Wand.Limits(steps = 100000, depth = 1000)
 
--- A mudlib call, with a raise or a limit that ran out as an Error, so a
+-- A Library call, with a raise or a limit that ran out as an Error, so a
 -- fault in one object cannot stop the driver.
 let _call body =
   match Wand.limit limits (fn () -> try guarded body) with
   | Ok r -> r
   | Error why -> Error why
 
--- Mudlib code that gives a value and performs nothing, such as a `short`,
+-- Library code that gives a value and performs nothing, such as a `short`,
 -- under the same limits: `fallback` when it runs out.
 -- `_call`, with the steps the call took, for the event log.
 let _counted body =
@@ -121,7 +121,7 @@ let max_callouts = 100
 
 -- The most an object's saved state may be, as JSON. /std/login keeps every
 -- session in the middle of logging in, so it may keep more.
-let max_saved bp = if bp == "/std/login" then 1048576 else 65536
+let max_saved bp (w: World.Current) = if bp == w.paths.login then 1048576 else 65536
 
 -- An object that faults this many times in a row stops working, until its
 -- builder fixes it with /update or /reset.
@@ -151,7 +151,7 @@ let _above path =
   | Some p -> p :: _above p
   | None -> []
 
--- A realm's rule, under the same limits as any mudlib call. A rule does not
+-- A realm's rule, under the same limits as any Library call. A rule does not
 -- leave anything to chance: each draw it makes is 0, so asking it again
 -- gives the same answer, and asking changes nothing.
 let _rule body =
@@ -167,19 +167,19 @@ let _rule body =
 -- nearest first, as the realm above it gives it. The Commons, with no
 -- realm above it, has the empty charter: the Keymasters own its files, and
 -- it has no Stewards and no grants. A charter that faults is empty too.
-let _charter chain (w: World.World) =
+let _charter chain (w: World.Current) =
   match chain with
   | [near :: above :: _] -> (
     match Map.get above w.realms with
-    | Some r -> Result.default Core.Charter() (_rule (fn () -> r.charter near))
-    | None -> Core.Charter()
+    | Some r -> Result.default Driver.Charter() (_rule (fn () -> r.charter near))
+    | None -> Driver.Charter()
   )
-  | _ -> Core.Charter()
+  | _ -> Driver.Charter()
 
 -- Who owns `path`, a file in the realm at the head of `chain`: what its
 -- charter's owner rule says. No rule, or one that faults, is the
 -- Keymasters.
-let _owner_in chain path (w: World.World) =
+let _owner_in chain path (w: World.Current) =
   match (_charter chain w).owner with
   | Some rule ->
     Option.map String.lower (Result.default (None (_rule (fn () -> rule path))))
@@ -188,7 +188,7 @@ let _owner_in chain path (w: World.World) =
 -- The realms a blueprint path is in, nearest first, up to the Commons. A
 -- realm counts only when the Keymasters own its file, so a Citizen cannot
 -- make one in their home.
-let realms_of path (w: World.World) =
+let realms_of path (w: World.Current) =
   List.fold_left
     (fn chain p -> if !(Map.has? p w.realms) then chain
       else if chain != [] && _owner_in chain p w != None then chain
@@ -199,11 +199,11 @@ let realms_of path (w: World.World) =
 -- Who owns the file of blueprint path `path`, by account key, as ann for
 -- /r/home/ann/lamp: what the charter of its nearest realm says. A file in
 -- no realm is the Keymasters'.
-let file_owner path (w: World.World) = _owner_in (realms_of path w) path w
+let file_owner path (w: World.Current) = _owner_in (realms_of path w) path w
 
 -- Whether the account `key` is a Steward of the realm at the head of
 -- `chain`, or of any realm above it.
-let _keeps? key chain (w: World.World) =
+let _keeps? key chain (w: World.Current) =
   match chain with
   | [_ :: above] ->
     List.any? (fn s -> Some (String.lower s) == key) (_charter chain w).stewards
@@ -214,7 +214,7 @@ let _keeps? key chain (w: World.World) =
 -- realm `path` is in, or of the realm whose file `path` is. A Steward
 -- changes their realm's own file, so its rules, and everything in it, but
 -- not the charter that names them, which is in the realm above.
-let steward? key path (w: World.World) =
+let steward? key path (w: World.Current) =
   let chain = realms_of path w;
   let own = Map.has? path w.realms && file_owner path w == None;
   _keeps? key (if own then path :: chain else chain) w
@@ -224,20 +224,20 @@ let realm_id path = "%{path}#0"
 
 -- Whether `id` is a realm's instance, which holds the realm's verbs and is
 -- no place to be.
-let realm? id (w: World.World) = Map.has? (World.blueprint_of id) w.realms
+let realm? id (w: World.Current) = Map.has? (World.blueprint_of id) w.realms
 
 -- Whether the charter of the nearest realm of the file of `id` grants `g`.
-let _granted? id (g: Core.Grant) (w: World.World) =
+let _granted? id (g: Driver.Grant) (w: World.Current) =
   List.any? (fn x -> x == g) (_charter (realms_of (World.blueprint_of id) w) w).grants
 
 -- Whether the account `key` has a contract to build `path`, from a realm
 -- `path` is in.
-let contracted? key path (w: World.World) =
+let contracted? key path (w: World.Current) =
   List.any?
     (fn p -> match Map.get p w.realms with
       | Some r ->
         List.any?
-          (fn (c: Core.Contract) -> Some (String.lower c.builder) == key
+          (fn (c: Driver.Contract) -> Some (String.lower c.builder) == key
           && String.starts_with? "%{c.path}/" path)
           r.contracts
       | None -> false
@@ -246,7 +246,7 @@ let contracted? key path (w: World.World) =
 
 -- The realms a room is in, nearest first: the realm it joined, when it
 -- joined one outside its directory, and otherwise the realms of its file.
-let room_realms room (w: World.World) = (
+let room_realms room (w: World.Current) = (
   let bp = World.blueprint_of room;
   match Map.get bp w.adopted with
   | Some realm when Map.has? realm w.realms && file_owner realm w == None -> realm :: realms_of realm w
@@ -256,12 +256,12 @@ let room_realms room (w: World.World) = (
 -- ── Ownership ──────────────────────────────────────────────────────────
 
 -- The account key of a body, when it is one.
-let _key_of body (w: World.World) =
+let _key_of body (w: World.Current) =
   Option.map (fn (a: World.Account) -> String.lower a.name) (World.account_of body w)
 
 -- Whether an owner is held to no limits: no owner, which is the driver's
 -- and the Keymasters' code, or a Keymaster.
-let _exempt? owner (w: World.World) =
+let _exempt? owner (w: World.Current) =
   match owner with
   | None -> true
   | Some n -> (
@@ -272,16 +272,16 @@ let _exempt? owner (w: World.World) =
 
 -- Who owns `id`: its owner, or, for a room not made yet, the owner of its
 -- file.
-let _owner id (w: World.World) =
+let _owner id (w: World.Current) =
   match World.instance id w with
   | Some i -> i.owner
   | None -> file_owner (World.blueprint_of id) w
 
 -- Code the ownership rules do not hold to: the driver's and the Keymasters'.
-let _trusted? id (w: World.World) = _exempt? (World.owner_of id w) w
+let _trusted? id (w: World.Current) = _exempt? (World.owner_of id w) w
 
 -- Whether the owner of `id` is the account of the player `p`.
-let _owns? id p (w: World.World) =
+let _owns? id p (w: World.Current) =
   match (World.owner_of id w, _key_of p w) with
   | (Some o, Some k) -> o == k
   | _ -> false
@@ -290,7 +290,7 @@ let _owns? id p (w: World.World) =
 -- a Keymaster may edit any file, a Citizen the files they own and those a
 -- contract lets them build, and a Steward the files of the realms that
 -- name them.
-let may_edit? body path (w: World.World) =
+let may_edit? body path (w: World.Current) =
   match World.account_of body w with
   | Some a ->
     Files.valid? path
@@ -304,33 +304,36 @@ let may_edit? body path (w: World.World) =
 
 -- The room an object is in, climbing out of whatever holds it. A room is
 -- in nothing, so a room is its own.
-let room_of id (w: World.World) =
+let room_of id (w: World.Current) =
   match World.env_of id w with
   | Some e -> room_of e w
   | None -> World.resolve id
 
-let player? id = World.blueprint_of id == player_bp
+let player? id (w: World.Current) = World.blueprint_of id == player_bp w
 
-let players_in room (w: World.World) = List.filter player? (World.contents room w)
+let players_in room (w: World.Current) =
+  List.filter (fn x -> player? x w) (World.contents room w)
 
 -- Every body in the world, asleep or not.
-let _players (w: World.World) =
-  List.filter player? (List.map (fn (i: World.Instance) -> i.id) (Map.values w.instances))
+let _players (w: World.Current) =
+  List.filter
+    (fn x -> player? x w)
+    (List.map (fn (i: World.Instance) -> i.id) (Map.values w.instances))
 
 -- Who may enter a new room of blueprint `path`: what its nearest realm
 -- says, and everyone in a room outside every realm.
-let start_allowed path (w: World.World) =
+let start_allowed path (w: World.Current) =
   match realms_of path w with
   | [near :: _] -> (
     match Map.get near w.realms with
     | Some r -> r.allowed
-    | None -> Core.Everyone
+    | None -> Driver.Everyone
   )
-  | [] -> Core.Everyone
+  | [] -> Driver.Everyone
 
 -- Whether the account `key` reviews request `r`: a Keymaster reviews every
 -- request, and a Steward the requests to their realm.
-let reviewer? key (r: World.Request) (w: World.World) =
+let reviewer? key (r: World.Request) (w: World.Current) =
   Option.some? key && (_exempt? key w || _keeps? key (r.realm :: realms_of r.realm w) w)
 
 -- Whether `body` may go into `room`. Its owner and the Keymasters always may.
@@ -339,17 +342,17 @@ let reviewer? key (r: World.Request) (w: World.World) =
 -- review. A room not made yet allows whom its realm says a new one does. Only
 -- a body is kept out: anything else may go anywhere it is moved, and a body
 -- may go into anything that is not a room.
-let may_enter? body room (w: World.World) =
+let may_enter? body room (w: World.Current) =
   let key = _key_of body w;
   let (allowed, owner) =
     match World.instance room w with
-    | Some i -> (if i.env != None then Core.Everyone else i.allowed, i.owner)
+    | Some i -> (if i.env != None then Driver.Everyone else i.allowed, i.owner)
     | None -> (let bp = World.blueprint_of room; (start_allowed bp w, file_owner bp w))
   in
   let named =
     match allowed with
-    | Core.Everyone -> true
-    | Core.Only names -> List.any? (fn n -> Some n == key) names
+    | Driver.Everyone -> true
+    | Driver.Only names -> List.any? (fn n -> Some n == key) names
   in
   let banned =
     match (owner, key) with
@@ -362,7 +365,7 @@ let may_enter? body room (w: World.World) =
       && List.any? (fn p -> p == World.blueprint_of room) r.rooms
       && reviewer? key r w)
       w.requests;
-  !(player? body)
+  !(player? body w)
   || Option.some? key && (key == owner || _exempt? key w)
   || named && !banned
   || reviewing
@@ -370,7 +373,7 @@ let may_enter? body room (w: World.World) =
 -- The version of the rules: the number after "version" on the first line
 -- of the rules help topic, as 3 in "The rules of WMD, version 3.", and 1
 -- when there is none.
-let rules_version (w: World.World) = (
+let rules_version (w: World.Current) = (
   let first =
     Option.default
       ""
@@ -382,7 +385,7 @@ let rules_version (w: World.World) = (
 
 -- Whether the account of `body` has signed the current rules. What the
 -- driver made, with no account, has nothing to sign.
-let signed? body (w: World.World) =
+let signed? body (w: World.Current) =
   match World.account_of body w with
   | Some a -> (
     match a.rules with
@@ -393,19 +396,19 @@ let signed? body (w: World.World) =
 
 -- Where a body goes home to: its account's home, or the arrival room when
 -- it has none or its home has closed to it.
-let home_of body (w: World.World) =
+let home_of body (w: World.Current) =
   match World.account_of body w with
   | Some a -> (
     match a.home with
     | Some h when may_enter? body h w -> h
-    | _ -> arrival
+    | _ -> arrival w
   )
-  | None -> arrival
+  | None -> arrival w
 
 -- The world as `viewer` sees it now. Each function answers from this one
 -- moment.
-let view (w: World.World) viewer =
-  Core.World(
+let view (w: World.Current) viewer =
+  Driver.WorldView(
     contents = fn id -> World.contents id w,
     env_of = fn id -> World.env_of id w,
     short_of = fn id -> _text w viewer id true,
@@ -413,7 +416,7 @@ let view (w: World.World) viewer =
     exits_of = fn id -> match World.instance id w with
       | Some i -> i.object.exits
       | None -> Map.empty,
-    player? = player?,
+    player? = fn id -> player? id w,
     players = fn () -> _players w,
     account? = fn name -> Option.some? (World.account name w),
     detail_of = fn id name -> match World.instance id w with
@@ -432,9 +435,9 @@ let view (w: World.World) viewer =
     help_of = fn topic -> Map.get topic w.help
   )
 -- The context of an object being looked at by `viewer`.
-and _seen (w: World.World) viewer id =
-  Core.Context(self = id, actor = viewer, here = room_of id w, world = view w viewer, time = w.now)
-and _text (w: World.World) viewer id short =
+and _seen (w: World.Current) viewer id =
+  Driver.Context(self = id, actor = viewer, here = room_of id w, world = view w viewer, time = w.now)
+and _text (w: World.Current) viewer id short =
   match World.instance id w with
   | None -> "nothing"
   | Some i when i.held -> "something waiting for a Keymaster"
@@ -443,10 +446,10 @@ and _text (w: World.World) viewer id short =
       "something that is not working"
       (fn () -> if short then i.object.short (_seen w viewer i.id) else i.object.long (_seen w viewer i.id))
 
-let short_of id (w: World.World) = _text w id id true
+let short_of id (w: World.Current) = _text w id id true
 
-let ctx_for (w: World.World) self actor =
-  Core.Context(
+let ctx_for (w: World.Current) self actor =
+  Driver.Context(
     self = World.resolve self,
     actor = actor,
     here = room_of actor w,
@@ -459,36 +462,37 @@ let ctx_for (w: World.World) self actor =
 -- An object may move itself, the player whose command it is running, or
 -- something it holds. It may reach a thing, not a player, that the player
 -- holds or that is in its room.
-let _may_move? (ctx: Core.Context) obj (w: World.World) =
+let _may_move? (ctx: Driver.Context) obj (w: World.Current) =
   let env = World.env_of obj w;
   obj == ctx.self
   || obj == ctx.actor
   || env == Some ctx.self
-  || !(player? obj) && (env == Some ctx.actor || env == Some (room_of ctx.self w))
+  || !(player? obj w) && (env == Some ctx.actor || env == Some (room_of ctx.self w))
 
 -- Whether `ctx.self` is the Keymasters' code, or its owner owns `obj` too.
-let _same_owner? (ctx: Core.Context) obj (w: World.World) =
+let _same_owner? (ctx: Driver.Context) obj (w: World.Current) =
   _trusted? ctx.self w
   || Option.some? (World.owner_of ctx.self w)
   && World.owner_of ctx.self w == World.owner_of obj w
 
-let _locked? obj (w: World.World) =
+let _locked? obj (w: World.Current) =
   match World.instance obj w with
   | Some i -> i.locked
   | None -> false
 
-let _from_login? (ctx: Core.Context) = World.blueprint_of ctx.self == "/std/login"
+let _from_login? (ctx: Driver.Context) (w: World.Current) =
+  World.blueprint_of ctx.self == w.paths.login
 
-let editor_bp = "/r/editor/room"
+let editor_bp (w: World.Current) = w.paths.editor
 
--- Whether a source claims Core.Blueprint, as the files the driver loads do.
+-- Whether a source claims Driver.Blueprint, as the files the driver loads do.
 -- A helper, such as std/text.wand, is saved and not loaded.
 let _blueprint? source =
-  List.any? (String.starts_with? "implement Core.Blueprint") (String.lines source)
+  List.any? (String.starts_with? "implement Driver.Blueprint") (String.lines source)
 
-let _editor? id = World.blueprint_of id == editor_bp
+let _editor? id (w: World.Current) = World.blueprint_of id == editor_bp w
 
-let _broken? id (w: World.World) =
+let _broken? id (w: World.Current) =
   match World.instance id w with
   | Some i -> i.faults >= fault_limit
   | None -> false
@@ -501,8 +505,8 @@ let _too_long text =
 
 -- Only an object of a realm that grants MayCheckSave may check or save a
 -- file, and only one its actor may edit.
-let _may_file (ctx: Core.Context) path (w: World.World) =
-  if !(_granted? ctx.self Core.MayCheckSave w) then
+let _may_file (ctx: Driver.Context) path (w: World.Current) =
+  if !(_granted? ctx.self Driver.MayCheckSave w) then
     Error "only the editor may check or save a file"
   else if !(may_edit? ctx.actor path w) then Error "%{ctx.actor} may not edit %{path}"
   else Ok()
@@ -510,7 +514,7 @@ let _may_file (ctx: Core.Context) path (w: World.World) =
 -- A player is told things by their own commands, by what is in the room
 -- with them, and by what their own account owns. A player's own body may
 -- tell anyone, as a page does.
-let _may_tell? (ctx: Core.Context) target (w: World.World) =
+let _may_tell? (ctx: Driver.Context) target (w: World.Current) =
   target == ctx.actor
   || ctx.self == ctx.actor
   || room_of target w == room_of ctx.self w
@@ -519,7 +523,7 @@ let _may_tell? (ctx: Core.Context) target (w: World.World) =
 
 -- An object makes things in itself, in what it holds, on the player whose
 -- command it runs, in the room it is in, or in a place its owner owns.
-let _may_spawn_in? (ctx: Core.Context) dest (w: World.World) =
+let _may_spawn_in? (ctx: Driver.Context) dest (w: World.Current) =
   dest == ctx.self
   || dest == ctx.actor
   || World.env_of dest w == Some ctx.self
@@ -529,64 +533,64 @@ let _may_spawn_in? (ctx: Core.Context) dest (w: World.World) =
 
 -- The driver's own policy on action `a`, which every realm's rules come
 -- after.
-let _policy (ctx: Core.Context) (a: Core.Action) (w: World.World) =
+let _policy (ctx: Driver.Context) (a: Driver.Action) (w: World.Current) =
   match a with
-  | Core.Say text -> _too_long text
-  | Core.Tell target text -> if World.session? target then
-      if _from_login? ctx then _too_long text else Error "only /std/login may tell a session"
+  | Driver.Say text -> _too_long text
+  | Driver.Tell target text -> if World.session? target then
+      if _from_login? ctx w then _too_long text else Error "only the login may tell a session"
     else if !(_may_tell? ctx (World.resolve target) w) then
       Error "may not tell %{target}: they are not here"
     else _too_long text
-  | Core.Move obj dest -> (
+  | Driver.Move obj dest -> (
     let o = World.resolve obj;
     let d = World.resolve dest;
     if World.session? dest then Error "may not move %{o} into a session"
     else if !(_may_move? ctx o w) then Error "may not move %{o}"
     -- A player moves by their own command, or by what their own account
     -- or a Keymaster owns: a room cannot carry off whoever is in it.
-    else if player? o && o != ctx.actor && o != ctx.self && !(_trusted? ctx.self w || _owns? ctx.self o w) then
+    else if player? o w && o != ctx.actor && o != ctx.self && !(_trusted? ctx.self w || _owns? ctx.self o w) then
       Error "may not move %{o}: a player moves by their own command"
     -- Only what its owner owns moves a locked thing.
-    else if !(player? o) && o != ctx.self && _locked? o w && !(_same_owner? ctx o w) then
+    else if !(player? o w) && o != ctx.self && _locked? o w && !(_same_owner? ctx o w) then
       Error "may not move %{o}: it is locked"
     else if realm? d w then Error "may not move %{o} into %{d}: a realm is no place"
     else if !(may_enter? o d w) then Error "may not move %{o} into %{d}: it is private"
     -- An editor is private to the one it was opened for.
-    else if _editor? d && Option.and_then (fn (i: World.Instance) -> i.creator) (World.instance d w) != Some o then
+    else if _editor? d w && Option.and_then (fn (i: World.Instance) -> i.creator) (World.instance d w) != Some o then
       Error "may not move %{o} into %{d}"
     else Ok()
   )
-  | Core.Spawn bp dest -> (
+  | Driver.Spawn bp dest -> (
     let d = World.resolve dest;
-    if bp == player_bp || bp == "/std/login" then Error "may not spawn %{bp}"
+    if bp == player_bp w || bp == w.paths.login then Error "may not spawn %{bp}"
     else if Map.has? bp w.realms then Error "may not spawn %{bp}: it is a realm"
     else if realm? d w then Error "may not spawn into %{d}: a realm is no place"
     else if !(_may_spawn_in? ctx d w) then
       Error "may not spawn into %{d}: it is not here, and not its owner's"
     else Ok()
   )
-  | Core.Login _ _ _ -> if _from_login? ctx then Ok()
-    else Error "only /std/login may log in"
-  | Core.Register _ _ _ -> if _from_login? ctx then Ok()
-    else Error "only /std/login may register"
-  | Core.Hangup _ -> if _from_login? ctx then Ok() else Error "only /std/login may hang up"
-  | Core.Remove obj -> (
+  | Driver.Login _ _ _ -> if _from_login? ctx w then Ok()
+    else Error "only the login may log in"
+  | Driver.Register _ _ _ -> if _from_login? ctx w then Ok()
+    else Error "only the login may register"
+  | Driver.Hangup _ -> if _from_login? ctx w then Ok() else Error "only the login may hang up"
+  | Driver.Remove obj -> (
     let o = World.resolve obj;
     if !(o == ctx.self || World.env_of o w == Some ctx.self) then Error "may not remove %{o}"
     else if o != ctx.self && !(_same_owner? ctx o w) then
       Error "may not remove %{o}: its owner is not this object's"
-    else if player? o || List.any? player? (World.contents o w) then
+    else if player? o w || List.any? (fn x -> player? x w) (World.contents o w) then
       Error "may not remove %{o}: a player is or is in it"
     else Ok()
   )
-  | Core.Check path _ -> _may_file ctx path w
-  | Core.Save path _ -> _may_file ctx path w
-  | Core.Draft path _ -> _may_file ctx path w
-  | Core.Run _ -> if _granted? ctx.self Core.MayCheckSave w then Ok()
+  | Driver.Check path _ -> _may_file ctx path w
+  | Driver.Save path _ -> _may_file ctx path w
+  | Driver.Draft path _ -> _may_file ctx path w
+  | Driver.Run _ -> if _granted? ctx.self Driver.MayCheckSave w then Ok()
     else Error "only the editor may run source"
-  | Core.Acknowledge body -> if _granted? ctx.self Core.MayAcknowledge w && body == ctx.actor then Ok()
+  | Driver.Acknowledge body -> if _granted? ctx.self Driver.MayAcknowledge w && body == ctx.actor then Ok()
     else Error "only the Rules Hall may say the rules were signed"
-  | Core.After _ _ -> (
+  | Driver.After _ _ -> (
     let n = List.length (World.callouts_of ctx.self w);
     if n >= max_callouts then Error "%{n} call-outs waiting, and the most is %{max_callouts}"
     else Ok()
@@ -595,7 +599,7 @@ let _policy (ctx: Core.Context) (a: Core.Action) (w: World.World) =
 -- What `rule` says of each realm `room` is in, nearest first, given the
 -- realm's path and module: the first refusal, or Ok when every realm
 -- allows. A rule that faults refuses.
-let _realms_say room rule (w: World.World) =
+let _realms_say room rule (w: World.Current) =
   List.fold_left
     (fn acc p -> match (acc, Map.get p w.realms) with
       | (Ok _, Some r) -> (
@@ -610,50 +614,50 @@ let _realms_say room rule (w: World.World) =
 
 -- Whether `ctx.self` may ask for action `a`, and why not: the driver's
 -- policy first, then the `allows` rule of every realm the object's room is
--- in. Every rule on what mudlib code may do is here, in one place.
-let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
+-- in. Every rule on what Library code may do is here, in one place.
+let allowed (ctx: Driver.Context) (a: Driver.Action) (w: World.Current) =
   match _policy ctx a w with
   | Error why -> Error why
-  | Ok _ -> _realms_say (room_of ctx.self w) (fn _ (r: Core.Realm) -> r.allows ctx a) w
+  | Ok _ -> _realms_say (room_of ctx.self w) (fn _ (r: Driver.Realm) -> r.allows ctx a) w
 
 -- Whether `body` may use the command `verb` where it is, and why not.
 -- /quit always works.
-let _command_ok body verb (w: World.World) =
+let _command_ok body verb (w: World.Current) =
   let here = room_of body w;
   if verb == "/quit" then Ok()
   else
     _realms_say
       here
-      (fn p (r: Core.Realm) -> r.commands (ctx_for w (realm_id p) body) verb)
+      (fn p (r: Driver.Realm) -> r.commands (ctx_for w (realm_id p) body) verb)
       w
 
 -- ── Capacity and Inspiration ───────────────────────────────────────────
 
 -- Who pays for action `a`: the builder at the editor for a file or a run,
 -- and otherwise the owner of the object that asks for it.
-let _payer (ctx: Core.Context) (a: Core.Action) (w: World.World) =
+let _payer (ctx: Driver.Context) (a: Driver.Action) (w: World.Current) =
   match a with
-  | Core.Check _ _ -> _key_of ctx.actor w
-  | Core.Save _ _ -> _key_of ctx.actor w
-  | Core.Draft _ _ -> _key_of ctx.actor w
-  | Core.Run _ -> _key_of ctx.actor w
+  | Driver.Check _ _ -> _key_of ctx.actor w
+  | Driver.Save _ _ -> _key_of ctx.actor w
+  | Driver.Draft _ _ -> _key_of ctx.actor w
+  | Driver.Run _ -> _key_of ctx.actor w
   | _ -> World.owner_of ctx.self w
 
 -- What action `a` costs in Inspiration, and what to call it in the log. A
 -- run is charged by the steps it took, after it runs.
-let _price (a: Core.Action) =
+let _price (a: Driver.Action) =
   match a with
-  | Core.Spawn _ _ -> (Inspiration.spawn_cost, "spawn")
-  | Core.Check _ _ -> (Inspiration.build_cost, "check")
-  | Core.Save _ _ -> (Inspiration.build_cost, "save")
+  | Driver.Spawn _ _ -> (Inspiration.spawn_cost, "spawn")
+  | Driver.Check _ _ -> (Inspiration.build_cost, "check")
+  | Driver.Save _ _ -> (Inspiration.build_cost, "save")
   | _ -> (0, "")
 
 let _size bytes = Size.format (Size.of_bytes bytes)
 
 -- Whether a new file fits the Capacity of `owner`.
--- How many mudlib files count against the account `key`: those it owns,
+-- How many Library files count against the account `key`: those it owns,
 -- by the owner rules, and those it builds under a contract.
-let file_count key (w: World.World) =
+let file_count key (w: World.Current) =
   List.length
     (List.filter
       (fn f ->
@@ -661,16 +665,16 @@ let file_count key (w: World.World) =
         file_owner p w == Some key || contracted? (Some key) p w)
       (Scan.files w.lib_root))
 
-let _file_room owner path (w: World.World) =
+let _file_room owner path (w: World.Current) =
   let n = file_count owner w;
   if Files.exists? w.lib_root path || n < max_files then Ok()
   else
     Error "You have %{n} files, and the most is %{max_files}. Remove one to make another."
 
 -- Whether action `a` fits the Capacity of `owner`.
-let _capacity owner (a: Core.Action) (w: World.World) =
+let _capacity owner (a: Driver.Action) (w: World.Current) =
   match a with
-  | Core.Spawn _ _ -> (
+  | Driver.Spawn _ _ -> (
     let n = List.length (World.owned owner w);
     let bytes = World.saved_bytes owner w;
     if n >= max_owned then
@@ -680,13 +684,13 @@ let _capacity owner (a: Core.Action) (w: World.World) =
         "Your objects keep %{_size bytes} of saved state, and the most is %{_size max_saved_total}."
     else Ok()
   )
-  | Core.Save path _ -> _file_room owner path w
-  | Core.Draft path _ -> _file_room owner path w
+  | Driver.Save path _ -> _file_room owner path w
+  | Driver.Draft path _ -> _file_room owner path w
   | _ -> Ok()
 
 -- Whether the account `owner` has `cost` Inspiration now, and when it
 -- will if not.
-let _inspired owner cost (w: World.World) =
+let _inspired owner cost (w: World.Current) =
   match World.account owner w with
   | None -> Error "There is no account %{owner} to pay for that."
   | Some acct -> (
@@ -699,7 +703,7 @@ let _inspired owner cost (w: World.World) =
   )
 
 -- Whether `payer` may pay for action `a`, and what it costs them.
-let budget payer (a: Core.Action) (w: World.World) = (
+let budget payer (a: Driver.Action) (w: World.Current) = (
   let (cost, _) = _price a;
   match payer with
   | Some p when !(_exempt? payer w) -> (
@@ -733,7 +737,7 @@ let _charge payer cost what (tx: Tx) =
 
 -- Tell the player whose command it is why it was refused, when it was
 -- theirs to pay for.
-let _tell_payer (ctx: Core.Context) payer why (tx: Tx) =
+let _tell_payer (ctx: Driver.Context) payer why (tx: Tx) =
   if Option.some? payer && _key_of ctx.actor tx.w == payer then
     change (World.tell ctx.actor why) tx
   else tx
@@ -751,16 +755,16 @@ let _pay body cost what k (tx: Tx) = (
   | _ -> k tx
 )
 
-let _fits? (arg: Core.Arg) (f: Parse.Found) holder =
+let _fits? (arg: Driver.Arg) (f: Parse.Found) holder =
   match arg with
-  | Core.NoArg -> true
-  | Core.This -> Parse.found? holder f
-  | Core.AnyObj -> Option.some? (Parse.found_id f)
+  | Driver.NoArg -> true
+  | Driver.This -> Parse.found? holder f
+  | Driver.AnyObj -> Option.some? (Parse.found_id f)
 
 -- The first verb that answers: on the player, then the room, then the
 -- direct object, then the indirect one, then each realm the room is in,
 -- nearest first, up to the Commons.
-let _find (w: World.World) holders verb dobj iobj =
+let _find (w: World.Current) holders verb dobj iobj =
   List.head
     (List.filter_map
       (fn h -> match World.instance h w with
@@ -769,7 +773,7 @@ let _find (w: World.World) holders verb dobj iobj =
           Option.map
             (fn v -> (h, v))
             (List.find
-              (fn (v: Core.Verb) -> List.any? (fn n -> n == verb) v.names
+              (fn (v: Driver.Verb) -> List.any? (fn n -> n == verb) v.names
               && _fits? v.dobj dobj h
               && _fits? v.iobj iobj h)
               i.object.verbs)
@@ -779,7 +783,7 @@ let _find (w: World.World) holders verb dobj iobj =
 -- Whose verbs a command of `body` in `here` may run, in the order they are
 -- asked: the body, the room, the objects the command names, then each
 -- realm the room is in.
-let _holders body here named (w: World.World) =
+let _holders body here named (w: World.Current) =
   List.unique (List.flatten [[body, here], named, List.map realm_id (room_realms here w)])
 
 -- ── Spawning ───────────────────────────────────────────────────────────
@@ -848,10 +852,10 @@ and _hook which container mover actor (tx: Tx) =
 
 -- ── Actions ────────────────────────────────────────────────────────────
 
-and _refuse (ctx: Core.Context) why (tx: Tx) =
+and _refuse (ctx: Driver.Context) why (tx: Tx) =
   _event (World.Event(at = "", event = "refused", actor = ctx.self, text = Some why)) tx
 
-and _say (ctx: Core.Context) text (tx: Tx) =
+and _say (ctx: Driver.Context) text (tx: Tx) =
   List.fold_left
     (fn acc p -> change (World.tell p text) acc)
     tx
@@ -859,14 +863,14 @@ and _say (ctx: Core.Context) text (tx: Tx) =
 
 -- Move `obj` into `dest`. A player who moves looks around, and then the
 -- place left and the place entered hear of it.
-and _move (ctx: Core.Context) obj dest (tx: Tx) =
+and _move (ctx: Driver.Context) obj dest (tx: Tx) =
   let from = World.env_of obj tx.w;
   let ensured = _ensure dest tx;
   -- A room that is gone, or cannot be made, is no place to go: a body goes
   -- home instead, and anything else stays where it is.
   let target =
     if Option.some? (World.instance dest ensured.w) then Some dest
-    else if player? obj then Some (home_of obj ensured.w)
+    else if player? obj tx.w then Some (home_of obj ensured.w)
     else None;
   let moved =
     match target with
@@ -874,12 +878,12 @@ and _move (ctx: Core.Context) obj dest (tx: Tx) =
       ensured
       |> _ensure t
       |> change (World.move obj t)
-      |> (if player? obj then _ensure_exits (World.resolve t) else fn x -> x)
+      |> (if player? obj tx.w then _ensure_exits (World.resolve t) else fn x -> x)
     | None -> ensured;
-  let looked = if player? obj then look obj moved else moved;
+  let looked = if player? obj tx.w then look obj moved else moved;
   let explored =
     match target with
-    | Some t when player? obj -> _explore obj (World.resolve t) looked
+    | Some t when player? obj tx.w -> _explore obj (World.resolve t) looked
     | _ -> looked;
   let left =
     match from with
@@ -893,7 +897,7 @@ and _move (ctx: Core.Context) obj dest (tx: Tx) =
 -- look through them.
 and _ensure_exits room (tx: Tx) =
   match World.instance room tx.w with
-  | Some i -> List.fold_left (fn acc (e: Core.Exit) -> _ensure e.to acc) tx (Map.values i.object.exits)
+  | Some i -> List.fold_left (fn acc (e: Driver.Exit) -> _ensure e.to acc) tx (Map.values i.object.exits)
   | None -> tx
 
 -- The first visit of a body to a public room another Citizen built, or
@@ -922,7 +926,7 @@ and _explore body room (tx: Tx) =
 
 -- Check action `a` against the policy, then against the Capacity and
 -- Inspiration of whoever pays for it, and do it.
-and _act (ctx: Core.Context) (a: Core.Action) (tx: Tx) =
+and _act (ctx: Driver.Context) (a: Driver.Action) (tx: Tx) =
   match allowed ctx a tx.w with
   | Error why -> _refuse ctx why tx
   | Ok _ -> (
@@ -934,48 +938,48 @@ and _act (ctx: Core.Context) (a: Core.Action) (tx: Tx) =
 
 -- Tell why an action was more than its payer had: the editor, through its
 -- `result` verb, for a file, and otherwise the player who paid.
-and _short (ctx: Core.Context) (a: Core.Action) why (tx: Tx) =
+and _short (ctx: Driver.Context) (a: Driver.Action) why (tx: Tx) =
   let failed action path =
-    Core.Outcome(
+    Driver.Outcome(
       action = action,
       path = path,
       ok = false,
-      problems = [Core.Problem(severity = "error", line = 1, col = 1, message = why)]
+      problems = [Driver.Problem(severity = "error", line = 1, col = 1, message = why)]
     );
   match a with
-  | Core.Check path _ -> _answer ctx (failed "check" path) tx
-  | Core.Save path _ -> _answer ctx (failed "save" path) tx
-  | Core.Draft path _ -> _answer ctx (failed "draft" path) tx
+  | Driver.Check path _ -> _answer ctx (failed "check" path) tx
+  | Driver.Save path _ -> _answer ctx (failed "save" path) tx
+  | Driver.Draft path _ -> _answer ctx (failed "draft" path) tx
   | _ -> _tell_payer ctx (_payer ctx a tx.w) why tx
 
-and _do (ctx: Core.Context) payer (a: Core.Action) (tx: Tx) =
+and _do (ctx: Driver.Context) payer (a: Driver.Action) (tx: Tx) =
   match a with
-  | Core.Say text -> _say ctx text tx
-  | Core.Tell target text -> change (World.tell target text) tx
-  | Core.Move obj dest -> _move ctx (World.resolve obj) dest tx
-  | Core.Spawn bp dest -> spawn bp dest ctx.actor payer tx
-  | Core.Login sid name typed -> login sid name typed tx
-  | Core.Register sid name typed -> register sid name typed tx
-  | Core.Hangup sid -> change (World.close_soon sid) tx
-  | Core.Remove obj ->
+  | Driver.Say text -> _say ctx text tx
+  | Driver.Tell target text -> change (World.tell target text) tx
+  | Driver.Move obj dest -> _move ctx (World.resolve obj) dest tx
+  | Driver.Spawn bp dest -> spawn bp dest ctx.actor payer tx
+  | Driver.Login sid name typed -> login sid name typed tx
+  | Driver.Register sid name typed -> register sid name typed tx
+  | Driver.Hangup sid -> change (World.close_soon sid) tx
+  | Driver.Remove obj ->
     tx
     |> change (World.remove obj)
     |> _event (World.Event(at = "", event = "remove", actor = ctx.actor, object = Some (World.resolve obj)))
-  | Core.Check path source -> _answer ctx (Files.check tx.w.lib_root path source) tx
-  | Core.Save path source -> _save ctx path source tx
-  | Core.Draft path source -> (
+  | Driver.Check path source -> _answer ctx (Files.check tx.w.lib_root path source) tx
+  | Driver.Save path source -> _save ctx path source tx
+  | Driver.Draft path source -> (
     let fresh = !(Files.exists? tx.w.lib_root path);
     let o = Files.draft tx.w.lib_root path source;
     _answer ctx o (if o.ok then _saved ctx.actor path fresh tx else tx)
   )
-  | Core.Run source -> eval ctx.actor source tx
-  | Core.Acknowledge body -> _signed body tx
-  | Core.After wait name -> change (World.call_out ctx.self (tx.w.now + wait) name) tx
+  | Driver.Run source -> eval ctx.actor source tx
+  | Driver.Acknowledge body -> _signed body tx
+  | Driver.After wait name -> change (World.call_out ctx.self (tx.w.now + wait) name) tx
 
 -- Save, and write the list of blueprints again, so a new one loads at
 -- the next start.
 -- A save that passes loads the new code at once, as /update does.
-and _save (ctx: Core.Context) path source (tx: Tx) =
+and _save (ctx: Driver.Context) path source (tx: Tx) =
   let fresh = !(Files.exists? tx.w.lib_root path);
   let o = Files.save tx.w.lib_root path source;
   let answered = _answer ctx o (if o.ok then _saved ctx.actor path fresh tx else tx);
@@ -994,14 +998,14 @@ and _saved actor path fresh (tx: Tx) =
 -- takes it. An instance whose state the new code cannot read stays on the
 -- old code and is named. A file that does not load changes nothing.
 and update actor path (tx: Tx) =
-  match Wand.load Core.Blueprint.loader (Files.file_of tx.w.lib_root path) with
+  match Wand.load Driver.Blueprint.loader (Files.file_of tx.w.lib_root path) with
   | Error why ->
     tx
     |> _event (World.Event(at = "", event = "update_refused", actor = actor, object = Some path, text = Some why))
     |> change (World.tell actor "%{path} was not updated: %{why}")
   | Ok b -> (
-    let before = if path == editor_bp then Map.get path tx.w.lib else tx.w.editor_before;
-    let tx = change (fn w -> World.World(w, editor_before = before)) tx;
+    let before = if path == editor_bp tx.w then Map.get path tx.w.lib else tx.w.editor_before;
+    let tx = change (fn w -> World.Current(w, editor_before = before)) tx;
     let (moved, kept) =
       List.fold_left
         (fn (acc, kept) id -> match World.instance id acc.w with
@@ -1025,11 +1029,11 @@ and update actor path (tx: Tx) =
 
 -- A file that is a realm too: load its rules again, and make its instance
 -- when the realm is new. Rules that do not load leave the old ones. A file
--- that no longer claims Core.Realm is a realm no more.
+-- that no longer claims Driver.Realm is a realm no more.
 and _update_realm actor path (tx: Tx) =
   if !(Scan.claims? "Realm" (Option.default "" (Files.read tx.w.lib_root path))) then
-    change (fn w -> World.World(w, realms = Map.delete path w.realms)) tx
-  else match Wand.load Core.Realm.loader (Files.file_of tx.w.lib_root path) with
+    change (fn w -> World.Current(w, realms = Map.delete path w.realms)) tx
+  else match Wand.load Driver.Realm.loader (Files.file_of tx.w.lib_root path) with
     | Error why -> change (World.tell actor "The rules of %{path} were not updated: %{why}") tx
     | Ok r -> tx |> change (World.set_realm path r) |> _ensure (realm_id path)
 
@@ -1063,7 +1067,7 @@ and reset actor ids (tx: Tx) =
     tx
     ids
 
--- /eval: run `expr` for `body`, as mudlib code runs: checked, gated, and
+-- /eval: run `expr` for `body`, as Library code runs: checked, gated, and
 -- under the limits. A list of actions is checked and applied as the
 -- body's own; any other value is shown with its type. It costs the steps
 -- it took, so it needs some Inspiration left to start.
@@ -1075,7 +1079,7 @@ and eval body expr (tx: Tx) =
   | Ok _ -> _eval body payer expr tx
 
 and _eval body payer expr (tx: Tx) =
-  match Evaluate.load tx.w.lib_root expr with
+  match Evaluate.load tx.w.lib_root tx.w.paths.driver expr with
   | Error errors ->
     tx
     |> _event (World.Event(at = "", event = "eval_refused", actor = body, text = Some expr))
@@ -1088,20 +1092,20 @@ and _eval body payer expr (tx: Tx) =
       |> _charge payer (Inspiration.of_steps steps) "eval";
     match r with
     | Error why -> change (World.tell body "Something went wrong: %{why}") logged
-    | Ok (Core.Shown text) -> change (World.tell body "=> %{text}") logged
-    | Ok (Core.Acts actions) ->
+    | Ok (Driver.Shown text) -> change (World.tell body "=> %{text}") logged
+    | Ok (Driver.Acts actions) ->
       logged
-      |> apply ctx (Core.Reply(actions = actions))
+      |> apply ctx (Driver.Reply(actions = actions))
       |> change (World.tell body "=> %{List.length actions} actions")
   )
 
 -- Log the driver's answer to a check or a save, with the errors or the
 -- effects, and give it to the editor through its `result` verb.
-and _answer (ctx: Core.Context) (o: Core.Outcome) (tx: Tx) =
+and _answer (ctx: Driver.Context) (o: Driver.Outcome) (tx: Tx) =
   let errors =
     List.map
-      (fn (p: Core.Problem) -> "%{p.line}:%{p.col}: %{p.message}")
-      (List.filter (fn (p: Core.Problem) -> p.severity == "error") o.problems);
+      (fn (p: Driver.Problem) -> "%{p.line}:%{p.col}: %{p.message}")
+      (List.filter (fn (p: Driver.Problem) -> p.severity == "error") o.problems);
   let found =
     if o.ok then "effects: %{if o.effects == [] then "none" else String.join ", " o.effects}"
     else String.join "; " errors;
@@ -1114,19 +1118,19 @@ and _answer (ctx: Core.Context) (o: Core.Outcome) (tx: Tx) =
       object = Some o.path,
       text = Some found
     ))
-  |> verb_with ctx.self ctx.actor (Core.Parsed(verb = "result", rest = JSON.stringify (Core.Outcome.encoder o)))
+  |> verb_with ctx.self ctx.actor (Driver.Parsed(verb = "result", rest = JSON.stringify (Driver.Outcome.encoder o)))
 
-and _apply_actions (ctx: Core.Context) actions (tx: Tx) =
+and _apply_actions (ctx: Driver.Context) actions (tx: Tx) =
   List.fold_left (fn acc a -> _act ctx a acc) tx actions
 
 -- Apply what a call on `ctx.self` gave back. A reply with more actions
 -- than `max_actions` is refused whole: its object keeps its old version.
-and apply (ctx: Core.Context) (r: Core.Reply) (tx: Tx) =
+and apply (ctx: Driver.Context) (r: Driver.Reply) (tx: Tx) =
   if List.length r.actions > max_actions then
     _refuse ctx "%{List.length r.actions} actions in one reply, and the most is %{max_actions}" tx
   else _apply ctx r tx
 
-and _apply (ctx: Core.Context) (r: Core.Reply) (tx: Tx) = (
+and _apply (ctx: Driver.Context) (r: Driver.Reply) (tx: Tx) = (
   let kept =
     match r.next with
     | Some o -> change (World.set_object ctx.self o tx.at) tx
@@ -1134,14 +1138,14 @@ and _apply (ctx: Core.Context) (r: Core.Reply) (tx: Tx) = (
   _apply_actions ctx r.actions kept
 )
 
--- Run a reply-giving mudlib call, and apply its reply. A raise is a fault:
+-- Run a reply-giving Library call, and apply its reply. A raise is a fault:
 -- the actor is told, and the event log keeps why.
 -- An object that has faulted `fault_limit` times in a row runs no more
 -- code until /update or /reset gives it a new start.
-and run (ctx: Core.Context) body (tx: Tx) = (let (ran, _) = run_counted ctx body tx; ran)
+and run (ctx: Driver.Context) body (tx: Tx) = (let (ran, _) = run_counted ctx body tx; ran)
 
 -- `run`, with the steps the call took.
-and run_counted (ctx: Core.Context) body (tx: Tx) =
+and run_counted (ctx: Driver.Context) body (tx: Tx) =
   if _broken? ctx.self tx.w then
     (change (World.tell ctx.actor "%{short_of ctx.self tx.w} is not working.") tx, 0)
   else if Option.map (fn (i: World.Instance) -> i.held) (World.instance ctx.self tx.w) == Some true then
@@ -1166,12 +1170,12 @@ and run_counted (ctx: Core.Context) body (tx: Tx) =
 -- An editor that faults goes back to the editor before the last /update
 -- of it, so a bad update of the editor can be fixed with the editor.
 and _fall_back self actor (tx: Tx) =
-  match (_editor? self, tx.w.editor_before, World.instance self tx.w) with
+  match (_editor? self tx.w, tx.w.editor_before, World.instance self tx.w) with
   | (true, Some b, Some i) -> (
     match _call (fn () -> b.create i.id (Some (i.object.save ()))) with
     | Ok init ->
       tx
-      |> change (World.set_blueprint editor_bp b)
+      |> change (World.set_blueprint (editor_bp tx.w) b)
       |> change (World.set_object i.id init.object tx.at)
       |> change (World.tell actor "The editor is back on its version from before the last /update of it.")
     | Error _ -> tx
@@ -1179,14 +1183,14 @@ and _fall_back self actor (tx: Tx) =
   | _ -> tx
 
 -- Run the verb named `name` on `self`, with no arguments.
-and verb self actor name (tx: Tx) = verb_with self actor (Core.Parsed(verb = name)) tx
+and verb self actor name (tx: Tx) = verb_with self actor (Driver.Parsed(verb = name)) tx
 
 -- Run the verb `p.verb` on `self`, with `p` as its command.
-and verb_with self actor (p: Core.Parsed) (tx: Tx) =
+and verb_with self actor (p: Driver.Parsed) (tx: Tx) =
   match World.instance self tx.w with
   | None -> tx
   | Some i -> (
-    match List.find (fn (v: Core.Verb) -> List.any? (fn n -> n == p.verb) v.names) i.object.verbs with
+    match List.find (fn (v: Driver.Verb) -> List.any? (fn n -> n == p.verb) v.names) i.object.verbs with
     | None -> tx
     | Some v -> (
       let ctx = ctx_for tx.w i.id actor;
@@ -1201,7 +1205,7 @@ and look body (tx: Tx) =
   match _find tx.w (_holders body here [] tx.w) "look" Parse.NoWords Parse.NoWords with
   | Some(h, v) -> (
     let ctx = ctx_for tx.w h body;
-    run ctx (fn () -> v.run ctx (Core.Parsed(verb = "look"))) tx
+    run ctx (fn () -> v.run ctx (Driver.Parsed(verb = "look"))) tx
   )
   | None -> tx
 
@@ -1232,14 +1236,14 @@ and register sid name typed (tx: Tx) =
   if Option.some? (World.account name tx.w) then
     change (World.tell sid "%{name} was taken just now. What is your name?") tx
   else (
-    let body = "%{player_bp}#%{World.next_number player_bp tx.w}";
+    let body = "%{(player_bp tx.w)}#%{World.next_number (player_bp tx.w) tx.w}";
     let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
     let hashed = Password.hash tx.w.pepper (Random.hex 32) typed;
     tx
-    |> _ensure rules_hall
-    |> _create body player_bp (Some saved) (Some rules_hall) (Some (String.lower name))
+    |> _ensure (rules_hall tx.w)
+    |> _create body (player_bp tx.w) (Some saved) (Some (rules_hall tx.w)) (Some (String.lower name))
     |> change (World.add_account (World.Account(name = name, body = body, password = hashed, created = Some tx.w.now)))
-    |> _hook "enter" rules_hall body body
+    |> _hook "enter" (rules_hall tx.w) body body
     |> _event (World.Event(at = "", event = "signup", actor = sid, name = Some name, object = Some body))
     |> _wake sid name body "%{name} arrives."
   )
@@ -1251,15 +1255,15 @@ and _wake sid name body news (tx: Tx) =
   let (woke: Tx) =
     tx
     |> change (World.attach sid body)
-    |> verb login_id sid "done"
+    |> verb (login_id tx.w) sid "done"
     |> _event (World.Event(at = "", event = "login", actor = sid, name = Some name, object = Some body))
     |> change (World.tell body "Hello, %{name}.")
     |> _to_hall body;
   woke |> _tell_room (room_of body woke.w) body news |> _tell_notices body |> look body
 
 and _to_hall body (tx: Tx) =
-  if signed? body tx.w || room_of body tx.w == rules_hall then tx
-  else tx |> _ensure rules_hall |> change (World.move body rules_hall)
+  if signed? body tx.w || room_of body tx.w == (rules_hall tx.w) then tx
+  else tx |> _ensure (rules_hall tx.w) |> change (World.move body (rules_hall tx.w))
 
 and _tell_notices body (tx: Tx) =
   match World.account_of body tx.w with
@@ -1276,8 +1280,8 @@ and _signed body (tx: Tx) =
     tx
     |> change (World.sign a.name (rules_version tx.w) tx.w.now)
     |> _event World.Event(at = "", event = "signed", actor = body, text = Some "version %{rules_version tx.w}")
-    |> _tell_room arrival body "%{short_of body tx.w} arrives."
-    |> _move (ctx_for tx.w body body) body arrival
+    |> _tell_room (arrival tx.w) body "%{short_of body tx.w} arrives."
+    |> _move (ctx_for tx.w body body) body (arrival tx.w)
 
 and _tell_room room except text (tx: Tx) =
   List.fold_left
@@ -1298,7 +1302,7 @@ let _expand line =
   else line
 
 -- Why nothing answered, in words the player can act on.
-let _unmatched (w: World.World) verb (dobj: Parse.Found) =
+let _unmatched (w: World.Current) verb (dobj: Parse.Found) =
   match dobj with
   | Parse.Missing words -> "You don't see a '%{words}' here."
   | Parse.Ambiguous words ids ->
@@ -1330,7 +1334,7 @@ let command body line (tx: Tx) = (
   | Some(h, v) -> (
     let ctx = ctx_for tx.w h body;
     let parsed =
-      Core.Parsed(
+      Driver.Parsed(
         verb = verb,
         dobj = Parse.found_id dobj,
         prep = words.prep,
@@ -1348,7 +1352,7 @@ let command body line (tx: Tx) = (
 
 -- ── Input ──────────────────────────────────────────────────────────────
 
-let _who body (w: World.World) =
+let _who body (w: World.Current) =
   let names =
     List.sort
       (List.filter_map
@@ -1365,7 +1369,7 @@ let _after_verb line =
 
 -- One player, by account name: awake or when last seen, and what they
 -- look like.
-let _who_is body name (w: World.World) =
+let _who_is body name (w: World.Current) =
   match World.account name w with
   | None -> World.tell body "There is no one called %{name}." w
   | Some a -> (
@@ -1380,19 +1384,19 @@ let _who_is body name (w: World.World) =
 let _or_none xs = if xs == [] then "nothing" else String.join ", " xs
 
 -- Who may enter a room, or move a thing, in words.
-let _access (i: World.Instance) =
-  if player? i.id then "its own"
+let _access (i: World.Instance) (w: World.Current) =
+  if player? i.id w then "its own"
   else if i.env == None then
     match i.allowed with
-    | Core.Everyone -> "public"
-    | Core.Only [] -> "private"
-    | Core.Only names -> "private, and open to %{String.join ", " names}"
+    | Driver.Everyone -> "public"
+    | Driver.Only [] -> "private"
+    | Driver.Only names -> "private, and open to %{String.join ", " names}"
   else if i.locked then "locked"
   else "unlocked"
 
 -- What the driver knows of an object: for builders, who need to see what
 -- the text of a room does not say.
-let _examine body words (w: World.World) = (
+let _examine body words (w: World.Current) = (
   let here = room_of body w;
   let found =
     if words == "" then Parse.Found here else Parse.resolve w body here (String.words words);
@@ -1415,10 +1419,10 @@ let _examine body words (w: World.World) = (
           "  holds: %{_or_none (World.contents i.id w)}",
           "  made by: %{Option.default "the driver" i.creator}, %{Option.default "at boot" i.created}",
           "  owner: %{Option.default "the Keymasters" i.owner}",
-          "  access: %{_access i}",
+          "  access: %{_access i w}",
           "  changed: %{Option.default "never" i.modified}",
           "  props: %{_or_none props}",
-          "  verbs: %{_or_none (List.flatten (List.map (fn (v: Core.Verb) -> v.names) i.object.verbs))}",
+          "  verbs: %{_or_none (List.flatten (List.map (fn (v: Driver.Verb) -> v.names) i.object.verbs))}",
           "  exits: %{_or_none (Map.keys i.object.exits)}",
           "  details: %{_or_none (Map.keys i.object.details)}",
           "  heartbeat: %{if Option.some? i.object.heartbeat then "yes" else "no"}",
@@ -1432,7 +1436,7 @@ let _examine body words (w: World.World) = (
 
 -- The blueprint path `/edit` names: the room's, an object's by name, or
 -- one written out, as /r/home/ann/lamp.
-let _edit_target body words (w: World.World) = (
+let _edit_target body words (w: World.Current) = (
   let here = room_of body w;
   if words == "" || words == "here" then Ok (World.blueprint_of here)
   else if String.starts_with? "/" words then
@@ -1458,12 +1462,12 @@ let _editor_state path lines here evaluating =
 -- one, the same editor with the new state.
 let _open_editor body state opened (tx: Tx) =
   let here = room_of body tx.w;
-  if _editor? here then
-    verb_with here body Core.Parsed(verb = "open", rest = JSON.stringify state) tx
+  if _editor? here tx.w then
+    verb_with here body Driver.Parsed(verb = "open", rest = JSON.stringify state) tx
   else (
-    let id = "%{editor_bp}#%{World.next_number editor_bp tx.w}";
+    let id = "%{editor_bp tx.w}#%{World.next_number (editor_bp tx.w) tx.w}";
     tx
-    |> _create id editor_bp (Some state) None None
+    |> _create id (editor_bp tx.w) (Some state) None None
     |> change (World.set_made id (Some body) (Some tx.at) None)
     |> _event World.Event(at = "", event = "spawn", actor = body, object = Some id)
     |> _tell_room here body "%{short_of body tx.w} leaves for the editor."
@@ -1486,13 +1490,15 @@ let _edit body words (tx: Tx) =
   | Error why -> change (World.tell body why) tx
   | Ok path -> if !(Files.valid? path) then
       change
-        (World.tell body "'%{path}' is not a mudlib path. One looks like /r/home/ann/lamp.")
+        (World.tell
+          body
+          "'%{path}' is not a Library path. One looks like %{tx.w.paths.homes}/ann/lamp.")
         tx
     else if !(may_edit? body path tx.w) then
       change
         (World.tell
           body
-          "You may not edit %{path}. A Citizen edits the files in their home, /r/home/<name>/.")
+          "You may not edit %{path}. A Citizen edits the files in their home, %{tx.w.paths.homes}/<name>/.")
         tx
     else (
       let text = Files.read tx.w.lib_root path;
@@ -1512,14 +1518,14 @@ let _update body words (tx: Tx) =
   match _edit_target body words tx.w with
   | Error why -> change (World.tell body why) tx
   | Ok path -> if !(Files.valid? path) then
-      change (World.tell body "'%{path}' is not a mudlib path.") tx
+      change (World.tell body "'%{path}' is not a Library path.") tx
     else if !(may_edit? body path tx.w) then
       change (World.tell body "You may not update %{path}.") tx
     else _pay body Inspiration.build_cost "update" (update body path) tx
 
 -- The instances /reset names: here, me, an object by name, an instance id,
 -- or a blueprint path for every instance of it.
-let _reset_targets body words (w: World.World) = (
+let _reset_targets body words (w: World.Current) = (
   let here = room_of body w;
   if words == "" then Error "Reset what? Name an object, here, me, or a path."
   else if words == "here" then Ok [here]
@@ -1552,7 +1558,7 @@ let _reset body words (tx: Tx) =
 
 -- What /verbs and /copy name: the room with here or nothing,
 -- the body with me, or a thing by name.
-let _named body words (w: World.World) =
+let _named body words (w: World.Current) =
   let here = room_of body w;
   if words == "" || words == "here" then Parse.Found here
   else if words == "me" then Parse.Found body
@@ -1560,20 +1566,20 @@ let _named body words (w: World.World) =
 
 -- One verb as a player types it, for each of its names: `pull lever`, or
 -- `give <thing> <word> lever` for a verb that takes another object.
-let _forms (i: World.Instance) (v: Core.Verb) =
+let _forms (i: World.Instance) (v: Driver.Verb) =
   let me = Option.default "it" (List.head i.object.names);
-  let arg (a: Core.Arg) =
+  let arg (a: Driver.Arg) =
     match a with
-    | Core.NoArg -> ""
-    | Core.This -> " %{me}"
-    | Core.AnyObj -> " <thing>"
+    | Driver.NoArg -> ""
+    | Driver.This -> " %{me}"
+    | Driver.AnyObj -> " <thing>"
   in
-  let iobj = if v.iobj == Core.NoArg then "" else " <word>%{arg v.iobj}";
+  let iobj = if v.iobj == Driver.NoArg then "" else " <word>%{arg v.iobj}";
   String.join ", " (List.map (fn n -> "%{n}%{arg v.dobj}%{iobj}") v.names)
 
 -- /verbs: what a thing answers to, and a room's exits. For the room you
 -- are in, also what each realm it is in answers to, nearest first.
-let _verbs body words (w: World.World) =
+let _verbs body words (w: World.Current) =
   match _named body words w with
   | Parse.Found id -> (
     match World.instance id w with
@@ -1612,7 +1618,7 @@ let _rest_of words =
       words)
 
 -- Where each Citizen's home is: /r/home/ann for ann.
-let home_dir key = "/r/home/%{key}"
+let home_dir key (w: World.Current) = "%{w.paths.homes}/%{key}"
 
 -- The exit back to a room dug in a direction: south for north. Any other
 -- exit gets back.
@@ -1653,26 +1659,35 @@ let _dig body words (tx: Tx) = (
       file_owner from tx.w == key || contracted? key from tx.w || steward? key from tx.w;
     let base =
       if ours then _dir_of from
-      else Option.default "" (Option.map (fn k -> home_dir k) (_key_of body tx.w));
+      else Option.default "" (Option.map (fn k -> home_dir k tx.w) (_key_of body tx.w));
     let path = if String.starts_with? "/" rel then rel else "%{base}/%{rel}";
     let exits =
       Option.map (fn (i: World.Instance) -> i.object.exits) (World.instance here tx.w);
     if !(Regex.match? r/^[a-z][a-z0-9_]*$/ name) then
       tell "An exit's name is one word in lower case, as east or door."
     else if !(Files.valid? path) then
-      tell "'%{path}' is not a mudlib path. One looks like /r/home/ann/shop/front."
+      tell
+        "'%{path}' is not a Library path. One looks like %{tx.w.paths.homes}/ann/shop/front."
     else if !(may_edit? body path tx.w) then tell "You may not make %{path}."
     else if Files.exists? tx.w.lib_root path then tell "%{path} is there already."
     else if Option.map (Map.has? name) exits == Some true then
       tell "%{short_of here tx.w} has an exit %{name} already."
+    else if !(Option.some? tx.w.library) then tell "This game has no room for /dig to make."
     else (
       let payer = _key_of body tx.w;
-      let source = Files.dug_room path (_back_of name) from;
-      match budget payer (Core.Save path source) tx.w with
+      -- The game's template, run under the same limits as its other code.
+      let source =
+        Option.default
+          ""
+          (Option.map
+            (fn (l: Driver.Library) -> _bounded "" (fn () ->
+              l.start.dig path (_back_of name) from))
+            tx.w.library);
+      match budget payer (Driver.Save path source) tx.w with
       | Error why -> tell why
       | Ok cost -> (
         let o = Files.save tx.w.lib_root path source;
-        match (o.ok, Wand.load Core.Blueprint.loader (Files.file_of tx.w.lib_root path)) with
+        match (o.ok, Wand.load Driver.Blueprint.loader (Files.file_of tx.w.lib_root path)) with
         | (true, Ok b) -> (
           let dug =
             tx
@@ -1692,7 +1707,7 @@ let _dig body words (tx: Tx) = (
           let hand =
             `Dug a room at %{path}. Add the exit to this room with /edit here: %{Files.exit_line name path view}`;
           let away =
-            `Dug a room at %{path}. No exit leads there from %{short_of here tx.w}. Go there with /eval [Core.Move ctx.actor "%{path}"]`;
+            `Dug a room at %{path}. No exit leads there from %{short_of here tx.w}. Go there with /eval [Driver.Move ctx.actor "%{path}"]`;
           -- The exit goes here only when the new room is in this room's
           -- area, or the player wrote its path out.
           if !(mine && (ours || String.starts_with? "/" rel)) then
@@ -1712,7 +1727,7 @@ let _dig body words (tx: Tx) = (
         | (true, Error why) -> tell "The room at %{path} was made, but did not load: %{why}"
         | (false, _) ->
           tell
-            "The room at %{path} could not be made: %{String.join "; " (List.map (fn (p: Core.Problem) -> p.message) o.problems)}"
+            "The room at %{path} could not be made: %{String.join "; " (List.map (fn (p: Driver.Problem) -> p.message) o.problems)}"
       )
     )
   )
@@ -1720,16 +1735,16 @@ let _dig body words (tx: Tx) = (
 )
 
 -- The examples /copy may copy: the files of the Learning Hall.
-let learning = "/r/learning/"
+let learning (w: World.Current) = "%{w.paths.examples}/"
 
 -- /files [directory]: the text that says what is in a directory: your home, or one you name,
 -- written out or from your home, as /files shop for /r/home/ann/shop. Only
 -- someone who may edit files there may list it.
-let _files body words (w: World.World) =
+let _files body words (w: World.Current) =
   match World.account_of body w with
   | None -> "You have no account."
   | Some a -> (
-    let home = home_dir (String.lower a.name);
+    let home = home_dir (String.lower a.name) w;
     let trimmed =
       if String.ends_with? "/" words then String.slice 0 (String.length words - 1) words
       else words;
@@ -1738,7 +1753,7 @@ let _files body words (w: World.World) =
       else if String.starts_with? "/" trimmed then trimmed
       else "%{home}/%{trimmed}";
     if !(Files.valid? dir) then
-      "'%{dir}' is not a mudlib directory. One looks like /r/home/ann/shop."
+      "'%{dir}' is not a Library directory. One looks like %{w.paths.homes}/ann/shop."
     else if !(may_edit? body "%{dir}/x" w) then "You may not list %{dir}."
     else match Files.list w.lib_root dir with
       | Some names when names != [] ->
@@ -1756,9 +1771,9 @@ let _copy body words (tx: Tx) =
     let from = World.blueprint_of id;
     let key = String.lower a.name;
     let to =
-      "%{home_dir key}/%{Option.default "" (List.head (List.reverse (String.split "/" from)))}";
+      "%{home_dir key tx.w}/%{Option.default "" (List.head (List.reverse (String.split "/" from)))}";
     let room? = World.env_of id tx.w == None;
-    if !(String.starts_with? learning from) then
+    if !(String.starts_with? (learning tx.w) from) then
       change
         (World.tell
           body
@@ -1769,14 +1784,14 @@ let _copy body words (tx: Tx) =
     else match Option.map (Files.moved from to) (Files.read tx.w.lib_root from) with
       | None -> change (World.tell body "%{from} has no file to copy.") tx
       | Some source -> (
-        match budget (Some key) (Core.Save to source) tx.w with
+        match budget (Some key) (Driver.Save to source) tx.w with
         | Error why -> change (World.tell body why) tx
         | Ok cost -> (
           let o = Files.save tx.w.lib_root to source;
           let use =
-            if room? then `Go there with /eval [Core.Move ctx.actor "%{to}"]`
-            else `Make one with /eval [Core.Spawn "%{to}" ctx.here]`;
-          match (o.ok, Wand.load Core.Blueprint.loader (Files.file_of tx.w.lib_root to)) with
+            if room? then `Go there with /eval [Driver.Move ctx.actor "%{to}"]`
+            else `Make one with /eval [Driver.Spawn "%{to}" ctx.here]`;
+          match (o.ok, Wand.load Driver.Blueprint.loader (Files.file_of tx.w.lib_root to)) with
           | (true, Ok b) ->
             tx
             |> _charge (Some key) cost "copy"
@@ -1801,7 +1816,7 @@ let _copy body words (tx: Tx) =
             change
               (World.tell
                 body
-                "%{from} could not be copied: %{String.join "; " (List.map (fn (p: Core.Problem) -> p.message) o.problems)}")
+                "%{from} could not be copied: %{String.join "; " (List.map (fn (p: Driver.Problem) -> p.message) o.problems)}")
               tx
         )
       )
@@ -1809,7 +1824,7 @@ let _copy body words (tx: Tx) =
   | (_, Some _) -> change (World.tell body "You don't see a '%{words}' here.") tx
 
 -- An account's Capacity and Inspiration, as /stat shows them.
-let _stat_text (a: World.Account) (w: World.World) =
+let _stat_text (a: World.Account) (w: World.Current) =
   let key = String.lower a.name;
   let i = a.inspiration;
   let lines =
@@ -1844,17 +1859,17 @@ let _stat body words (tx: Tx) = (
 
 -- Whether `body` may say who enters or moves `id`: its owner, a Steward of
 -- its realm, or a Keymaster.
-let _may_change? body id (w: World.World) =
+let _may_change? body id (w: World.Current) =
   let key = _key_of body w;
   Option.some? key
   && (World.owner_of id w == key || _exempt? key w || steward? key (World.blueprint_of id) w)
 
 -- Who may enter `room` once it is private: whom it lets in already, or
 -- only its owner and the Keymasters when it was public.
-let _closed room (w: World.World) =
+let _closed room (w: World.Current) =
   match Option.map (fn (i: World.Instance) -> i.allowed) (World.instance room w) with
-  | Some (Core.Only names) -> Core.Only names
-  | _ -> Core.Only []
+  | Some (Driver.Only names) -> Driver.Only names
+  | _ -> Driver.Only []
 
 -- /public and /private: open the room `body` is in to everyone, or close it
 -- to all but its owner, whoever it invites, and the Keymasters.
@@ -1867,7 +1882,7 @@ let _set_public body words public (tx: Tx) =
     change (World.tell body "%{name} is not yours to open or close.") tx
   else
     tx
-    |> change (World.set_allowed room (if public then Core.Everyone else _closed room tx.w))
+    |> change (World.set_allowed room (if public then Driver.Everyone else _closed room tx.w))
     |> _event World.Event(
       at = "",
       event = if public then "public" else "private",
@@ -1974,10 +1989,11 @@ let _ban body words yes (tx: Tx) =
 -- ── Reviews ────────────────────────────────────────────────────────────
 
 -- The realm a player names: written out, as /r/guild, or by its name in
--- the Commons, as guild. None when it is no realm, or one the Keymasters do
+-- the root realm, the Commons, as guild. None when it is no realm, or one the Keymasters do
 -- not own.
-let _realm_named words (w: World.World) =
-  let path = if String.starts_with? "/" words then words else "/r/%{words}";
+let _realm_named words (w: World.Current) =
+  let root = Option.default "" (List.head (List.reverse (realms_of w.paths.arrival w)));
+  let path = if String.starts_with? "/" words then words else "%{root}/%{words}";
   if Map.has? path w.realms && file_owner path w == None then Some path else None
 
 -- The rooms a request from `entrance` covers: the entrance, and every room
@@ -1996,7 +2012,7 @@ let _walk dir (seen: List String) todo (tx: Tx) =
            List.filter
              (fn q -> String.starts_with? dir q)
              (List.map
-               (fn (e: Core.Exit) -> World.blueprint_of (World.resolve e.to))
+               (fn (e: Driver.Exit) -> World.blueprint_of (World.resolve e.to))
                (Map.values i.object.exits))
          | None -> []);
       _walk dir (List.concat seen [p]) (List.concat rest next) made
@@ -2004,7 +2020,7 @@ let _walk dir (seen: List String) todo (tx: Tx) =
 
 -- Who is told of a request to `realm`: its Stewards, or the Keymasters
 -- when it has none.
-let _reviewers_of realm (w: World.World) =
+let _reviewers_of realm (w: World.Current) =
   let stewards = List.map String.lower (_charter (realm :: realms_of realm w) w).stewards;
   if stewards != [] then stewards
   else
@@ -2017,13 +2033,13 @@ let _notice_all keys text (tx: Tx) =
 
 -- What a request asks, in words: "join the Guild", or "open your building
 -- in the Guild".
-let _asks (r: World.Request) (w: World.World) =
+let _asks (r: World.Request) (w: World.Current) =
   let realm = short_of (realm_id r.realm) w;
   if r.kind == "join" then "join %{realm}" else "open a building in %{realm}"
 
 -- The request numbered `words`, or for `here`, the open request of `body`
 -- that covers the room they are in.
-let _request_named body words (w: World.World) =
+let _request_named body words (w: World.Current) =
   if words == "here" then
     List.find
       (fn (r: World.Request) -> r.open
@@ -2095,7 +2111,7 @@ let _request_line (r: World.Request) =
 
 -- /reviews [n]: your open requests and the ones waiting for you, or one
 -- whole: its rooms, and the files saved since it was asked.
-let _reviews body words (w: World.World) = (
+let _reviews body words (w: World.Current) = (
   let key = _key_of body w;
   let mine (r: World.Request) = Some r.by == key || reviewer? key r w;
   if words == "" then (
@@ -2194,7 +2210,9 @@ let _link body words (tx: Tx) = (
       )
       | None -> tell "Add the exit to this room with /edit here: %{line}"
   )
-  | _ -> tell "Link where? /link <exit> <path>, as /link east /r/home/ann/shop/front."
+  | _ ->
+    tell
+      "Link where? /link <exit> <path>, as /link east %{tx.w.paths.homes}/ann/shop/front."
 )
 -- /approve <n> [exit]: open a request's rooms to everyone. Rooms that join
 -- the realm are its now, and stay their builder's. With an exit, the
@@ -2229,7 +2247,7 @@ let _approve body words (tx: Tx) = (
         List.fold_left
           (fn acc p -> acc
           |> _ensure p
-          |> change (World.set_allowed (World.resolve p) Core.Everyone))
+          |> change (World.set_allowed (World.resolve p) Driver.Everyone))
           tx
           r.rooms;
       let approved =
@@ -2322,7 +2340,7 @@ let _set_locked body words locked (tx: Tx) = (
   match found with
   | Parse.Found id -> (
     let name = short_of id tx.w;
-    if player? id || World.env_of id tx.w == None then
+    if player? id tx.w || World.env_of id tx.w == None then
       change
         (World.tell
           body
@@ -2355,13 +2373,13 @@ let _set_locked body words locked (tx: Tx) = (
 -- out of view to wait for a Keymaster.
 let flags_to_hold = 3
 
-let _keymaster? body (w: World.World) =
+let _keymaster? body (w: World.Current) =
   match World.account_of body w with
   | Some a -> a.role == "keymaster"
   | None -> false
 
 -- Whether `body` is a Steward of any realm.
-let _steward_anywhere? body (w: World.World) =
+let _steward_anywhere? body (w: World.Current) =
   let key = _key_of body w;
   List.any? (fn p -> steward? key p w) (Map.keys w.realms)
 
@@ -2369,13 +2387,13 @@ let _steward_anywhere? body (w: World.World) =
 -- Steward the flags on the rooms of their realms and the things in them,
 -- wherever a thing's file is. A flag on a person is for the Keymasters
 -- alone.
-let _reviews? body (f: World.Flag) (w: World.World) =
+let _reviews? body (f: World.Flag) (w: World.Current) =
   _keymaster? body w
   || f.kind != "person" && _keeps? (_key_of body w) (room_realms (room_of f.target w) w) w
 
 -- What a room or a thing was when it was flagged: its text, and its file.
 -- Its own text, even when it is held, so a Keymaster sees what was there.
-let _evidence id (w: World.World) =
+let _evidence id (w: World.Current) =
   match World.instance id w with
   | None -> "(it is gone)"
   | Some i -> (
@@ -2402,7 +2420,7 @@ let _hold_if_flagged (f: World.Flag) (tx: Tx) = (
     (if List.length by < flags_to_hold then None
      else match World.instance f.target tx.w with
        | Some i when f.kind == "room" && World.public? i -> Some (
-         World.set_allowed f.target (Core.Only []),
+         World.set_allowed f.target (Driver.Only []),
          "is private until a Keymaster has looked at it"
        )
        | Some i when f.kind == "object" && !i.held -> Some (
@@ -2481,7 +2499,7 @@ let _flag body words (tx: Tx) = (
     let found =
       if first == "here" then Parse.Found here else Parse.resolve tx.w body here [first];
     match found with
-    | Parse.Found id -> if player? id then
+    | Parse.Found id -> if player? id tx.w then
         change (World.tell body "To tell the Keymasters about a person, /report them.") tx
       else if reason == "" then change (World.tell body "Say why: /flag %{first} <why>.") tx
       else (
@@ -2511,7 +2529,7 @@ let _report body words (tx: Tx) = (
 )
 
 -- /flags: the open flags, or one flag whole.
-let _flags body words (w: World.World) =
+let _flags body words (w: World.Current) =
   if !(_keymaster? body w || _steward_anywhere? body w) then
     World.tell body "Only a Keymaster or a Steward reviews flags." w
   else if words == "" then (
@@ -2595,14 +2613,14 @@ let _resolve body words (tx: Tx) = (
             change (World.tell body "Only a room is made private.") tx
           else
             tx
-            |> change (World.set_allowed f.target (Core.Only []))
+            |> change (World.set_allowed f.target (Driver.Only []))
             |> (match f.owner with
               | Some o -> change (World.notice o "A Keymaster made your room %{f.target} private: %{f.reason}.%{why}")
               | None -> fn t -> t)
             |> _close body f said "%{f.target} is private now."
         | ("remove", _) -> if f.kind != "object" then
             change (World.tell body "Only a thing is removed. A room is made private.") tx
-          else if List.any? player? (World.contents f.target tx.w) then
+          else if List.any? (fn x -> player? x tx.w) (World.contents f.target tx.w) then
             change (World.tell body "A player is in %{f.target}; it stays.") tx
           else (
             let removed =
@@ -2662,7 +2680,7 @@ let _set_paused body words paused (tx: Tx) =
 let _speech = ["say", "pose", "semipose"]
 
 -- /help: the topics, or one of them.
-let _help body words (w: World.World) = (
+let _help body words (w: World.Current) = (
   let topics =
     "Help topics: %{String.join ", " (List.sort (Map.keys w.help))}. Type /help and a topic.";
   if words == "" then World.tell body topics w
@@ -2761,7 +2779,7 @@ let _command_line sid body at line (tx: Tx) =
 -- The input hook of the room `body` is in, when it takes `line`: every
 -- line while the room takes raw text, as the editor does after `a`, and
 -- otherwise every line but a driver command.
-let _input_of body line (w: World.World) =
+let _input_of body line (w: World.Current) =
   match World.instance (room_of body w) w with
   | None -> None
   | Some i -> (
@@ -2789,17 +2807,17 @@ let _play sid body at line (tx: Tx) =
 
 -- A line from a session that has not logged in goes to /std/login, whole.
 let _to_login sid line (tx: Tx) =
-  match World.instance login_id tx.w with
+  match World.instance (login_id tx.w) tx.w with
   | None -> tx
   | Some i -> (
     match i.object.input with
     | None -> tx
     | Some f -> (
       let ctx =
-        Core.Context(
-          self = login_id,
+        Driver.Context(
+          self = login_id tx.w,
           actor = sid,
-          here = login_id,
+          here = login_id tx.w,
           world = view tx.w sid,
           time = tx.w.now
         );
@@ -2809,7 +2827,7 @@ let _to_login sid line (tx: Tx) =
 
 let run_input (i: World.Input) (tx: Tx) =
   match i with
-  | World.Connect sid _ -> verb login_id sid "connect" tx
+  | World.Connect sid _ -> verb (login_id tx.w) sid "connect" tx
   | World.Line sid at line -> (
     match World.session sid tx.w with
     | None -> tx
@@ -2828,14 +2846,15 @@ let run_input (i: World.Input) (tx: Tx) =
       tx
       |> _tell_room (room_of b tx.w) b "%{short_of b tx.w} falls asleep."
       |> change (World.seen b tx.at)
-    | None -> verb login_id sid "done" tx
+    | None -> verb (login_id tx.w) sid "done" tx
   )
 
 -- ── The loop ───────────────────────────────────────────────────────────
 
 -- The rooms, services and realms that exist before anyone connects.
 let boot state at =
-  let start = begin (Shared.get state) at |> _ensure login_id |> _ensure arrival;
+  let now = Shared.get state;
+  let start = begin now at |> _ensure (login_id now) |> _ensure (arrival now);
   let honored = List.filter (fn p -> file_owner p start.w == None) (Map.keys start.w.realms);
   let tx = List.fold_left (fn t p -> _ensure (realm_id p) t) start honored;
   Shared.update state (commit tx)
@@ -2844,7 +2863,7 @@ let boot state at =
 -- and taken off the queue in the same update, so a session can see when
 -- the driver has finished with everything it sent.
 let step state =
-  let (w: World.World) = Shared.get state;
+  let (w: World.Current) = Shared.get state;
   List.each
     (fn i ->
       let tx = run_input i (begin (Shared.get state) (World.at_of i));
@@ -2855,7 +2874,7 @@ let step state =
 
 -- Whether the owner of `id` has Inspiration left for its heartbeat and
 -- call-outs. Until it refills, they wait.
-let _owner_inspired? id (w: World.World) =
+let _owner_inspired? id (w: World.Current) =
   let owner = World.owner_of id w;
   _exempt? owner w || Result.ok? (_inspired (Option.default "" owner) 1 w)
 
@@ -2882,7 +2901,9 @@ let _call_out (c: World.Callout) (tx: Tx) =
   | None -> Some (change (World.ran c.id) tx)
   | Some i -> (
     if !(_owner_inspired? c.target tx.w) then None
-    else match List.find (fn (v: Core.Verb) -> List.any? (fn n -> n == c.verb) v.names) i.object.verbs with
+    else match List.find
+      (fn (v: Driver.Verb) -> List.any? (fn n -> n == c.verb) v.names)
+      i.object.verbs with
       | None ->
         Some
           (tx
@@ -2897,7 +2918,7 @@ let _call_out (c: World.Callout) (tx: Tx) =
         Some
           (tx
           |> change (World.ran c.id)
-          |> _on_its_own c.target (fn ctx -> v.run ctx Core.Parsed(verb = c.verb)))
+          |> _on_its_own c.target (fn ctx -> v.run ctx Driver.Parsed(verb = c.verb)))
   )
 
 -- One tick: call every object with a heartbeat, then run every call-out
@@ -2905,7 +2926,7 @@ let _call_out (c: World.Callout) (tx: Tx) =
 -- an input is. What a heartbeat or a call-out starts waits for the next
 -- tick.
 let tick state at = (
-  let (w: World.World) = Shared.get state;
+  let (w: World.Current) = Shared.get state;
   List.each
     (fn id ->
       let tx = _beat id (begin (Shared.get state) at);
@@ -2931,7 +2952,7 @@ let tick state at = (
 -- through a change. A `save` that faults is logged, and that object is
 -- left out of the file.
 let snapshot! state path at = (
-  let (w: World.World) = Shared.get state;
+  let (w: World.Current) = Shared.get state;
   let results =
     List.filter_map
       (fn (i: World.Instance) -> match i.saved with
@@ -2941,15 +2962,15 @@ let snapshot! state path at = (
           Result.and_then
             (fn j ->
               let size = String.length (JSON.stringify j);
-              if size > max_saved i.blueprint then
+              if size > max_saved i.blueprint w then
                 Error
-                  "its saved state is %{size} bytes, and the most is %{max_saved i.blueprint}"
+                  "its saved state is %{size} bytes, and the most is %{max_saved i.blueprint w}"
               else Ok j)
             (_call (fn () -> i.object.save ()))
         )
       )
       (Map.values w.instances);
-  let kept (cur: World.World) =
+  let kept (cur: World.Current) =
     List.fold_left
       (fn acc (id, r) -> match r with
         | Ok j -> World.keep_saved id j acc
@@ -2967,7 +2988,7 @@ let snapshot! state path at = (
 -- Who owns an object a snapshot kept. A version 1 file did not keep
 -- owners, so there a body is its account's and anything else is the owner
 -- of its file.
-let _restored_owner (f: Snapshot.File) (s: Snapshot.Saved) (w: World.World) =
+let _restored_owner (f: Snapshot.File) (s: Snapshot.Saved) (w: World.Current) =
   if f.version >= 2 then s.owner
   else match List.find (fn (a: World.Account) -> a.body == s.id) f.accounts with
     | Some a -> Some (String.lower a.name)
@@ -2976,9 +2997,9 @@ let _restored_owner (f: Snapshot.File) (s: Snapshot.Saved) (w: World.World) =
 -- Who may enter a room a snapshot kept: everyone when it was public, and
 -- otherwise whom it invited. Before rooms were private, a room the Keymasters
 -- owned was public.
-let _restored_allowed (f: Snapshot.File) (s: Snapshot.Saved) (w: World.World) =
-  if Option.default (_restored_owner f s w == None) s.public then Core.Everyone
-  else Core.Only s.invited
+let _restored_allowed (f: Snapshot.File) (s: Snapshot.Saved) (w: World.Current) =
+  if Option.default (_restored_owner f s w == None) s.public then Driver.Everyone
+  else Driver.Only s.invited
 
 -- An account a snapshot kept, in today's terms. Before the roles were
 -- named, a Keymaster was "admin" and a Citizen "builder", and an account
@@ -3008,7 +3029,7 @@ let restore state (f: Snapshot.File) at =
       (fn t (a: World.Account) -> change (World.add_account (_restored_account f a)) t)
       (begin (Shared.get state) at
       |> change (fn w ->
-        World.World(
+        World.Current(
           w,
           flags = f.flags,
           requests = f.requests,
@@ -3033,13 +3054,18 @@ let restore state (f: Snapshot.File) at =
 -- `wmd init` makes the first Keymaster.
 let make_account state name typed role at =
   let t = begin (Shared.get state) at;
-  let body = "%{player_bp}#%{World.next_number player_bp t.w}";
+  let body = "%{player_bp t.w}#%{World.next_number (player_bp t.w) t.w}";
   let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
   let hashed = Password.hash t.w.pepper (Random.hex 32) typed;
   let tx =
     t
-    |> _ensure arrival
-    |> _create body player_bp (Some saved) (Some arrival) (Some (String.lower name))
+    |> _ensure (arrival t.w)
+    |> _create
+      body
+      (player_bp t.w)
+      (Some saved)
+      (Some (arrival t.w))
+      (Some (String.lower name))
     |> change
       (World.add_account World.Account(
         name = name,

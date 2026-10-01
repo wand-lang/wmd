@@ -1,9 +1,12 @@
--- The contract between the driver and every mudlib file.
+-- The contract between the driver and every Library file.
 --
--- A mudlib file is a blueprint: it implements Blueprint, and the driver
+-- A Library file is a blueprint: it implements Blueprint, and the driver
 -- calls its `create` once for each instance it spawns. An object never
 -- changes the world. It returns Actions, and the next version of itself,
 -- and the driver checks and applies them.
+
+import List
+import String
 
 -- An object's id: its blueprint's path and an instance number, as in
 -- /r/lever#0. A connection that has not logged in yet is a
@@ -27,7 +30,7 @@ type Parsed(
 
 -- A read-only view of the world as it is when the call starts. Reading
 -- stays pure: each function answers from the same moment.
-type World(
+type WorldView(
   contents: ObjId -> List ObjId,
   env_of: ObjId -> Option ObjId,
   short_of: ObjId -> String,
@@ -36,7 +39,7 @@ type World(
   player?: ObjId -> Bool,
   players: Unit -> List ObjId,
   -- Whether an account of this name exists. Nothing else about an account
-  -- is readable: no mudlib code sees a password hash.
+  -- is readable: no Library code sees a password hash.
   account?: String -> Bool,
   -- A detail of an object: scenery to look at that is not an object of its
   -- own, as "window" in a room.
@@ -63,9 +66,9 @@ type World(
 -- Who is asking, about what, where and when. `self` is the object the call
 -- is on. `actor` is the player who typed the command, or `self` when the
 -- driver calls an object on its own, as for a heartbeat. `time` is when the
--- command arrived, or when the driver made the call: mudlib code reads no
+-- command arrived, or when the driver made the call: Library code reads no
 -- clock of its own.
-type Context(self: ObjId, actor: ObjId, here: ObjId, world: World, time: DateTime)
+type Context(self: ObjId, actor: ObjId, here: ObjId, world: WorldView, time: DateTime)
 
 -- A way out of a room. A message left as None gets the driver's default.
 -- `check` refuses with the message the mover sees, as in
@@ -101,7 +104,7 @@ type Action =
   -- Take an object out of the world: the object itself, or something it
   -- holds. A player's body cannot be removed, nor anything that holds one.
   | Remove ObjId
-  -- Check the source of the mudlib file for a blueprint path, such as
+  -- Check the source of the Library file for a blueprint path, such as
   -- /r/home/ann/lamp, without saving it. Only /r/editor may ask this, and
   -- only for a file the actor may edit. The driver answers through the
   -- asking object's `result` verb, with an Outcome as JSON in `rest`.
@@ -182,7 +185,7 @@ type Outcome(
 type Evaluated = Shown String | Acts (List Action)
 
 -- What /eval runs. The driver writes a module for each expression, which
--- implements this, and loads it as a mudlib file loads: checked, and held
+-- implements this, and loads it as a Library file loads: checked, and held
 -- to the effects `evaluate` allows.
 interface Evaluation(evaluate: Context -> Evaluated ! {Random, Raise})
 
@@ -195,7 +198,7 @@ type Reply(actions: List Action = [], next: Option Object = None)
 -- spawn its contents again.
 type Init(object: Object, actions: List Action = [])
 
--- What every mudlib file implements, as `implement Core.Blueprint`.
+-- What every Library file implements, as `implement Driver.Blueprint`.
 -- `create self saved` builds the instance `self`, from its saved state or,
 -- when `saved` is None, new.
 interface Blueprint(create: ObjId -> Option JSON -> Init ! {Random, Raise})
@@ -261,3 +264,53 @@ let nothing = Reply()
 
 -- A reply that only shows the actor a line.
 let tell (ctx: Context) line = Reply(actions = [Tell ctx.actor line])
+
+-- What a game tells the driver as it starts: the blueprints of its login,
+-- a player's body, the room a new body arrives in, the room where the
+-- rules are signed, and the editor; the directory of the examples /copy
+-- copies from, and of every Citizen's home; how a file at the root of its
+-- lib/ imports this contract, as ./std/driver or github.com/wand-lang/wmd/driver;
+-- and the source of a room /dig makes at a path, with an exit back by a
+-- name to the room it was dug from. That source has a line that is
+-- `dig_marker`, with its exits below it, which /dig adds to.
+type Start(
+  login: String,
+  player: String,
+  arrival: String,
+  rules: String,
+  editor: String,
+  examples: String,
+  homes: String,
+  driver: String,
+  dig: String -> String -> String -> String
+)
+
+-- What every game implements, in its lib/init.wand, as
+-- `implement Driver.Library`.
+interface Library(start: Start)
+
+-- The line above a room's exits that /dig and /link may add to.
+let dig_marker = "-- The exits. /dig adds one here, and you can change them by hand."
+
+-- The directories a blueprint's file is in, from the Library root: r and
+-- learning for /r/learning/lever.
+let _dir path =
+  List.reverse
+    (List.drop 1 (List.reverse (List.filter (fn s -> s != "") (String.split "/" path))))
+
+-- How many leading directories two lists share.
+let _common xs ys =
+  match (xs, ys) with
+  | ([x :: xt], [y :: yt]) when x == y -> 1 + _common xt yt
+  | _ -> 0
+
+-- The relative import from the file of blueprint path `from` to the file
+-- of blueprint path `to`: ../std/room from /r/square to /std/room, and
+-- ./orc from /r/learning/orcs to /r/learning/orc.
+let import_from from to =
+  let dir = _dir from;
+  let target = List.filter (fn s -> s != "") (String.split "/" to);
+  let shared = _common dir target;
+  let rest = String.join "/" (List.drop shared target);
+  let up = List.length dir - shared;
+  if up == 0 then "./%{rest}" else "%{String.repeat up "../"}%{rest}"
