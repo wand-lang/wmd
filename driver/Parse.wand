@@ -10,6 +10,8 @@ import String
 
 import ./World
 
+let Driver = import ../driver
+
 -- What some words name.
 type Found =
   -- No words were given.
@@ -89,11 +91,13 @@ let resolve (w: World.Current) actor here words =
   else (
     let candidates = List.flatten [World.contents actor w, World.contents here w, [here]];
     let exact =
-      List.filter (fn id -> List.any? (fn n -> n == phrase) (_names id w)) candidates;
-    let prefix =
-      List.filter
-        (fn id -> List.any? (fn n -> String.starts_with? phrase n) (_names id w))
-        candidates;
+      List.filter (fn id -> List.any? (fn n -> Driver.name_of n == phrase) (_names id w)) candidates;
+    -- A name with a `*` is shortened only as far as its `*`, and one without
+    -- to any start of it.
+    let starts? n =
+      if String.contains? "*" n then Driver.names? n phrase
+      else String.starts_with? phrase n;
+    let prefix = List.filter (fn id -> List.any? starts? (_names id w)) candidates;
     if exact != [] then _pick phrase index exact
     else if prefix != [] then _pick phrase index prefix
     else Missing phrase

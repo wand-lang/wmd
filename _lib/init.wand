@@ -15,7 +15,7 @@ let Room = import %{Driver.import_from path "/std/room"}
 
 %{Driver.dig_marker}
 let exits = {
-  %{back} = Room.exit "%{from}"
+  "%{Driver.starred back}" = Room.exit "%{from}"
 }
 
 let room =

@@ -39,7 +39,7 @@ let _room (ctx: Driver.Context) =
   let here = List.filter (fn o -> o != ctx.actor) (w.contents ctx.here);
   let people = List.filter w.player? here;
   let things = List.filter (fn o -> !(w.player? o)) here;
-  let exits = Map.keys (w.exits_of ctx.here);
+  let exits = List.map Driver.name_of (Map.keys (w.exits_of ctx.here));
   let lines =
     List.flatten [
       [w.short_of ctx.here, w.long_of ctx.here],
@@ -89,8 +89,8 @@ let _look (ctx: Driver.Context) (p: Driver.Parsed) = (
   | (None, Some o) -> Driver.tell ctx (ctx.world.long_of o)
   | _ -> (
     if words == "" || words == "here" then _room ctx
-    else match Map.get (String.lower words) (ctx.world.exits_of ctx.here) with
-      | Some e -> _through ctx e
+    else match Driver.exit_named (String.lower words) (ctx.world.exits_of ctx.here) with
+      | Some(_, e) -> _through ctx e
       | None -> _detail ctx words
   )
 )
@@ -114,10 +114,10 @@ let _arrival name dir =
 -- `go north`, and a bare exit name, which the driver makes `go north`.
 let _go (ctx: Driver.Context) (p: Driver.Parsed) = (
   let name = ctx.world.short_of ctx.actor;
-  let dir = String.lower (String.trim p.rest);
-  match Map.get dir (ctx.world.exits_of ctx.here) with
-  | None -> Driver.tell ctx (if dir == "" then "Go where?" else "You can't go that way.")
-  | Some e -> (
+  let typed = String.lower (String.trim p.rest);
+  match Driver.exit_named typed (ctx.world.exits_of ctx.here) with
+  | None -> Driver.tell ctx (if typed == "" then "Go where?" else "You can't go that way.")
+  | Some(dir, e) -> (
     let check = Option.default (fn _ -> Ok()) e.check;
     if !(ctx.world.may_enter? ctx.actor e.to) then
       Driver.tell ctx "A force keeps you from going that way."
@@ -157,7 +157,7 @@ let _charter path =
 implement Driver.Blueprint =
   let create _ _ = Driver.Init(
     object = Realm.object "the Commons" [
-      Driver.Verb(names = ["look", "l"], run = _look),
+      Driver.Verb(names = ["l*ook"], run = _look),
       Driver.Verb(names = ["go"], run = _go)
     ]
   )

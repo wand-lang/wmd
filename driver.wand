@@ -6,6 +6,8 @@
 -- and the driver checks and applies them.
 
 import List
+import Map
+import Option
 import String
 
 -- An object's id: its blueprint's path and an instance number, as in
@@ -291,6 +293,47 @@ interface Library(start: Start)
 
 -- The line above a room's exits that /dig and /link may add to.
 let dig_marker = "-- The exits. /dig adds one here, and you can change them by hand."
+
+-- ── Names ──────────────────────────────────────────────────────────────
+
+-- A verb's, an exit's or a thing's name may have a `*` in it: then it can
+-- be shortened to any start of it as long as the part before the `*`.
+-- `l*ook` is l, lo, loo or look, and `n*orth` is n to north. A verb or an
+-- exit with no `*` is written in full. A thing with none can be named by
+-- any start of its name.
+
+-- A name as it is shown: look for `l*ook`.
+let name_of n = String.replace "*" "" n
+
+-- Whether `word` names `n`: the whole name, or a start of it at least as
+-- long as the part before its `*`.
+let names? n word =
+  match String.split "*" n with
+  | [least, rest] ->
+    String.starts_with? least word && String.starts_with? word "%{least}%{rest}"
+  | _ -> word == n
+
+-- The exit that `word` names, with its name as shown: ("north", e) for n
+-- in `{"n*orth" = e}`. A name in full beats a start of one.
+let exit_named word (exits: Map Exit) = (
+  let all = Map.to_list exits;
+  let shown (n, e) = (name_of n, e);
+  match List.find (fn (n, _) -> name_of n == word) all with
+  | Some found -> Some (shown found)
+  | None -> Option.map shown (List.find (fn (n, _) -> names? n word) all)
+)
+
+-- The name /dig gives an exit: the six directions with their short forms,
+-- n*orth to d*own, and any other name as it is.
+let starred name =
+  match name with
+  | "north" -> "n*orth"
+  | "south" -> "s*outh"
+  | "east" -> "e*ast"
+  | "west" -> "w*est"
+  | "up" -> "u*p"
+  | "down" -> "d*own"
+  | _ -> name
 
 -- The directories a blueprint's file is in, from the Library root: r and
 -- learning for /r/learning/lever.

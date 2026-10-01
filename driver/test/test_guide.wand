@@ -174,7 +174,7 @@ group "/verbs" (fn () -> [
         "The Learning Hall answers to nothing.",
         "Exits: east, one, two, three, four, five, six.",
         "the Commons answers to:",
-        "  look, l",
+        "  l*ook",
         "  go"
       ]
       (heard (played [line "west", forget, line "/verbs"])))

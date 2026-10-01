@@ -780,7 +780,7 @@ let _find (w: World.Current) holders verb dobj iobj =
           Option.map
             (fn v -> (h, v))
             (List.find
-              (fn (v: Driver.Verb) -> List.any? (fn n -> n == verb) v.names
+              (fn (v: Driver.Verb) -> List.any? (fn n -> Driver.names? n verb) v.names
               && _fits? v.dobj dobj h
               && _fits? v.iobj iobj h)
               i.object.verbs)
@@ -1197,7 +1197,7 @@ and verb_with self actor (p: Driver.Parsed) (tx: Tx) =
   match World.instance self tx.w with
   | None -> tx
   | Some i -> (
-    match List.find (fn (v: Driver.Verb) -> List.any? (fn n -> n == p.verb) v.names) i.object.verbs with
+    match List.find (fn (v: Driver.Verb) -> List.any? (fn n -> Driver.names? n p.verb) v.names) i.object.verbs with
     | None -> tx
     | Some v -> (
       let ctx = ctx_for tx.w i.id actor;
@@ -1351,9 +1351,11 @@ let command body line (tx: Tx) = (
     run ctx (fn () -> v.run ctx parsed) tx
   )
   | None -> (
-    match World.instance here tx.w with
-    | Some r when Map.has? verb r.object.exits -> command body "go %{verb}" tx
-    | _ -> change (World.tell body (_unmatched tx.w verb dobj)) tx
+    match Option.and_then
+      (fn (r: World.Instance) -> Driver.exit_named verb r.object.exits)
+      (World.instance here tx.w) with
+    | Some(name, _) -> command body "go %{name}" tx
+    | None -> change (World.tell body (_unmatched tx.w verb dobj)) tx
   )
 )
 
@@ -1629,6 +1631,12 @@ let home_dir key (w: World.Current) = "%{w.paths.homes}/%{key}"
 
 -- The exit back to a room dug in a direction: south for north. Any other
 -- exit gets back.
+-- How /dig and /link write the exit `name` in a file: with its short form,
+-- in quotes, as "n*orth" for north, and any other name as it is.
+let _exit_key name =
+  let s = Driver.starred name;
+  if String.contains? "*" s then `"%{s}"` else s
+
 let _back_of name =
   match name with
   | "north" -> "south"
@@ -1677,7 +1685,7 @@ let _dig body words (tx: Tx) = (
         "'%{path}' is not a Library path. One looks like %{tx.w.paths.homes}/ann/shop/front."
     else if !(may_edit? body path tx.w) then tell "You may not make %{path}."
     else if Files.exists? tx.w.lib_root path then tell "%{path} is there already."
-    else if Option.map (Map.has? name) exits == Some true then
+    else if Option.and_then (Driver.exit_named name) exits != None then
       tell "%{short_of here tx.w} has an exit %{name} already."
     else if !(Option.some? tx.w.dig) then tell "This game has no room for /dig to make."
     else (
@@ -1712,14 +1720,16 @@ let _dig body words (tx: Tx) = (
               text = Some name
             );
           let hand =
-            `Dug a room at %{path}. Add the exit to this room with /edit here: %{Files.exit_line name path view}`;
+            `Dug a room at %{path}. Add the exit to this room with /edit here: %{Files.exit_line (_exit_key name) path view}`;
           let away =
             `Dug a room at %{path}. No exit leads there from %{short_of here tx.w}. Go there with /eval [Driver.Move ctx.actor "%{path}"]`;
           -- The exit goes here only when the new room is in this room's
           -- area, or the player wrote its path out.
           if !(mine && (ours || String.starts_with? "/" rel)) then
             change (World.tell body away) dug
-          else match Option.map (Files.with_exit name path view) (Files.read tx.w.lib_root from) with
+          else match Option.map
+            (Files.with_exit (_exit_key name) path view)
+            (Files.read tx.w.lib_root from) with
             | Some (Some changed) -> (
               let saved = Files.save tx.w.lib_root from changed;
               if saved.ok then
@@ -2198,10 +2208,12 @@ let _link body words (tx: Tx) = (
   | [name :: path :: _] -> (
     let here = room_of body tx.w;
     let from = World.blueprint_of here;
-    let line = Files.exit_line name path view;
+    let line = Files.exit_line (_exit_key name) path view;
     if !(may_edit? body from tx.w) then tell "%{short_of here tx.w} is not yours to change."
     else if !(Files.exists? tx.w.lib_root path) then tell "There is no room at %{path}."
-    else match Option.and_then (Files.with_exit name path view) (Files.read tx.w.lib_root from) with
+    else match Option.and_then
+      (Files.with_exit (_exit_key name) path view)
+      (Files.read tx.w.lib_root from) with
       | Some changed -> (
         let saved = Files.save tx.w.lib_root from changed;
         if saved.ok then
@@ -2246,9 +2258,9 @@ let _approve body words (tx: Tx) = (
           "Stand in a room of %{short_of (realm_id r.realm) tx.w} to connect it from there."
       else if !(may_edit? body (World.blueprint_of here) tx.w) then
         Error "%{short_of here tx.w} is not yours to change."
-      else if Option.map
-        (Map.has? exit)
-        (Option.map (fn (i: World.Instance) -> i.object.exits) (World.instance here tx.w)) == Some true then
+      else if Option.and_then
+        (fn (i: World.Instance) -> Driver.exit_named exit i.object.exits)
+        (World.instance here tx.w) != None then
         Error "%{short_of here tx.w} has an exit %{exit} already."
       else Ok();
     match linkable with
@@ -2968,7 +2980,7 @@ let _call_out (c: World.Callout) (tx: Tx) =
   | Some i -> (
     if !(_owner_inspired? c.target tx.w) then None
     else match List.find
-      (fn (v: Driver.Verb) -> List.any? (fn n -> n == c.verb) v.names)
+      (fn (v: Driver.Verb) -> List.any? (fn n -> Driver.names? n c.verb) v.names)
       i.object.verbs with
       | None ->
         Some

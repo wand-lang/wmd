@@ -146,7 +146,7 @@ group "a realm's verbs" (fn () -> [
         "The Commons answers to nothing.",
         "Exits: north, west.",
         "the Commons answers to:",
-        "  look, l",
+        "  l*ook",
         "  go"
       ]
       (heard ann w))

@@ -7,11 +7,15 @@ import ../Library
 import ../World
 import FS
 import List
+import Option
 import Resource
 import Result
 import Shared
+import String
 
 let {test, group} = import Test
+
+let Driver = import ../../driver
 
 let loaded = Library.load_all! ./_lib
 
@@ -83,6 +87,17 @@ group "/dig" (fn () -> [
         List.any? (fn l -> l == "Dug east to /r/home/dee/shop/front.") (heard w),
         where w
       ))),
+  test "names a direction with its short form, so e goes that way and w comes back" (fn t ->
+    built! (List.concat in_hall [line "/dig east shop/front", line "e", line "w"]) (fn w ->
+      t.eq (true, true, Some "/r/home/dee/hall#0") (
+        Result.map
+          (String.contains? `"e*ast" = Driver.Exit(to = "/r/home/dee/shop/front")`)
+          (FS.read_file ./_lib/r/home/dee/hall.wand) == Ok true,
+        Result.map
+          (String.contains? `"w*est" = Room.exit "/r/home/dee/hall"`)
+          (FS.read_file ./_lib/r/home/dee/shop/front.wand) == Ok true,
+        where w
+      ))),
   test "makes the directories it needs" (fn t ->
     built! (List.concat in_hall [line "/dig east shop/front"]) (fn _ ->
       t.ok (FS.exists? ./_lib/r/home/dee/shop/front.wand))),
@@ -130,4 +145,28 @@ group "looking through an exit" (fn () -> [
       t.eq
         ["The Garden", "A small walled garden. A path leads back south to the Commons."]
         (heard w)))
+])
+
+group "short forms" (fn () -> [
+  test "a name with a * answers to any start of it as long as the part before the *" (fn t ->
+    t.eq
+      [true, true, true, false, false]
+      (List.map (Driver.names? "l*ook") ["l", "loo", "look", "looks", "x"])),
+  test "and one without answers only in full" (fn t ->
+    t.eq [true, false] (List.map (Driver.names? "go") ["go", "g"])),
+  test "an exit is found by a short form, and shown without its *" (fn t ->
+    t.eq (Some "north", Some "north", None) (
+      Option.map
+        (fn (n, _) -> n)
+        (Driver.exit_named "n" {"n*orth" = Driver.Exit(to = "/r/a")}),
+      Option.map
+        (fn (n, _) -> n)
+        (Driver.exit_named "north" {"n*orth" = Driver.Exit(to = "/r/a")}),
+      Option.map
+        (fn (n, _) -> n)
+        (Driver.exit_named "x" {"n*orth" = Driver.Exit(to = "/r/a")})
+    )),
+  test "a verb answers to a short form" (fn t ->
+    built! (List.concat in_hall [line "lo"]) (fn w ->
+      t.ok (List.any? (fn l -> l == "A new room") (heard w))))
 ])
