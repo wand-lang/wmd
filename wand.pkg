@@ -1,3 +1,489 @@
 { package = github.com/wand-lang/wmd
 , wand    = 0.99.0
 }
+
+-- DO NOT EDIT: interface, written by `wand p`
+version 0.1.0
+
+type driver/Engine.Tx(
+  w: World.Current,
+  changes: List (World.Current -> World.Current ! {}),
+  at: String,
+  hooks: Bool = true
+)
+type driver/Init.InitOpts(
+  lib: Path = ./lib,
+  world: Path = ./world.json,
+  admin: String,
+  password: Option String = None
+)
+type driver/Inspiration.Inspiration(amount: Int, at: DateTime)
+type driver/Library.Loaded(
+  root: Path = ./lib,
+  library: Option Driver.Library = None,
+  lib: Map Driver.Blueprint = {},
+  realms: Map Driver.Realm = {},
+  failed: List (String, String) = []
+)
+type driver/Main.Opts(
+  port: Port = :4000,
+  logs: Path = ./logs,
+  lib: Path = ./lib,
+  world: Path = ./world.json,
+  tick: Duration = 2s
+)
+type driver/Parse.Found = NoWords | Found String | Missing String | Ambiguous String (List String)
+type driver/Parse.Split(dobj: List String, prep: Option String, iobj: List String)
+type driver/Scan.Blueprint(path: String, file: Path, realm: Bool = false)
+type driver/Snapshot.File(
+  version: Int = 1,
+  accounts: List World.Account,
+  instances: List Saved,
+  flags: List World.Flag = [],
+  callouts: List World.Callout = [],
+  requests: List World.Request = [],
+  adopted: Map String = {},
+  built: Map String = {}
+)
+type driver/Snapshot.Saved(
+  id: String,
+  blueprint: String,
+  env: Option String = None,
+  state: JSON,
+  creator: Option String = None,
+  created: Option String = None,
+  modified: Option String = None,
+  owner: Option String = None,
+  public: Option Bool = None,
+  invited: List String = [],
+  locked: Bool = true,
+  held: Bool = false
+)
+type driver/World.Account(
+  name: String,
+  body: String,
+  password: String,
+  role: String = "citizen",
+  created: Option DateTime = None,
+  home: Option String = None,
+  last_seen: Option String = None,
+  inspiration: Inspiration.Inspiration = Inspiration.Inspiration(amount = 1000, at = 1970-01-01T00:00:00Z),
+  explored: Map DateTime = {},
+  rules: Option Signed = None,
+  notices: List String = [],
+  paused: Bool = false,
+  banned: List String = []
+)
+type driver/World.Callout(id: Int, target: String, due: DateTime, verb: String)
+type driver/World.Current(
+  instances: Map Instance,
+  sessions: Map Session,
+  outboxes: Map (List String),
+  accounts: Map Account,
+  inputs: List Input,
+  events: List Event,
+  opened: Int,
+  pepper: String = "",
+  snapshot_due: Bool = false,
+  now: DateTime = 1970-01-01T00:00:00Z,
+  lib_root: Path = ./lib,
+  lib: Map Driver.Blueprint = {},
+  paths: Paths = Paths(),
+  library: Option Driver.Library = None,
+  realms: Map Driver.Realm = {},
+  editor_before: Option Driver.Blueprint = None,
+  help: Map String = {},
+  flags: List Flag = [],
+  said: Map (List String) = {},
+  beating: Map Bool = {},
+  callouts: List Callout = [],
+  callouts_made: Int = 0,
+  requests: List Request = [],
+  adopted: Map String = {},
+  built: Map String = {},
+  visiting: Map String = {}
+)
+type driver/World.Event(
+  at: String,
+  event: String,
+  actor: String,
+  name: Option String = None,
+  verb: Option String = None,
+  room: Option String = None,
+  text: Option String = None,
+  object: Option String = None
+)
+type driver/World.Flag(
+  id: Int,
+  by: String,
+  kind: String,
+  target: String,
+  owner: Option String = None,
+  reason: String,
+  at: DateTime,
+  evidence: String,
+  open: Bool = true,
+  resolution: Option String = None
+)
+type driver/World.Input =
+  Connect String String
+  | Line String String String
+  | Gone String String (Option String)
+type driver/World.Instance(
+  id: String,
+  blueprint: String,
+  object: Driver.Object,
+  env: Option String = None,
+  saved: Option JSON = None,
+  creator: Option String = None,
+  created: Option String = None,
+  modified: Option String = None,
+  owner: Option String = None,
+  size: Int = 0,
+  allowed: Driver.Allowed = Driver.Only [],
+  locked: Bool = true,
+  held: Bool = false,
+  faults: Int = 0
+)
+type driver/World.Paths(
+  login: String = "",
+  player: String = "",
+  arrival: String = "",
+  rules: String = "",
+  editor: String = "",
+  examples: String = "",
+  homes: String = "",
+  driver: String = ""
+)
+type driver/World.Request(
+  id: Int,
+  by: String,
+  kind: String,
+  realm: String,
+  rooms: List String,
+  at: DateTime,
+  changed: List String = [],
+  open: Bool = true,
+  outcome: Option String = None
+)
+type driver/World.Session(id: String, body: Option String = None, closing: Bool = false)
+type driver/World.Signed(version: Int, at: DateTime)
+type driver.Action =
+  Say String
+  | Tell ObjId String
+  | Move ObjId ObjId
+  | Spawn String ObjId
+  | Login ObjId String String
+  | Register ObjId String String
+  | Hangup ObjId
+  | Remove ObjId
+  | Check String String
+  | Save String String
+  | Draft String String
+  | Run String
+  | Acknowledge ObjId
+  | After Duration String
+type driver.Allowed = Everyone | Only (List String)
+type driver.Arg = NoArg | This | AnyObj
+type driver.Charter(
+  owner: Option (String -> Option String) = None,
+  stewards: List String = [],
+  grants: List Grant = []
+)
+type driver.Context(self: ObjId, actor: ObjId, here: ObjId, world: WorldView, time: DateTime)
+type driver.Contract(path: String, builder: String)
+type driver.Evaluated = Shown String | Acts (List Action)
+type driver.Exit(
+  to: ObjId,
+  leave: Option String = None,
+  arrive: Option String = None,
+  check: Option (Context -> Result String Unit) = None,
+  view: Option String = None
+)
+type driver.Grant = MayAcknowledge | MayCheckSave
+type driver.Init(object: Object, actions: List Action = [])
+type driver.ObjId = String
+type driver.Object(
+  names: List String,
+  short: Context -> String,
+  long: Context -> String,
+  verbs: List Verb = [],
+  exits: Map Exit = {},
+  details: Map (Context -> String) = {},
+  props: Option (Context -> Map JSON) = None,
+  on_enter: Option (Context -> ObjId -> Reply ! {Random, Raise}) = None,
+  on_leave: Option (Context -> ObjId -> Reply ! {Random, Raise}) = None,
+  input: Option (Context -> String -> Reply ! {Random, Raise}) = None,
+  heartbeat: Option (Context -> Reply ! {Random, Raise}) = None,
+  save: Unit -> JSON
+)
+type driver.Outcome(
+  action: String,
+  path: String,
+  ok: Bool,
+  problems: List Problem = [],
+  effects: List String = [],
+  text: Option String = None
+)
+type driver.Parsed(
+  verb: String,
+  dobj: Option ObjId = None,
+  prep: Option String = None,
+  iobj: Option ObjId = None,
+  rest: String = ""
+)
+type driver.Problem(severity: String, line: Int, col: Int, message: String)
+type driver.Reply(actions: List Action = [], next: Option Object = None)
+type driver.Start(
+  login: String,
+  player: String,
+  arrival: String,
+  rules: String,
+  editor: String,
+  examples: String,
+  homes: String,
+  driver: String,
+  dig: String -> String -> String -> String
+)
+type driver.Verb(
+  names: List String,
+  dobj: Arg = NoArg,
+  iobj: Arg = NoArg,
+  run: Context -> Parsed -> Reply ! {Random, Raise}
+)
+type driver.WorldView(
+  contents: ObjId -> List ObjId,
+  env_of: ObjId -> Option ObjId,
+  short_of: ObjId -> String,
+  long_of: ObjId -> String,
+  exits_of: ObjId -> Map Exit,
+  player?: ObjId -> Bool,
+  players: Unit -> List ObjId,
+  account?: String -> Bool,
+  detail_of: ObjId -> String -> Option String,
+  prop: ObjId -> String -> Option JSON,
+  awake?: ObjId -> Bool,
+  home_of: ObjId -> ObjId,
+  may_enter?: ObjId -> ObjId -> Bool,
+  may_edit?: ObjId -> String -> Bool,
+  made?: ObjId -> Bool,
+  help_of: String -> Option String
+)
+
+driver/Engine.allowed         : Context -> Action -> Current -> Result String Unit
+driver/Engine.apply           : Context -> Reply -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.arrival         : Current -> String
+driver/Engine.begin           : Current -> String -> Tx
+driver/Engine.boot            : Shared Current -> String -> Current ! {FS.Read, FS.Write, Random, Shared}
+driver/Engine.budget          : Option String -> Action -> Current -> Result String Int ! {FS.Read}
+driver/Engine.change          : (Current -> Current) -> Tx -> Tx
+driver/Engine.command         : String -> String -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.commit          : Tx -> Current -> Current
+driver/Engine.contracted?     : Option String -> String -> Current -> Bool
+driver/Engine.ctx_for         : Current -> String -> String -> Context
+driver/Engine.editor_bp       : Current -> String
+driver/Engine.eval            : String -> String -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.fault_limit     : Int
+driver/Engine.file_count      : String -> Current -> Int ! {FS.Read}
+driver/Engine.file_owner      : String -> Current -> Option String
+driver/Engine.flags_to_hold   : Int
+driver/Engine.guarded         : (Unit -> 'a ! {Random | 'e}) -> 'a ! {Random | 'e}
+driver/Engine.home_dir        : 'a -> Current -> String
+driver/Engine.home_of         : String -> Current -> String
+driver/Engine.learning        : Current -> String
+driver/Engine.limits          : Limits
+driver/Engine.login           : String -> String -> String -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.login_id        : Current -> String
+driver/Engine.look            : String -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.make_account    : Shared Current -> String -> 'a -> String -> String -> Current ! {FS.Read, FS.Write, Random, Shared}
+driver/Engine.max_actions     : Int
+driver/Engine.max_callouts    : Int
+driver/Engine.max_files       : Int
+driver/Engine.max_line        : Int
+driver/Engine.max_owned       : Int
+driver/Engine.max_saved       : String -> Current -> Int
+driver/Engine.max_saved_total : Int
+driver/Engine.may_edit?       : String -> String -> Current -> Bool
+driver/Engine.may_enter?      : String -> String -> Current -> Bool
+driver/Engine.player?         : String -> Current -> Bool
+driver/Engine.player_bp       : Current -> String
+driver/Engine.players_in      : String -> Current -> List String
+driver/Engine.realm?          : String -> Current -> Bool
+driver/Engine.realm_id        : 'a -> String
+driver/Engine.realms_of       : String -> Current -> List String
+driver/Engine.register        : String -> String -> String -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.reset           : String -> List String -> Tx -> Tx ! {FS.Read, FS.Write, Random}
+driver/Engine.restore         : Shared Current -> File -> String -> Current ! {FS.Read, FS.Write, Random, Shared}
+driver/Engine.reviewer?       : Option String -> Request -> Current -> Bool
+driver/Engine.room_of         : String -> Current -> String ! 'e
+driver/Engine.room_realms     : String -> Current -> List String
+driver/Engine.rules_hall      : Current -> String
+driver/Engine.rules_version   : Current -> Int
+driver/Engine.run             : Context -> (Unit -> Reply ! {FS.Read, FS.Write, Raise, Random | 'e}) -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.run_counted     : Context -> (Unit -> Reply ! {FS.Read, FS.Write, Raise, Random | 'e}) -> Tx -> (Tx, Int) ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.run_input       : Input -> Tx -> Tx ! {FS.Read, FS.Write, Random}
+driver/Engine.short_of        : String -> Current -> String
+driver/Engine.signed?         : String -> Current -> Bool
+driver/Engine.snapshot!       : Shared Current -> Path -> String -> Unit ! {FS.Read, FS.Write, Raise, Random, Shared}
+driver/Engine.spawn           : String -> String -> String -> Option String -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.start_allowed   : String -> Current -> Allowed
+driver/Engine.step            : Shared Current -> Unit ! {FS.Read, FS.Write, Random, Shared}
+driver/Engine.steward?        : Option String -> String -> Current -> Bool
+driver/Engine.tick            : Shared Current -> String -> Unit ! {FS.Read, FS.Write, Random, Shared}
+driver/Engine.update          : String -> String -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.verb            : String -> String -> String -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.verb_with       : String -> String -> Parsed -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
+driver/Engine.view            : Current -> String -> WorldView ! 'e
+driver/Evaluate.load        : Path -> String -> String -> Result (List String) interface_module_15.Evaluation ! {FS.Read, FS.Write}
+driver/Evaluate.result_type : String -> String
+driver/Evaluate.source      : 'a -> String -> String -> String
+driver/Files.allowed_effects : List String
+driver/Files.check           : Path -> String -> String -> Outcome ! {FS.Read}
+driver/Files.draft           : Path -> String -> String -> Outcome ! {FS.Read, FS.Write}
+driver/Files.exists?         : Path -> 'a -> Bool ! {FS.Read}
+driver/Files.exit_line       : 'a -> 'b -> Option String -> String
+driver/Files.file_of         : Path -> 'a -> Path
+driver/Files.list            : Path -> 'a -> Option (List String) ! {FS.Read}
+driver/Files.moved           : String -> String -> String -> String
+driver/Files.read            : Path -> 'a -> Option String ! {FS.Read}
+driver/Files.save            : Path -> String -> String -> Outcome ! {FS.Read, FS.Write}
+driver/Files.valid?          : String -> Bool
+driver/Files.with_exit       : 'a -> 'b -> Option String -> String -> Option String
+driver/Init.run! : InitOpts -> Result String Unit ! {Clock, Env, FS.Read, FS.Write, IO, Raise, Random, Shared}
+driver/Inspiration.amount            : DateTime -> Inspiration -> Int
+driver/Inspiration.bonus             : Int
+driver/Inspiration.bonuses_a_day     : Int
+driver/Inspiration.build_cost        : Int
+driver/Inspiration.earn              : DateTime -> Int -> Inspiration -> Inspiration
+driver/Inspiration.full              : Int
+driver/Inspiration.of_steps          : Int -> Int
+driver/Inspiration.seconds_per_point : Int
+driver/Inspiration.settle            : DateTime -> Inspiration -> Inspiration
+driver/Inspiration.spawn_cost        : Int
+driver/Inspiration.spend             : DateTime -> Int -> Inspiration -> Inspiration
+driver/Inspiration.steps_per_point   : Int
+driver/Inspiration.today             : DateTime -> Map DateTime -> Int
+driver/Inspiration.wait              : DateTime -> Int -> Inspiration -> Int
+driver/Inspiration.wait_text         : Int -> String
+driver/Library.help!     : Path -> Map String ! {FS.Read, Raise}
+driver/Library.into      : Loaded -> Current -> Current
+driver/Library.load_all! : Path -> Loaded ! {FS.Read, Raise}
+driver/Library.with_lib! : Path -> Current -> Current ! {FS.Read, Raise}
+driver/Log.append! : Path -> Event -> Unit ! {FS.Write, Raise}
+driver/Log.file    : Path -> Event -> Path
+driver/Log.flush!  : Shared Current -> Path -> Unit ! {FS.Write, Raise, Shared}
+driver/Log.line    : Event -> String
+driver/Main.problem : Opts -> Option String ! {Env, FS.Read}
+driver/Main.run!    : Opts -> Unit ! {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Raise, Random, Shared}
+driver/Parse.found?   : String -> Found -> Bool
+driver/Parse.found_id : Found -> Option String
+driver/Parse.resolve  : Current -> String -> String -> List String -> Found
+driver/Parse.split    : List String -> Split
+driver/Password.hash     : String -> 'a -> 'b -> String
+driver/Password.matches? : String -> String -> 'a -> Bool
+driver/Scan.blueprints! : Path -> List Blueprint ! {FS.Read, Raise}
+driver/Scan.claims?     : 'a -> String -> Bool
+driver/Scan.files       : Path -> List Path ! {FS.Read}
+driver/Scan.path_in     : Path -> Path -> String
+driver/Session.serve : Shared Current -> Connection -> Current ! {Clock, Net.Listen, Shared}
+driver/Snapshot.of_world : Current -> File
+driver/Snapshot.read!    : Path -> Option File ! {FS.Read, Raise}
+driver/Snapshot.write!   : Path -> File -> Unit ! {FS.Read, FS.Write, Raise}
+driver/Telnet.clean : String -> String
+driver/World.account          : String -> Current -> Option Account
+driver/World.account_of       : String -> Current -> Option Account
+driver/World.add_account      : Account -> Current -> Current
+driver/World.add_flag         : Flag -> Current -> Current
+driver/World.add_request      : Request -> Current -> Current
+driver/World.adopt            : List String -> String -> Current -> Current
+driver/World.all_logged       : Current -> Current
+driver/World.at_of            : Input -> String
+driver/World.attach           : String -> String -> Current -> Current
+driver/World.back             : String -> Current -> Current
+driver/World.ban              : String -> String -> Current -> Current
+driver/World.banned?          : String -> String -> Current -> Bool
+driver/World.blueprint_of     : String -> String
+driver/World.call_out         : String -> DateTime -> String -> Current -> Current
+driver/World.callouts_of      : String -> Current -> List Callout
+driver/World.close            : String -> String -> Current -> Current
+driver/World.close_request    : Int -> String -> Current -> Current
+driver/World.close_soon       : String -> Current -> Current
+driver/World.closing?         : String -> Current -> Bool
+driver/World.contents         : String -> Current -> List String
+driver/World.dequeued         : Int -> Current -> Current
+driver/World.drop_callouts    : String -> Current -> Current
+driver/World.due              : DateTime -> Current -> List Callout
+driver/World.emit             : Event -> Current -> Current
+driver/World.emptied          : String -> Current -> Current
+driver/World.empty            : Current
+driver/World.env_of           : String -> Current -> Option String
+driver/World.faulted          : String -> Current -> Current
+driver/World.flag             : Int -> Current -> Option Flag
+driver/World.inspire          : String -> String -> DateTime -> Current -> Current
+driver/World.instance         : String -> Current -> Option Instance
+driver/World.instances_of     : String -> Current -> List String
+driver/World.invite           : String -> String -> Current -> Current
+driver/World.keep_saved       : String -> JSON -> Current -> Current
+driver/World.move             : String -> String -> Current -> Current
+driver/World.next_number      : String -> Current -> Int
+driver/World.notice           : String -> String -> Current -> Current
+driver/World.noticed          : String -> Current -> Current
+driver/World.open             : String -> String -> Current -> Current
+driver/World.open_flags       : String -> Current -> List Flag
+driver/World.open_next        : String -> Current -> Current
+driver/World.outbox           : String -> Current -> List String
+driver/World.outbox_cap       : Int
+driver/World.owned            : String -> Current -> List Instance
+driver/World.owner_of         : String -> Current -> Option String
+driver/World.pending?         : String -> Current -> Bool
+driver/World.pending_callout? : Int -> Current -> Bool
+driver/World.public?          : Instance -> Bool
+driver/World.put              : Instance -> Current -> Current
+driver/World.queue            : Input -> Current -> Current
+driver/World.ran              : Int -> Current -> Current
+driver/World.remove           : String -> Current -> Current
+driver/World.request          : Int -> Current -> Option Request
+driver/World.resolve          : String -> String
+driver/World.resolve_flag     : Int -> String -> Current -> Current
+driver/World.restore_callouts : List Callout -> Current -> Current
+driver/World.reward           : String -> DateTime -> Current -> Current
+driver/World.said_by          : String -> String -> Current -> Current
+driver/World.said_cap         : Int
+driver/World.saved_bytes      : String -> Current -> Int
+driver/World.seen             : String -> String -> Current -> Current
+driver/World.session          : String -> Current -> Option Session
+driver/World.session?         : String -> Bool
+driver/World.session_id       : 'a -> String
+driver/World.session_of       : String -> Current -> Option Session
+driver/World.set_access       : String -> Allowed -> Bool -> Current -> Current
+driver/World.set_allowed      : String -> Allowed -> Current -> Current
+driver/World.set_blueprint    : String -> interface_module_15.Blueprint -> Current -> Current
+driver/World.set_built        : String -> String -> Current -> Current
+driver/World.set_held         : String -> Bool -> Current -> Current
+driver/World.set_home         : String -> String -> Current -> Current
+driver/World.set_locked       : String -> Bool -> Current -> Current
+driver/World.set_made         : String -> Option String -> Option String -> Option String -> Current -> Current
+driver/World.set_object       : String -> Object -> String -> Current -> Current
+driver/World.set_owner        : String -> Option String -> Current -> Current
+driver/World.set_paused       : String -> Bool -> Current -> Current
+driver/World.set_realm        : String -> interface_module_15.Realm -> Current -> Current
+driver/World.sign             : String -> Int -> DateTime -> Current -> Current
+driver/World.sleep_for        : Duration -> DateTime -> Current -> Option Duration
+driver/World.snapshot_due     : Current -> Current
+driver/World.snapshot_due?    : Current -> Bool
+driver/World.snapshot_taken   : Current -> Current
+driver/World.spend            : String -> Int -> DateTime -> Current -> Current
+driver/World.tell             : String -> String -> Current -> Current
+driver/World.tell_session     : String -> String -> Current -> Current
+driver/World.ticking?         : Current -> Bool
+driver/World.touched          : String -> Current -> Current
+driver/World.unadopt          : List String -> Current -> Current
+driver/World.unban            : String -> String -> Current -> Current
+driver/World.uninvite         : String -> String -> Current -> Current
+driver/World.visit            : String -> String -> Current -> Current
+driver/World.with_pepper      : String -> Current
+driver/World.worked           : String -> Current -> Current
+driver.dig_marker  : String
+driver.import_from : String -> String -> String
+driver.nothing     : Reply
+driver.tell        : Context -> String -> Reply
