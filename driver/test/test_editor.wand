@@ -50,10 +50,10 @@ let ann_in = List.concat (signed_up ann "ann") [World.emptied ann]
 let both_in =
   List.concat ann_in (List.concat (signed_up bo "bo") [World.emptied ann, World.emptied bo])
 
--- Ann as an admin, who may edit any file.
-let admin (w: World.World) =
+-- Ann as a Keymaster, who may edit any file.
+let keymaster (w: World.World) =
   match World.account "ann" w with
-  | Some a -> World.add_account World.Account(a, role = "admin") w
+  | Some a -> World.add_account World.Account(a, role = "keymaster") w
   | None -> w
 
 -- Ann in the editor on a new file, /r/home/ann/lamp, with nothing heard yet.
@@ -109,7 +109,9 @@ group "opening" (fn () -> [
   test "a builder may not edit outside their home" (fn t ->
     on_lib! (List.concat ann_in [line ann "/edit /r/garden"]) (fn w _ ->
       t.eq
-        ["You may not edit /r/garden. A builder edits the files in /r/home/<name>/."]
+        [
+          "You may not edit /r/garden. A Citizen edits the files in their home, /r/home/<name>/."
+        ]
         (heard ann w))),
   test "a path that is not a mudlib path" (fn t ->
     on_lib! (List.concat ann_in [line ann "/edit /r/home/ann/../../std/core"]) (fn w _ ->
@@ -125,8 +127,8 @@ group "opening" (fn () -> [
         World.env_of ann_body w,
         heard? bo "Ann leaves for the editor." w
       ))),
-  test "an admin edits the room they are in with /edit here" (fn t ->
-    on_lib! (List.concat ann_in [admin, line ann "/edit here", World.emptied ann, line ann "1p"]) (fn w _ ->
+  test "a Keymaster edits the room they are in with /edit here" (fn t ->
+    on_lib! (List.concat ann_in [keymaster, line ann "/edit here", World.emptied ann, line ann "1p"]) (fn w _ ->
       t.eq ["uses {Random}"] (heard ann w))),
   test "the editor says how to leave it, where a room lists its exits" (fn t ->
     on_lib! (List.concat ann_in [line ann "/edit /r/home/ann/lamp"]) (fn w _ ->
@@ -372,8 +374,8 @@ group "leaving" (fn () -> [
 
 let lever = ./lib/r/lever.wand
 
--- Ann as an admin in the editor on the lever's file, after one pull.
-let on_lever = List.concat ann_in [admin, line ann "pull lever", line ann "/edit lever"]
+-- Ann as a Keymaster in the editor on the lever's file, after one pull.
+let on_lever = List.concat ann_in [keymaster, line ann "pull lever", line ann "/edit lever"]
 
 let lever_pulls (w: World.World) =
   Option.map
@@ -424,13 +426,13 @@ group "reloading" (fn () -> [
 
 group "resetting" (fn () -> [
   test "/reset makes an instance again, as create makes a new one" (fn t ->
-    on_lib! (List.concat ann_in [admin, line ann "pull lever", line ann "/reset lever"]) (fn w _ ->
+    on_lib! (List.concat ann_in [keymaster, line ann "pull lever", line ann "/reset lever"]) (fn w _ ->
       t.eq (Some "It has been pulled 0 times.", true) (
         lever_pulls w,
         heard? ann "Reset /r/lever#0." w
       ))),
   test "the starting actions run again: a reset square makes another lever" (fn t ->
-    on_lib! (List.concat ann_in [admin, line ann "/reset here"]) (fn w _ ->
+    on_lib! (List.concat ann_in [keymaster, line ann "/reset here"]) (fn w _ ->
       t.eq 2 (List.length (World.instances_of "/r/lever" w)))),
   test "/reset me keeps your name" (fn t ->
     on_lib! (List.concat ann_in [line ann "/reset me", World.emptied ann, line ann "/who ann"]) (fn w _ ->
@@ -444,7 +446,7 @@ let editor_file = ./lib/r/editor/room.wand
 
 test "an editor that faults on its new code goes back to the one before" (fn t ->
   keeping! [editor_file] (List.concat ann_in [
-    admin,
+    keymaster,
     line ann "/edit /r/editor/room",
     line
       ann
@@ -460,10 +462,10 @@ test "an editor that faults on its new code goes back to the one before" (fn t -
       List.any? (String.starts_with? "Lines are numbered from 1.") (heard ann w)
     )))
 
--- Ann as an admin, having made the lever loop forever when pulled: a
+-- Ann as a Keymaster, having made the lever loop forever when pulled: a
 -- function of its own that calls itself, and `pull` calling it first.
 let looping_lever = List.concat ann_in [
-  admin,
+  keymaster,
   line ann "/edit lever",
   line
     ann
@@ -513,7 +515,7 @@ group "limits" (fn () -> [
       t.eq ["Reset /r/lever#0.", "Something went wrong with brass lever."] (heard ann w))),
   test "a line too long to show is refused" (fn t ->
     keeping! [lever] (List.concat ann_in [
-      admin,
+      keymaster,
       line ann "/edit lever",
       line ann "1a",
       line ann "import String",
@@ -533,7 +535,7 @@ group "limits" (fn () -> [
       ))),
   test "a saved state too big to keep is left out of the snapshot" (fn t ->
     keeping! [lever] (List.concat ann_in [
-      admin,
+      keymaster,
       line ann "/edit lever",
       line ann "1a",
       line ann "import String",

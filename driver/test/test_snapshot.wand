@@ -130,7 +130,7 @@ test "a file without the newer fields still reads" (fn t ->
     let path = Path.join d ./world.json;
     FS.write_file!
       path
-      `{"version": 1, "accounts": [{"name": "Ann", "body": "/std/player#0", "password": "x", "role": "admin"}], "instances": [{"id": "/std/player#0", "blueprint": "/std/player", "env": "/r/square#0", "state": {"name": "Ann"}}]}`;
+      `{"version": 1, "accounts": [{"name": "Ann", "body": "/std/player#0", "password": "x", "role": "keymaster"}], "instances": [{"id": "/std/player#0", "blueprint": "/std/player", "env": "/r/square#0", "state": {"name": "Ann"}}]}`;
     t.eq
       (Some (None, None))
       (Option.map
@@ -227,4 +227,35 @@ test "brings back flags, held things, signings, notices and pauses" (fn t ->
       held after,
       Map.values after.accounts
     )
+  ))
+
+test "keeps when each account was made" (fn t ->
+  with FS.temp_dir "wmd_snap_" as d -> (
+    let path = Path.join d ./world.json;
+    let _ = saved! path;
+    t.eq
+      (Some 2026-09-30T12:00:00Z)
+      (Option.and_then
+        (fn (a: World.Account) -> a.created)
+        (World.account "ann" (restored! path)))
+  ))
+
+test "names the roles of an older file anew, and dates its accounts by their bodies" (fn t ->
+  with FS.temp_dir "wmd_snap_" as d -> (
+    let path = Path.join d ./world.json;
+    let before = saved! path;
+    let file = Snapshot.of_world before;
+    let older =
+      Snapshot.File(
+        file,
+        accounts =
+          List.map
+            (fn (a: World.Account) -> World.Account(a, role = "admin", created = None))
+            file.accounts
+      );
+    let after =
+      with Shared.make start as state -> (Engine.restore state older at; Shared.get state);
+    t.eq
+      (Some ("keymaster", Some 2026-09-30T12:00:00Z))
+      (Option.map (fn (a: World.Account) -> (a.role, a.created)) (World.account "ann" after))
   ))

@@ -95,9 +95,9 @@ let run! (o: InitOpts) =
           );
         with Shared.make start as state -> (
           Engine.boot state at;
-          Engine.make_account state name typed "admin" at;
+          Engine.make_account state name typed "keymaster" at;
           Engine.snapshot! state o.world at;
-          IO.println "Made %{o.world}, with %{name} as admin.";
+          IO.println "Made %{o.world}, with %{name} as Keymaster.";
           Ok()
         )
       )

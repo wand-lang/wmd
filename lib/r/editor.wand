@@ -16,6 +16,5 @@ implement Core.Realm =
   | Core.Move o _ when ctx.world.player? o && o != ctx.actor ->
     Error "the editor moves no one but the person at it"
   | _ -> Ok();
-  let owner = Realm.admins;
   let allowed = Core.Everyone;
-  let grants = [Core.MayCheckSave]
+  let charter = Realm.no_charter

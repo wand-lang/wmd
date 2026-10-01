@@ -15,7 +15,7 @@ have:
    social accounts or photos, yours or anyone else's, and asking others
    for theirs.
 7. Arranging to meet or talk off WMD, especially with someone younger.
-8. Scams, spam, pretending to be another builder or an admin, or copying
+8. Scams, spam, pretending to be another Citizen or a Keymaster, or copying
    someone's work and calling it yours.
 9. Code that exists to annoy others: flooding a room with messages,
    trapping people, or anything meant to get around these rules.
@@ -26,5 +26,5 @@ follow the same rules. Privacy is for unfinished work, not for exceptions.
 
 If something breaks these rules, flag it: /flag here <why> for the room you
 are in, or /flag <thing> <why> for a thing. To report a person, use
-/report <name> <why>. An admin looks at every flag. Who flagged is not
-told to anyone but the admins.
+/report <name> <why>. A Keymaster, or the Steward who keeps the realm, looks
+at every flag. Who flagged is told to no one else.

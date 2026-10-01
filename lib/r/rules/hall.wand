@@ -10,7 +10,7 @@ let Core = import ../../std/core
 
 let _rules (ctx: Core.Context) =
   Option.default
-    "The rules should be written here, but the wall is blank. Tell an admin."
+    "The rules should be written here, but the wall is blank. Tell a Keymaster."
     (ctx.world.help_of "rules")
 
 let hall =

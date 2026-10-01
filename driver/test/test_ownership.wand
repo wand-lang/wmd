@@ -80,9 +80,9 @@ let ann_has n (w: World.World) =
       w
   | None -> w
 
-let ann_admin (w: World.World) =
+let ann_keymaster (w: World.World) =
   match World.account "ann" w with
-  | Some a -> World.add_account World.Account(a, role = "admin") w
+  | Some a -> World.add_account World.Account(a, role = "keymaster") w
   | None -> w
 
 let inspiration name (w: World.World) =
@@ -93,7 +93,7 @@ let inspiration name (w: World.World) =
 let spawn_lever = line ann `/eval [Core.Spawn "/r/lever" ctx.here]`
 
 group "owners" (fn () -> [
-  test "a body is its account's, and the commons are the admins'" (fn t ->
+  test "a body is its account's, and the commons are the Keymasters'" (fn t ->
     let w = played ann_in;
     t.eq (Some "ann", None, None) (
       World.owner_of ann_body w,
@@ -130,7 +130,7 @@ group "the policy" (fn () -> (
       let ann_square = World.set_owner square (Some "ann") w;
       t.ok
         (ok (Engine.allowed (Engine.ctx_for ann_square square bo_body) (Core.Move ann_body garden) ann_square))),
-    test "the admins' rooms may move anyone in them" (fn t ->
+    test "the Keymasters' rooms may move anyone in them" (fn t ->
       t.eq (Some "bo", true) (
         World.owner_of lever w,
         ok (Engine.allowed (Engine.ctx_for w square bo_body) (Core.Move bo_body square) w)
@@ -178,8 +178,8 @@ group "Inspiration" (fn () -> [
     t.eq
       ["That needs 5 Inspiration, and you have 4. You will have enough in 6 seconds."]
       (heard ann (played (List.concat ann_in [ann_has 4, line ann "/reset me"])))),
-  test "an admin is held to none of it" (fn t ->
-    let w = played (List.concat ann_in [ann_admin, ann_has 0, spawn_lever]);
+  test "a Keymaster is held to none of it" (fn t ->
+    let w = played (List.concat ann_in [ann_keymaster, ann_has 0, spawn_lever]);
     t.eq (2, 0) (List.length (World.instances_of "/r/lever" w), inspiration "ann" w))
 ])
 
@@ -228,7 +228,7 @@ group "/stat" (fn () -> [
   test "/stat me shows Capacity and Inspiration" (fn t ->
     t.eq
       [
-        "Ann, builder.",
+        "Ann, Citizen",
         "Capacity: 1 of 200 objects, 0 of 100 files, 0B of 1MB of saved state.",
         "Inspiration: 1000 of 1000, refilling 10 a minute.",
         "Rooms explored: 0, 0 of 10 today."
@@ -236,12 +236,12 @@ group "/stat" (fn () -> [
       (heard ann (played (List.concat ann_in [line ann "/stat me"])))),
   test "a builder may not see another's" (fn t ->
     t.eq
-      ["Only an admin may see another's. Try /stat me."]
+      ["Only a Keymaster may see another's. Try /stat me."]
       (heard ann (played (List.concat both_in [line ann "/stat bo"])))),
-  test "an admin may" (fn t ->
+  test "a Keymaster may" (fn t ->
     t.ok
       (heard?
         ann
-        "Bo, builder."
-        (played (List.concat both_in [ann_admin, line ann "/stat bo"]))))
+        "Bo, Citizen"
+        (played (List.concat both_in [ann_keymaster, line ann "/stat bo"]))))
 ])

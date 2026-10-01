@@ -371,7 +371,7 @@ group "more driver commands" (fn () -> [
         "/r/lever#0: brass lever",
         "  in: /r/square#0",
         "  made by: /r/square#0, %{at}",
-        "  owner: the admins",
+        "  owner: the Keymasters",
         "  access: locked",
         "  changed: %{at}",
         "  props: pulls = 1",

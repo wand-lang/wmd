@@ -7,9 +7,8 @@
 --   implement Core.Realm =
 --     let commands = Realm.anything;
 --     let allows = Realm.anything;
---     let owner = Realm.admins;
 --     let allowed = Core.Everyone;
---     let grants = []
+--     let charter = Realm.no_charter
 
 import JSON
 
@@ -29,5 +28,7 @@ let object short verbs =
 -- A rule that allows every command or action.
 let anything _ _ = Ok()
 
--- An owner rule that gives every file to the admins.
-let admins _ = None
+-- The charter of a realm with no realms inside it, or of one the realm
+-- says nothing of: the Keymasters own its files, and it has no Stewards
+-- and no grants.
+let no_charter _ = Core.Charter()

@@ -100,7 +100,7 @@ group "a private room" (fn () -> [
       where ann_body w,
       refusals w
     )),
-  test "a builder's room starts private, and the admins' are public" (fn t ->
+  test "a builder's room starts private, and the Keymasters' are public" (fn t ->
     let w = played (signed_up ann "ann");
     t.eq (true, false, false) (
       Engine.may_enter? ann_body square w,
@@ -145,7 +145,7 @@ group "public and private" (fn () -> [
   test "/private closes it again" (fn t ->
     let w = after [line bo "/public", line bo "/private", line ann "north"];
     t.eq (Some square) (where ann_body w)),
-  test "only its owner or an admin opens or closes a room" (fn t ->
+  test "only its owner or a Keymaster opens or closes a room" (fn t ->
     t.eq
       ["The Commons is not yours to open or close."]
       (heard ann (after [line ann "/private"]))),

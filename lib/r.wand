@@ -2,7 +2,9 @@ uses {Random}
 
 -- The Commons: the root realm, and the hub of the world. Every other realm
 -- is in it, behind its doors, and its verbs and rules hold everywhere
--- under /r unless a realm nearer a room has its own.
+-- under /r unless a realm nearer a room has its own. It has no realm above
+-- it, so no one can name its Stewards: it is the Keymasters' alone, and so
+-- are the charters it gives the realms in it.
 --
 -- `look` and `go` are its verbs, after the player's own and the room's, so
 -- a realm can have its own: a dark realm's `look` that sees nothing, say.
@@ -113,6 +115,23 @@ let _go (ctx: Core.Context) (p: Core.Parsed) = (
   )
 )
 
+-- ── charters ───────────────────────────────────────────────────────────
+
+-- Each Citizen owns the files in their own home: ann owns /r/home/ann/lamp.
+let _home_owner path =
+  match String.split "/" path with
+  | ["" :: "r" :: "home" :: name :: _ :: _] -> Some (String.lower name)
+  | _ -> None
+
+-- The charters of the realms in the Commons. Only the Rules Hall may say a
+-- player signed the rules, and only the editor may check and save files.
+let _charter path =
+  match path with
+  | "/r/home" -> Core.Charter(owner = Some _home_owner)
+  | "/r/rules" -> Core.Charter(grants = [Core.MayAcknowledge])
+  | "/r/editor" -> Core.Charter(grants = [Core.MayCheckSave])
+  | _ -> Core.Charter()
+
 implement Core.Blueprint =
   let create _ _ = Core.Init(
     object = Realm.object "the Commons" [
@@ -124,6 +143,5 @@ implement Core.Blueprint =
 implement Core.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
-  let owner = Realm.admins;
   let allowed = Core.Everyone;
-  let grants = []
+  let charter = _charter

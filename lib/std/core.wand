@@ -205,6 +205,18 @@ type Grant =
   -- Draft and Run.
   | MayCheckSave
 
+-- What the realm above says of a realm inside it: who owns each of the
+-- realm's files, by account key, as ann for /r/home/ann/lamp, with no
+-- rule, or a rule that says None, for the Keymasters; the Citizens, by key, who keep it for the Keymasters, its
+-- Stewards; and what its own objects may ask for that others may not. A
+-- realm's Stewards may change its own file, so none of this is in it:
+-- they could name more Stewards, or give themselves grants.
+type Charter(
+  owner: Option (String -> Option String) = None,
+  stewards: List String = [],
+  grants: List Grant = []
+)
+
 -- An area of the world with rules of its own, such as the Home realm or the
 -- Rules Hall. A realm is the file beside its directory: /r/home is the
 -- realm of the rooms in /r/home/, and /r, the Commons, of every room under
@@ -214,21 +226,19 @@ type Grant =
 -- The driver asks the nearest realm above a file, and each realm above
 -- that, up to the Commons. A rule can only refuse more than the driver's
 -- own policy does, and every realm in the chain must allow a command or an
--- action. `owner` and `grants` come from the nearest realm alone. The
--- driver honors a realm only when the admins own its file.
+-- action. A realm's charter comes from the realm above it; the Commons,
+-- which has none above it, is the Keymasters' alone. The driver honors a
+-- realm only when the Keymasters own its file.
 interface Realm(
   -- Whether a command works here: a verb, or a / command such as /edit.
   -- Error says why not, to the player who typed it.
   commands: Context -> String -> Result String Unit ! {Random, Raise},
   -- Whether an object here may ask for an action. Error says why not.
   allows: Context -> Action -> Result String Unit ! {Random, Raise},
-  -- The account that owns the file of a blueprint path in the realm, by its
-  -- key, as ann for /r/home/ann/lamp. None is the admins.
-  owner: String -> Option String ! {Random, Raise},
   -- Who may enter a new room of the realm, until its owner says otherwise.
   allowed: Allowed,
-  -- What the realm's own files may ask for that others may not.
-  grants: List Grant
+  -- The charter of each realm inside this one, by the path of its file.
+  charter: String -> Charter ! {Random, Raise}
 )
 
 -- A reply that changes nothing.

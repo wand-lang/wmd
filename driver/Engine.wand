@@ -163,37 +163,61 @@ let _rule body =
   | Ok r -> r
   | Error why -> Error why
 
--- What the `owner` rule of the realm whose file is `realm` says of `path`.
--- A rule that faults gives the file to the admins.
-let _owner_by realm path (w: World.World) =
-  match Map.get realm w.realms with
-  | None -> None
-  | Some r -> (
-    match _rule (fn () -> r.owner path) with
-    | Ok owner -> Option.map String.lower owner
-    | Error _ -> None
+-- The charter of the realm at the head of `chain`, a chain of realms
+-- nearest first, as the realm above it gives it. The Commons, with no
+-- realm above it, has the empty charter: the Keymasters own its files, and
+-- it has no Stewards and no grants. A charter that faults is empty too.
+let _charter chain (w: World.World) =
+  match chain with
+  | [near :: above :: _] -> (
+    match Map.get above w.realms with
+    | Some r -> Result.default Core.Charter() (_rule (fn () -> r.charter near))
+    | None -> Core.Charter()
   )
+  | _ -> Core.Charter()
+
+-- Who owns `path`, a file in the realm at the head of `chain`: what its
+-- charter's owner rule says. No rule, or one that faults, is the
+-- Keymasters.
+let _owner_in chain path (w: World.World) =
+  match (_charter chain w).owner with
+  | Some rule ->
+    Option.map String.lower (Result.default (None (_rule (fn () -> rule path))))
+  | None -> None
 
 -- The realms a blueprint path is in, nearest first, up to the Commons. A
--- realm counts only when the admins own its file, so a builder cannot make
--- one in their home.
+-- realm counts only when the Keymasters own its file, so a Citizen cannot
+-- make one in their home.
 let realms_of path (w: World.World) =
   List.fold_left
     (fn chain p -> if !(Map.has? p w.realms) then chain
-      else match chain with
-        | [near :: _] when _owner_by near p w != None -> chain
-        | _ -> p :: chain
-    )
+      else if chain != [] && _owner_in chain p w != None then chain
+      else p :: chain)
     []
     (List.reverse (_above path))
 
--- Who owns the file of blueprint path `path`, by account key: what the
--- nearest realm's `owner` rule says, as ann for /r/home/ann/lamp. A file in
--- no realm is the admins'.
-let file_owner path (w: World.World) =
-  match realms_of path w with
-  | [near :: _] -> _owner_by near path w
-  | [] -> None
+-- Who owns the file of blueprint path `path`, by account key, as ann for
+-- /r/home/ann/lamp: what the charter of its nearest realm says. A file in
+-- no realm is the Keymasters'.
+let file_owner path (w: World.World) = _owner_in (realms_of path w) path w
+
+-- Whether the account `key` is a Steward of the realm at the head of
+-- `chain`, or of any realm above it.
+let _keeps? key chain (w: World.World) =
+  match chain with
+  | [_ :: above] ->
+    List.any? (fn s -> Some (String.lower s) == key) (_charter chain w).stewards
+    || _keeps? key above w
+  | [] -> false
+
+-- Whether the account `key` keeps the area of `path`: it is a Steward of a
+-- realm `path` is in, or of the realm whose file `path` is. A Steward
+-- changes their realm's own file, so its rules, and everything in it, but
+-- not the charter that names them, which is in the realm above.
+let steward? key path (w: World.World) =
+  let chain = realms_of path w;
+  let own = Map.has? path w.realms && file_owner path w == None;
+  _keeps? key (if own then path :: chain else chain) w
 
 -- The one instance of the realm whose file is `path`.
 let realm_id path = "%{path}#0"
@@ -202,15 +226,9 @@ let realm_id path = "%{path}#0"
 -- no place to be.
 let realm? id (w: World.World) = Map.has? (World.blueprint_of id) w.realms
 
--- Whether the nearest realm of the file of `id` grants `g`.
+-- Whether the charter of the nearest realm of the file of `id` grants `g`.
 let _granted? id (g: Core.Grant) (w: World.World) =
-  match realms_of (World.blueprint_of id) w with
-  | [near :: _] -> (
-    match Map.get near w.realms with
-    | Some r -> List.any? (fn x -> x == g) r.grants
-    | None -> false
-  )
-  | [] -> false
+  List.any? (fn x -> x == g) (_charter (realms_of (World.blueprint_of id) w) w).grants
 
 -- ── Ownership ──────────────────────────────────────────────────────────
 
@@ -219,13 +237,13 @@ let _key_of body (w: World.World) =
   Option.map (fn (a: World.Account) -> String.lower a.name) (World.account_of body w)
 
 -- Whether an owner is held to no limits: no owner, which is the driver's
--- and the admins' code, or an admin.
+-- and the Keymasters' code, or a Keymaster.
 let _exempt? owner (w: World.World) =
   match owner with
   | None -> true
   | Some n -> (
     match World.account n w with
-    | Some a -> a.role == "admin"
+    | Some a -> a.role == "keymaster"
     | None -> false
   )
 
@@ -236,7 +254,7 @@ let _owner id (w: World.World) =
   | Some i -> i.owner
   | None -> file_owner (World.blueprint_of id) w
 
--- Code the ownership rules do not hold to: the driver's and the admins'.
+-- Code the ownership rules do not hold to: the driver's and the Keymasters'.
 let _trusted? id (w: World.World) = _exempt? (World.owner_of id w) w
 
 -- Whether the owner of `id` is the account of the player `p`.
@@ -273,7 +291,7 @@ let start_allowed path (w: World.World) =
   )
   | [] -> Core.Everyone
 
--- Whether `body` may go into `room`. Its owner and the admins always may.
+-- Whether `body` may go into `room`. Its owner and the Keymasters always may.
 -- Anyone else may when the room allows them and its owner has not banned
 -- them. A room not made yet allows whom its realm says a new one does. Only
 -- a body is kept out: anything else may go anywhere it is moved, and a body
@@ -367,7 +385,7 @@ and _seen (w: World.World) viewer id =
 and _text (w: World.World) viewer id short =
   match World.instance id w with
   | None -> "nothing"
-  | Some i when i.held -> "something waiting for an admin"
+  | Some i when i.held -> "something waiting for a Keymaster"
   | Some i ->
     _bounded
       "something that is not working"
@@ -396,7 +414,7 @@ let _may_move? (ctx: Core.Context) obj (w: World.World) =
   || env == Some ctx.self
   || !(player? obj) && (env == Some ctx.actor || env == Some (room_of ctx.self w))
 
--- Whether `ctx.self` is the admins' code, or its owner owns `obj` too.
+-- Whether `ctx.self` is the Keymasters' code, or its owner owns `obj` too.
 let _same_owner? (ctx: Core.Context) obj (w: World.World) =
   _trusted? ctx.self w
   || Option.some? (World.owner_of ctx.self w)
@@ -429,13 +447,16 @@ let _too_long text =
     Error "a line of %{String.length text} characters, and the most is %{max_line}"
   else Ok()
 
--- Whether the player `body` may edit the file of blueprint path `path`: an
--- admin may edit any file, and a builder the files they own.
+-- Whether the player `body` may edit the file of blueprint path `path`:
+-- a Keymaster may edit any file, a Citizen the files they own, and a
+-- Steward the files of the realms that name them.
 let may_edit? body path (w: World.World) =
   match World.account_of body w with
   | Some a ->
     Files.valid? path
-    && (a.role == "admin" || file_owner path w == Some (String.lower a.name))
+    && (a.role == "keymaster"
+    || file_owner path w == Some (String.lower a.name)
+    || steward? (Some (String.lower a.name)) path w)
   | None -> false
 
 -- Only an object of a realm that grants MayCheckSave may check or save a
@@ -482,7 +503,7 @@ let _policy (ctx: Core.Context) (a: Core.Action) (w: World.World) =
     if World.session? dest then Error "may not move %{o} into a session"
     else if !(_may_move? ctx o w) then Error "may not move %{o}"
     -- A player moves by their own command, or by what their own account
-    -- or an admin owns: a room cannot carry off whoever is in it.
+    -- or a Keymaster owns: a room cannot carry off whoever is in it.
     else if player? o && o != ctx.actor && o != ctx.self && !(_trusted? ctx.self w || _owns? ctx.self o w) then
       Error "may not move %{o}: a player moves by their own command"
     -- Only what its owner owns moves a locked thing.
@@ -1054,7 +1075,7 @@ and run_counted (ctx: Core.Context) body (tx: Tx) =
   if _broken? ctx.self tx.w then
     (change (World.tell ctx.actor "%{short_of ctx.self tx.w} is not working.") tx, 0)
   else if Option.map (fn (i: World.Instance) -> i.held) (World.instance ctx.self tx.w) == Some true then
-    (change (World.tell ctx.actor "That is waiting for an admin.") tx, 0)
+    (change (World.tell ctx.actor "That is waiting for a Keymaster.") tx, 0)
   else match _counted body with
     | (Ok r, steps) -> (tx |> change (World.worked ctx.self) |> apply ctx r, steps)
     | (Error why, steps) -> (
@@ -1126,7 +1147,7 @@ and login sid name typed (tx: Tx) =
     if acct.paused then
       tx
       |> _event (World.Event(at = "", event = "login_paused", actor = sid, name = Some acct.name))
-      |> change (World.tell sid "An admin has paused %{acct.name}. What is your name?")
+      |> change (World.tell sid "A Keymaster has paused %{acct.name}. What is your name?")
     else if Option.some? (World.session_of acct.body tx.w) then
       change (World.tell sid "%{acct.name} is here already. What is your name?") tx
     else _wake sid acct.name acct.body "%{acct.name} wakes up." tx
@@ -1147,7 +1168,7 @@ and register sid name typed (tx: Tx) =
     tx
     |> _ensure rules_hall
     |> _create body player_bp (Some saved) (Some rules_hall) (Some (String.lower name))
-    |> change (World.add_account (World.Account(name = name, body = body, password = hashed)))
+    |> change (World.add_account (World.Account(name = name, body = body, password = hashed, created = Some tx.w.now)))
     |> _hook "enter" rules_hall body body
     |> _event (World.Event(at = "", event = "signup", actor = sid, name = Some name, object = Some body))
     |> _wake sid name body "%{name} arrives."
@@ -1323,7 +1344,7 @@ let _examine body words (w: World.World) = (
           "  in: %{Option.default "nothing" i.env}",
           "  holds: %{_or_none (World.contents i.id w)}",
           "  made by: %{Option.default "the driver" i.creator}, %{Option.default "at boot" i.created}",
-          "  owner: %{Option.default "the admins" i.owner}",
+          "  owner: %{Option.default "the Keymasters" i.owner}",
           "  access: %{_access i}",
           "  changed: %{Option.default "never" i.modified}",
           "  props: %{_or_none props}",
@@ -1401,7 +1422,7 @@ let _edit body words (tx: Tx) =
       change
         (World.tell
           body
-          "You may not edit %{path}. A builder edits the files in /r/home/<name>/.")
+          "You may not edit %{path}. A Citizen edits the files in their home, /r/home/<name>/.")
         tx
     else (
       let text = Files.read tx.w.lib_root path;
@@ -1582,15 +1603,16 @@ let _stat_text (a: World.Account) (w: World.World) =
   let i = a.inspiration;
   let lines =
     [
-      "%{a.name}, %{a.role}.",
+      "%{a.name}, %{String.upper (String.slice 0 1 a.role)}%{String.slice 1 (String.length a.role) a.role}",
       "Capacity: %{List.length (World.owned key w)} of %{max_owned} objects, %{file_count key w} of %{max_files} files, %{_size (World.saved_bytes key w)} of %{_size max_saved_total} of saved state.",
       "Inspiration: %{Inspiration.amount w.now i} of %{Inspiration.full}, refilling %{60 / Inspiration.seconds_per_point} a minute.",
       "Rooms explored: %{Map.size a.explored}, %{Inspiration.today w.now a.explored} of %{Inspiration.bonuses_a_day} today."
     ];
-  let notes = if a.role == "admin" then ["An admin is held to neither limit."] else [];
+  let notes =
+    if a.role == "keymaster" then ["A Keymaster is held to neither limit."] else [];
   String.join "\n" (List.concat lines notes)
 
--- /stat: a builder's own Capacity and Inspiration, or, for an admin,
+-- /stat: a builder's own Capacity and Inspiration, or, for a Keymaster,
 -- anyone's.
 let _stat body words (tx: Tx) = (
   let me = World.account_of body tx.w;
@@ -1599,8 +1621,8 @@ let _stat body words (tx: Tx) = (
        match me with
        | Some a -> Ok a
        | None -> Error "You have no account."
-     else if Option.map (fn (a: World.Account) -> a.role) me != Some "admin" then
-       Error "Only an admin may see another's. Try /stat me."
+     else if Option.map (fn (a: World.Account) -> a.role) me != Some "keymaster" then
+       Error "Only a Keymaster may see another's. Try /stat me."
      else match World.account words tx.w with
        | Some a -> Ok a
        | None -> Error "There is no one called %{words}.");
@@ -1609,20 +1631,22 @@ let _stat body words (tx: Tx) = (
   | Ok a -> (let text = _stat_text a tx.w; change (World.tell body text) tx)
 )
 
--- Whether `body` may say who enters or moves `id`: its owner, or an admin.
+-- Whether `body` may say who enters or moves `id`: its owner, a Steward of
+-- its realm, or a Keymaster.
 let _may_change? body id (w: World.World) =
   let key = _key_of body w;
-  Option.some? key && (World.owner_of id w == key || _exempt? key w)
+  Option.some? key
+  && (World.owner_of id w == key || _exempt? key w || steward? key (World.blueprint_of id) w)
 
 -- Who may enter `room` once it is private: whom it lets in already, or
--- only its owner and the admins when it was public.
+-- only its owner and the Keymasters when it was public.
 let _closed room (w: World.World) =
   match Option.map (fn (i: World.Instance) -> i.allowed) (World.instance room w) with
   | Some (Core.Only names) -> Core.Only names
   | _ -> Core.Only []
 
 -- /public and /private: open the room `body` is in to everyone, or close it
--- to all but its owner, whoever it invites, and the admins.
+-- to all but its owner, whoever it invites, and the Keymasters.
 let _set_public body words public (tx: Tx) =
   let room = room_of body tx.w;
   let name = short_of room tx.w;
@@ -1643,7 +1667,7 @@ let _set_public body words public (tx: Tx) =
       (World.tell
         body
         (if public then "%{name} is public now: anyone may come in."
-        else "%{name} is private now: only you, whoever you invite, and the admins may come in."))
+        else "%{name} is private now: only you, whoever you invite, and the Keymasters may come in."))
 
 -- /invite and /uninvite: let one account into the private room `body` is
 -- in, or no longer.
@@ -1707,8 +1731,10 @@ let _ban body words yes (tx: Tx) =
     | None -> change (World.tell body "There is no one called %{name}.") tx
     | Some a when String.lower a.name == String.lower me.name ->
       change (World.tell body "You cannot ban yourself.") tx
-    | Some a when a.role == "admin" ->
-      change (World.tell body "An admin may go anywhere, so %{a.name} cannot be banned.") tx
+    | Some a when a.role == "keymaster" ->
+      change
+        (World.tell body "A Keymaster may go anywhere, so %{a.name} cannot be banned.")
+        tx
     | Some a -> if yes then (
         let banned =
           tx
@@ -1775,16 +1801,30 @@ let _set_locked body words locked (tx: Tx) = (
 -- ── Flags ──────────────────────────────────────────────────────────────
 
 -- How many different people flag a room or a thing before it is taken
--- out of view to wait for an admin.
+-- out of view to wait for a Keymaster.
 let flags_to_hold = 3
 
-let _admin? body (w: World.World) =
+let _keymaster? body (w: World.World) =
   match World.account_of body w with
-  | Some a -> a.role == "admin"
+  | Some a -> a.role == "keymaster"
   | None -> false
 
+-- Whether `body` is a Steward of any realm.
+let _steward_anywhere? body (w: World.World) =
+  let key = _key_of body w;
+  List.any? (fn p -> steward? key p w) (Map.keys w.realms)
+
+-- Whether `body` reviews flag `f`: a Keymaster reviews every flag, and a
+-- Steward the flags on the rooms of their realms and the things in them,
+-- wherever a thing's file is. A flag on a person is for the Keymasters
+-- alone.
+let _reviews? body (f: World.Flag) (w: World.World) =
+  _keymaster? body w
+  || f.kind != "person"
+  && steward? (_key_of body w) (World.blueprint_of (room_of f.target w)) w
+
 -- What a room or a thing was when it was flagged: its text, and its file.
--- Its own text, even when it is held, so an admin sees what was there.
+-- Its own text, even when it is held, so a Keymaster sees what was there.
 let _evidence id (w: World.World) =
   match World.instance id w with
   | None -> "(it is gone)"
@@ -1813,11 +1853,11 @@ let _hold_if_flagged (f: World.Flag) (tx: Tx) = (
      else match World.instance f.target tx.w with
        | Some i when f.kind == "room" && World.public? i -> Some (
          World.set_allowed f.target (Core.Only []),
-         "is private until an admin has looked at it"
+         "is private until a Keymaster has looked at it"
        )
        | Some i when f.kind == "object" && !i.held -> Some (
          World.set_held f.target true,
-         "is out of view until an admin has looked at it"
+         "is out of view until a Keymaster has looked at it"
        )
        | _ -> None);
   match held with
@@ -1865,14 +1905,14 @@ let _file_flag body kind target owner reason evidence (tx: Tx) =
         object = Some target,
         text = Some "#%{f.id} %{kind}: %{reason}"
       )
-      |> change (World.tell body "Thank you. An admin will look at it.");
+      |> change (World.tell body "Thank you. A Keymaster will look at it.");
     let told =
       (match owner with
        | Some o when kind != "person" ->
          change
            (World.notice
              o
-             "Your %{kind} %{target} was flagged: %{reason}. An admin will look at it.")
+             "Your %{kind} %{target} was flagged: %{reason}. A Keymaster will look at it.")
            filed
        | _ -> filed);
     _hold_if_flagged f told
@@ -1900,7 +1940,7 @@ let _flag body words (tx: Tx) = (
       if first == "here" then Parse.Found here else Parse.resolve tx.w body here [first];
     match found with
     | Parse.Found id -> if player? id then
-        change (World.tell body "To tell the admins about a person, /report them.") tx
+        change (World.tell body "To tell the Keymasters about a person, /report them.") tx
       else if reason == "" then change (World.tell body "Say why: /flag %{first} <why>.") tx
       else (
         let kind = if World.env_of id tx.w == None then "room" else "object";
@@ -1930,9 +1970,10 @@ let _report body words (tx: Tx) = (
 
 -- /flags: the open flags, or one flag whole.
 let _flags body words (w: World.World) =
-  if !(_admin? body w) then World.tell body "Only an admin reviews flags." w
+  if !(_keymaster? body w || _steward_anywhere? body w) then
+    World.tell body "Only a Keymaster or a Steward reviews flags." w
   else if words == "" then (
-    let open = List.filter (fn (f: World.Flag) -> f.open) w.flags;
+    let open = List.filter (fn (f: World.Flag) -> f.open && _reviews? body f w) w.flags;
     if open == [] then World.tell body "No flags are open." w
     else
       World.tell
@@ -1945,16 +1986,16 @@ let _flags body words (w: World.World) =
         w
   )
   else match Option.and_then (fn n -> World.flag n w) (Result.to_option (String.to_int words)) with
-    | None -> World.tell body "There is no flag #%{words}." w
-    | Some f ->
+    | Some f when _reviews? body f w ->
       (World.tell
         body
-        `#%{f.id} %{_about f}, owned by %{Option.default "the admins" f.owner}
+        `#%{f.id} %{_about f}, owned by %{Option.default "the Keymasters" f.owner}
 Flagged by %{f.by} at %{f.at}: %{f.reason}
 %{Option.default "Open." (Option.map (fn r -> "Resolved: %{r}") f.resolution)}
 
 %{f.evidence}`
         w)
+    | _ -> World.tell body "There is no flag #%{words} for you to review." w
 
 -- Close a flag, and let a held thing back into view when no flag on it is
 -- open any more.
@@ -1983,7 +2024,7 @@ let _pause name why (tx: Tx) =
     match World.session_of a.body tx.w with
     | Some s ->
       paused
-      |> change (World.tell a.body "An admin has paused your account: %{why}")
+      |> change (World.tell a.body "A Keymaster has paused your account: %{why}")
       |> change (World.close_soon s.id)
     | None -> paused
   )
@@ -1991,13 +2032,16 @@ let _pause name why (tx: Tx) =
 -- /resolve <n> <how> [note].
 let _resolve body words (tx: Tx) = (
   let usage = "Resolve how? /resolve <number> dismiss, private, remove, warn or pause, and a note if you like.";
-  if !(_admin? body tx.w) then change (World.tell body "Only an admin resolves flags.") tx
+  if !(_keymaster? body tx.w || _steward_anywhere? body tx.w) then
+    change (World.tell body "Only a Keymaster or a Steward resolves flags.") tx
   else match String.words words with
     | n :: how :: rest -> (
       let note = String.join " " rest;
       let said = if note == "" then how else "%{how}: %{note}";
       let why = if note == "" then "" else " %{note}";
       match Option.and_then (fn k -> World.flag k tx.w) (Result.to_option (String.to_int n)) with
+      | Some f when !(_reviews? body f tx.w) ->
+        change (World.tell body "There is no flag #%{n} for you to review.") tx
       | None -> change (World.tell body "There is no flag #%{n}.") tx
       | Some f when !f.open ->
         change (World.tell body "Flag #%{f.id} is resolved already: %{Option.default "" f.resolution}.") tx
@@ -2011,7 +2055,7 @@ let _resolve body words (tx: Tx) = (
             tx
             |> change (World.set_allowed f.target (Core.Only []))
             |> (match f.owner with
-              | Some o -> change (World.notice o "An admin made your room %{f.target} private: %{f.reason}.%{why}")
+              | Some o -> change (World.notice o "A Keymaster made your room %{f.target} private: %{f.reason}.%{why}")
               | None -> fn t -> t)
             |> _close body f said "%{f.target} is private now."
         | ("remove", _) -> if f.kind != "object" then
@@ -2023,7 +2067,7 @@ let _resolve body words (tx: Tx) = (
               tx
               |> change (World.remove f.target)
               |> (match f.owner with
-                | Some o -> change (World.notice o "An admin removed your object %{f.target}: %{f.reason}.%{why}")
+                | Some o -> change (World.notice o "A Keymaster removed your object %{f.target}: %{f.reason}.%{why}")
                 | None -> fn t -> t);
             List.fold_left
               (fn acc (g: World.Flag) -> _close body g said "Flag #%{g.id} resolved." acc)
@@ -2032,30 +2076,32 @@ let _resolve body words (tx: Tx) = (
           )
         | ("warn", Some o) ->
           tx
-          |> change (World.notice o "An admin warns you about %{_about f}: %{f.reason}.%{why}")
+          |> change (World.notice o "A Keymaster warns you about %{_about f}: %{f.reason}.%{why}")
           |> _close body f said "%{o} is warned."
+        | ("pause", Some _) when !(_keymaster? body tx.w) ->
+          change (World.tell body "Only a Keymaster pauses an account.") tx
         | ("pause", Some o) ->
           tx
           |> _pause o "%{f.reason}.%{why}"
           |> _event World.Event(at = "", event = "pause", actor = body, name = Some o)
           |> _close body f said "%{o} is paused. /unpause %{o} lets them back."
-        | ("warn", None) -> change (World.tell body "The admins own %{f.target}; there is no one to warn.") tx
-        | ("pause", None) -> change (World.tell body "The admins own %{f.target}; there is no one to pause.") tx
+        | ("warn", None) -> change (World.tell body "The Keymasters own %{f.target}; there is no one to warn.") tx
+        | ("pause", None) -> change (World.tell body "The Keymasters own %{f.target}; there is no one to pause.") tx
         | _ -> change (World.tell body usage) tx
       )
     )
     | _ -> change (World.tell body usage) tx
 )
 
--- /pause <name> and /unpause <name>, for an admin.
+-- /pause <name> and /unpause <name>, for a Keymaster.
 let _set_paused body words paused (tx: Tx) =
-  if !(_admin? body tx.w) then
-    change (World.tell body "Only an admin pauses an account.") tx
+  if !(_keymaster? body tx.w) then
+    change (World.tell body "Only a Keymaster pauses an account.") tx
   else match World.account words tx.w with
     | None -> change (World.tell body "There is no one called %{words}.") tx
     | Some a -> (
       let changed =
-        if paused then _pause a.name "an admin will tell you why." tx
+        if paused then _pause a.name "a Keymaster will tell you why." tx
         else change (World.set_paused a.name false) tx;
       changed
       |> _event World.Event(
@@ -2374,11 +2420,29 @@ let _restored_owner (f: Snapshot.File) (s: Snapshot.Saved) (w: World.World) =
     | None -> file_owner s.blueprint w
 
 -- Who may enter a room a snapshot kept: everyone when it was public, and
--- otherwise whom it invited. Before rooms were private, a room the admins
+-- otherwise whom it invited. Before rooms were private, a room the Keymasters
 -- owned was public.
 let _restored_allowed (f: Snapshot.File) (s: Snapshot.Saved) (w: World.World) =
   if Option.default (_restored_owner f s w == None) s.public then Core.Everyone
   else Core.Only s.invited
+
+-- An account a snapshot kept, in today's terms. Before the roles were
+-- named, a Keymaster was "admin" and a Citizen "builder", and an account
+-- did not keep when it was made: then it is when its body was made.
+let _restored_account (f: Snapshot.File) (a: World.Account) =
+  let role =
+    match a.role with
+    | "admin" -> "keymaster"
+    | "builder" -> "citizen"
+    | r -> r
+  in
+  let made =
+    Option.and_then
+      (fn (s: Snapshot.Saved) -> Option.and_then
+        (fn c -> Result.to_option (String.to_datetime c))
+        s.created)
+      (List.find (fn (s: Snapshot.Saved) -> s.id == a.body) f.instances);
+  World.Account(a, role = role, created = if a.created == None then made else a.created)
 
 -- Bring back what a snapshot kept: the accounts, then every object, made
 -- again by its blueprint's `create` from its saved state, and the
@@ -2387,7 +2451,7 @@ let _restored_allowed (f: Snapshot.File) (s: Snapshot.Saved) (w: World.World) =
 let restore state (f: Snapshot.File) at =
   let accounts =
     List.fold_left
-      (fn t (a: World.Account) -> change (World.add_account a) t)
+      (fn t (a: World.Account) -> change (World.add_account (_restored_account f a)) t)
       (begin (Shared.get state) at
       |> change (fn w -> World.World(w, flags = f.flags))
       |> change (World.restore_callouts f.callouts))
@@ -2405,7 +2469,7 @@ let restore state (f: Snapshot.File) at =
   Shared.update state (commit tx)
 
 -- Make an account and its body in the arrival room, with no session: how
--- `wmd init` makes the first admin.
+-- `wmd init` makes the first Keymaster.
 let make_account state name typed role at =
   let t = begin (Shared.get state) at;
   let body = "%{player_bp}#%{World.next_number player_bp t.w}";
@@ -2420,6 +2484,7 @@ let make_account state name typed role at =
         name = name,
         body = body,
         password = hashed,
-        role = role
+        role = role,
+        created = Some t.w.now
       ));
   Shared.update state (commit tx)

@@ -12,6 +12,5 @@ implement Core.Blueprint =
 implement Core.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
-  let owner = Realm.admins;
   let allowed = Core.Everyone;
-  let grants = []
+  let charter = Realm.no_charter

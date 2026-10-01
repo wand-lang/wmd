@@ -170,7 +170,7 @@ group "accounts" (fn () -> [
           again
         ]);
     t.eq (true, None) (
-      heard? (World.session_id 1) "An admin has paused Ann. What is your name?" w,
+      heard? (World.session_id 1) "A Keymaster has paused Ann. What is your name?" w,
       Option.and_then
         (fn (s: World.Session) -> s.body)
         (World.session (World.session_id 1) w)

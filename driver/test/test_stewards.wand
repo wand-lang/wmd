@@ -1,0 +1,164 @@
+uses {FS.Read, FS.Write, Random, Shared}
+
+-- Stewards: the Citizens a realm names to keep it for the Keymasters. They
+-- edit the realm's files and handle the flags on its rooms and things, and
+-- nothing else.
+
+import ../Engine
+import ../Mudlib
+import ../World
+import FS
+import List
+import Path
+import Shared
+
+let {test, group} = import Test
+
+-- The Guild, a realm whose charter names Bo the Steward of the Inner
+-- realm in it, and a room in the Inner realm. A file loads only from
+-- inside the real lib/, so they are written there, loaded, and removed at
+-- once.
+let guild = `
+uses {Random}
+
+let Core = import ../std/core
+let Realm = import ../std/realm
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = Realm.object "the Guild" [])
+
+implement Core.Realm =
+  let commands = Realm.anything;
+  let allows = Realm.anything;
+  let allowed = Core.Everyone;
+  let charter path =
+    if path == "/r/guild/inner" then Core.Charter(stewards = ["Bo"]) else Core.Charter()
+`
+
+let inner = `
+uses {Random}
+
+let Core = import ../../std/core
+let Realm = import ../../std/realm
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = Realm.object "the Inner realm" [])
+
+implement Core.Realm =
+  let commands = Realm.anything;
+  let allows = Realm.anything;
+  let allowed = Core.Everyone;
+  let charter = Realm.no_charter
+`
+
+let hall = `
+uses {Random}
+
+let Core = import ../../../std/core
+let Room = import ../../../std/room
+
+implement Core.Blueprint =
+  let create _ _ =
+    Core.Init(
+      object =
+        Core.Object(Room.room "The Guild Hall" "A hall.", exits = {out = Room.exit "/r/square"})
+    )
+`
+
+let lib = (
+  FS.mkdir! ./lib/r/guild/inner;
+  FS.write_file! ./lib/r/guild.wand guild;
+  FS.write_file! ./lib/r/guild/inner.wand inner;
+  FS.write_file! ./lib/r/guild/inner/hall.wand hall;
+  let loaded = Mudlib.load_all! ./lib;
+  let _ = FS.delete_tree ./lib/r/guild;
+  let _ = FS.delete ./lib/r/guild.wand;
+  loaded
+)
+
+let start = World.World(World.with_pepper "test pepper", lib = lib.lib, realms = lib.realms)
+
+let at = "2026-09-30T12:00:00Z"
+
+let ann = World.session_id 0
+
+let bo = World.session_id 1
+
+let ann_body = "/std/player#0"
+
+let bo_body = "/std/player#1"
+
+let line sid text = World.queue (World.Line sid at text)
+
+let played changes =
+  with Shared.make start as state -> (
+    Engine.boot state at;
+    List.each (fn f -> (Shared.update state f; Engine.step state)) changes;
+    Shared.get state
+  )
+
+let heard sid (w: World.World) = List.filter (fn l -> l != "") (World.outbox sid w)
+
+let signed_up sid name = [
+  World.open_next at,
+  line sid name,
+  line sid "2000-05-01",
+  line sid "%{name}-password",
+  line sid "%{name}-password",
+  line sid "sign rules"
+]
+
+-- Ann and Bo in the Guild Hall, and Ann's flag on it, with nothing heard.
+let in_hall = List.flatten [
+  signed_up ann "ann",
+  signed_up bo "bo",
+  [
+    line ann `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
+    line bo `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
+    line ann "/flag here a rude sign",
+    World.emptied ann,
+    World.emptied bo
+  ]
+]
+
+group "a Steward" (fn () -> [
+  test "edits the files of their realm and its rules, but not its charter" (fn t ->
+    let w = played in_hall;
+    t.eq (true, true, false, false, false) (
+      Engine.may_edit? bo_body "/r/guild/inner/hall" w,
+      Engine.may_edit? bo_body "/r/guild/inner" w,
+      Engine.may_edit? bo_body "/r/guild" w,
+      Engine.may_edit? ann_body "/r/guild/inner/hall" w,
+      Engine.may_edit? bo_body "/r/learning/hall" w
+    )),
+  test "opens and closes the rooms of their realm" (fn t ->
+    t.eq
+      [
+        "The Guild Hall is private now: only you, whoever you invite, and the Keymasters may come in."
+      ]
+      (heard bo (played (List.concat in_hall [line bo "/private here"])))),
+  test "sees the flags on their realm" (fn t ->
+    t.eq
+      ["#1 room /r/guild/inner/hall#0, by ann at 2026-09-30T12:00:00Z: a rude sign"]
+      (heard bo (played (List.concat in_hall [line bo "/flags"])))),
+  test "resolves them" (fn t ->
+    let w = played (List.concat in_hall [line bo "/resolve 1 dismiss"]);
+    t.eq ["Flag #1 dismissed."] (heard bo w)),
+  test "pauses no one" (fn t ->
+    let w =
+      played
+        (List.concat in_hall [
+          line ann `/eval [Core.Spawn "/r/lever" ctx.here]`,
+          line ann "/flag lever loud",
+          World.emptied bo,
+          line bo "/resolve 2 pause"
+        ]);
+    t.eq ["Only a Keymaster pauses an account."] (heard bo w)),
+  test "sees no flag on a person" (fn t ->
+    let w = played (List.concat in_hall [line ann "/report bo rude", line bo "/flags 2"]);
+    t.eq ["There is no flag #2 for you to review."] (heard bo w)),
+  test "is no Steward to anyone else" (fn t ->
+    t.eq
+      ["Only a Keymaster or a Steward reviews flags."]
+      (heard ann (played (List.concat in_hall [World.emptied ann, line ann "/flags"]))))
+])

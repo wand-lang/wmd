@@ -32,7 +32,7 @@ let Core = import ../lib/std/core
 -- admins own, as the driver and every realm say. `size` is how many
 -- bytes its saved state was at the last snapshot.
 --
--- `allowed` says who may enter a room, besides its owner and the admins:
+-- `allowed` says who may enter a room, besides its owner and the Keymasters:
 -- everyone, or only the accounts it names. An object that is `locked` is
 -- moved only by what its owner owns.
 type Instance(
@@ -48,8 +48,8 @@ type Instance(
   size: Int = 0,
   allowed: Core.Allowed = Core.Only [],
   locked: Bool = true,
-  -- Held for review after enough flags: it shows as waiting for an admin,
-  -- and runs nothing, until an admin resolves its flags.
+  -- Held for review after enough flags: it shows as waiting for a Keymaster,
+  -- and runs nothing, until a Keymaster resolves its flags.
   held: Bool = false,
   -- How many of its calls in a row have faulted. It is not saved: a
   -- restart gives every object a new start.
@@ -60,7 +60,9 @@ type Instance(
 type Session(id: String, body: Option String = None, closing: Bool = false)
 
 -- An account: its name as written, its body, its password as
--- "./password" keeps one, and its role, "builder" or "admin". `home` is
+-- "./password" keeps one, and its role, "citizen" or "keymaster". `created`
+-- is when it was made, which for a Citizen is when it passed the age check
+-- at signup: the date of birth is never kept. `home` is
 -- the room its body goes home to, when not the arrival room, and
 -- `last_seen` when its session last ended. `inspiration` starts full: the
 -- full amount at the epoch is full at any time after. `explored` is every
@@ -72,7 +74,8 @@ type Account(
   name: String,
   body: String,
   password: String,
-  role: String = "builder",
+  role: String = "citizen",
+  created: Option DateTime = None,
   home: Option String = None,
   last_seen: Option String = None,
   inspiration: Inspiration.Inspiration = Inspiration.Inspiration(amount = 1000, at = 1970-01-01T00:00:00Z),
@@ -88,7 +91,7 @@ type Signed(version: Int, at: DateTime)
 
 -- A flag: `by`, an account, says `target` breaks the rules. `kind` is
 -- "room", "object" or "person". `evidence` is what the target was when it
--- was flagged, so editing it later does not change what an admin sees.
+-- was flagged, so editing it later does not change what a Keymaster sees.
 type Flag(
   id: Int,
   by: String,
