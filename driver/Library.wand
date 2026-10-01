@@ -67,7 +67,7 @@ let into (loaded: Loaded) (w: World.Current) =
         homes = s.homes,
         driver = s.driver
       ),
-      library = loaded.library
+      dig = Some s.dig
     )
     | None -> w
   in

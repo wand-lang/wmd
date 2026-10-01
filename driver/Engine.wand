@@ -1679,7 +1679,7 @@ let _dig body words (tx: Tx) = (
     else if Files.exists? tx.w.lib_root path then tell "%{path} is there already."
     else if Option.map (Map.has? name) exits == Some true then
       tell "%{short_of here tx.w} has an exit %{name} already."
-    else if !(Option.some? tx.w.library) then tell "This game has no room for /dig to make."
+    else if !(Option.some? tx.w.dig) then tell "This game has no room for /dig to make."
     else (
       let payer = _key_of body tx.w;
       -- The game's template, run under the same limits as its other code.
@@ -1687,9 +1687,8 @@ let _dig body words (tx: Tx) = (
         Option.default
           ""
           (Option.map
-            (fn (l: Driver.Library) -> _bounded "" (fn () ->
-              l.start.dig path (_back_of name) from))
-            tx.w.library);
+            (fn dig -> _bounded "" (fn () -> dig path (_back_of name) from))
+            tx.w.dig);
       match budget payer (Driver.Save path source) tx.w with
       | Error why -> tell why
       | Ok cost -> (

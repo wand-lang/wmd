@@ -196,8 +196,9 @@ type Current(
   lib: Map Driver.Blueprint = {},
   -- Where the Library keeps what the driver needs, from its init.wand.
   paths: Paths = Paths(),
-  -- The game's init.wand, as loaded: its `start` holds the room /dig makes.
-  library: Option Driver.Library = None,
+  -- The room /dig makes, from the game's init.wand: the source of a room
+  -- at a path, with an exit back by a name, to the room it was dug from.
+  dig: Option (String -> String -> String -> String) = None,
   -- Every realm, by the path of its file, such as /r/home: the files that
   -- implement Driver.Realm as well as Driver.Blueprint.
   realms: Map Driver.Realm = {},
