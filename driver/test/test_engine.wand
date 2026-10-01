@@ -370,6 +370,7 @@ group "more driver commands" (fn () -> [
         "/realm/commons/lever#0: brass lever",
         "  in: /realm/commons/square#0",
         "  made by: /realm/commons/square#0, %{at}",
+        "  owner: the admins",
         "  changed: %{at}",
         "  props: pulls = 1"
       ]

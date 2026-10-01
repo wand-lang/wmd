@@ -141,3 +141,33 @@ test "a file without the newer fields still reads" (fn t ->
         ))
         (Snapshot.read! path))
   ))
+
+let _owners (w: World.World) =
+  List.sort
+    (List.map (fn (i: World.Instance) -> (i.id, i.owner, i.size)) (Map.values w.instances))
+
+test "brings back who owns each object, and the size of its state" (fn t ->
+  with FS.temp_dir "wmd_snap_" as d -> (
+    let path = Path.join d ./world.json;
+    let before = saved! path;
+    let after = restored! path;
+    t.eq (_owners before, true) (
+      _owners after,
+      List.any? (fn (_, owner, size) -> owner == Some "ann" && size > 0) (_owners after)
+    )
+  ))
+
+-- A file from before owners were kept: a body is its account's, and the
+-- rest is the owner of its file.
+test "a file without owners gets them on restore" (fn t ->
+  with FS.temp_dir "wmd_snap_" as d -> (
+    let path = Path.join d ./world.json;
+    FS.write_file!
+      path
+      `{"version": 1, "accounts": [{"name": "Ann", "body": "/std/player#0", "password": "x"}], "instances": [{"id": "/std/player#0", "blueprint": "/std/player", "env": "/realm/commons/square#0", "state": {"name": "Ann"}}, {"id": "/realm/commons/square#0", "blueprint": "/realm/commons/square", "state": {}}]}`;
+    let w = restored! path;
+    t.eq (Some "ann", None) (
+      World.owner_of "/std/player#0" w,
+      World.owner_of "/realm/commons/square#0" w
+    )
+  ))

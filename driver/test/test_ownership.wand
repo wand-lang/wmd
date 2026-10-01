@@ -1,0 +1,249 @@
+uses {FS.Read, FS.Write, Random, Shared}
+
+-- Who owns what, the rules that follow from it, and the two limits on a
+-- builder: Capacity and Inspiration.
+
+import ../Engine
+import ../Inspiration
+import ../Mudlib
+import ../World
+import List
+import Map
+
+import Option
+import Result
+import Shared
+import String
+
+let {test, group} = import Test
+
+let Core = import ../../lib/std/core
+
+let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
+
+let at = "2026-09-30T12:00:00Z"
+
+let noon = 2026-09-30T12:00:00Z
+
+let ann = World.session_id 0
+
+let bo = World.session_id 1
+
+let ann_body = "/std/player#0"
+
+let bo_body = "/std/player#1"
+
+let square = "/realm/commons/square#0"
+
+let garden = "/realm/commons/garden#0"
+
+let lever = "/realm/commons/lever#0"
+
+let line sid text = World.queue (World.Line sid at text)
+
+let played changes =
+  with Shared.make start as state -> (
+    Engine.boot state at;
+    List.each (fn f -> (Shared.update state f; Engine.step state)) changes;
+    Shared.get state
+  )
+
+let heard sid (w: World.World) =
+  List.filter
+    (fn l -> l != "")
+    (List.map
+      (fn l -> String.replace "\xff\xfc\x01" "" (String.replace "\xff\xfb\x01" "" l))
+      (World.outbox sid w))
+
+let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid w)
+
+let signed_up sid name = [
+  World.open_next at,
+  line sid name,
+  line sid "2000-05-01",
+  line sid "%{name}-password",
+  line sid "%{name}-password"
+]
+
+let ann_in = List.concat (signed_up ann "ann") [World.emptied ann]
+
+let both_in =
+  List.concat ann_in (List.concat (signed_up bo "bo") [World.emptied ann, World.emptied bo])
+
+-- Ann's Inspiration, set to `n` at noon.
+let ann_has n (w: World.World) =
+  match World.account "ann" w with
+  | Some a ->
+    World.add_account
+      World.Account(a, inspiration = Some Inspiration.Inspiration(amount = n, at = noon))
+      w
+  | None -> w
+
+let ann_admin (w: World.World) =
+  match World.account "ann" w with
+  | Some a -> World.add_account World.Account(a, role = "admin") w
+  | None -> w
+
+let inspiration name (w: World.World) =
+  match World.account name w with
+  | Some a -> Inspiration.amount noon (World.inspiration_of a)
+  | None -> 0
+
+let spawn_lever = line ann `/eval [Core.Spawn "/realm/commons/lever" ctx.here]`
+
+group "owners" (fn () -> [
+  test "a body is its account's, and the commons are the admins'" (fn t ->
+    let w = played ann_in;
+    t.eq (Some "ann", None, None) (
+      World.owner_of ann_body w,
+      World.owner_of square w,
+      World.owner_of lever w
+    )),
+  test "what a builder spawns is theirs" (fn t ->
+    t.eq
+      (Some "ann")
+      (World.owner_of "/realm/commons/lever#1" (played (List.concat ann_in [spawn_lever])))),
+  test "a room in a builder's home is theirs" (fn t ->
+    t.eq (Some "ann", None) (
+      World.file_owner "/home/ann/hall",
+      World.file_owner "/realm/commons/square"
+    ))
+])
+
+group "the policy" (fn () -> (
+  -- Bo's lever, in the square with Ann, and Bo in the garden.
+  let w =
+    (played both_in)
+    |> World.set_owner lever (Some "bo")
+    |> World.move bo_body garden;
+  let as_lever actor = Engine.ctx_for w lever actor;
+  let ok r = Result.ok? r;
+  [
+    test "an object may not move a player whose command it is not running" (fn t ->
+      let bo_square = World.set_owner square (Some "bo") w;
+      t.eq (false, true) (
+        ok (Engine.allowed (Engine.ctx_for bo_square square bo_body) (Core.Move ann_body garden) bo_square),
+        ok (Engine.allowed (Engine.ctx_for bo_square square ann_body) (Core.Move ann_body garden) bo_square)
+      )),
+    test "unless its owner is the player's account" (fn t ->
+      let ann_square = World.set_owner square (Some "ann") w;
+      t.ok
+        (ok (Engine.allowed (Engine.ctx_for ann_square square bo_body) (Core.Move ann_body garden) ann_square))),
+    test "the admins' rooms may move anyone in them" (fn t ->
+      t.eq (Some "bo", true) (
+        World.owner_of lever w,
+        ok (Engine.allowed (Engine.ctx_for w square bo_body) (Core.Move bo_body square) w)
+      )),
+    test "an object tells the players in its room, and its owner" (fn t ->
+      t.eq (true, true, false) (
+        ok (Engine.allowed (as_lever ann_body) (Core.Tell ann_body "Clunk.") w),
+        ok (Engine.allowed (as_lever ann_body) (Core.Tell bo_body "Clunk.") w),
+        ok (Engine.allowed (as_lever ann_body) (Core.Tell "/std/player#2" "Clunk.") w)
+      )),
+    test "a player's own body may tell anyone" (fn t ->
+      t.ok (ok (Engine.allowed (Engine.ctx_for w ann_body ann_body) (Core.Tell bo_body "Hi.") w))),
+    test "an object spawns here, and in what its owner owns, and nowhere else" (fn t ->
+      t.eq (true, true, false) (
+        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/realm/commons/lever" square) w),
+        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/realm/commons/lever" "/home/bo/hall") w),
+        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/realm/commons/lever" garden) w)
+      ))
+  ]
+))
+
+group "Inspiration" (fn () -> [
+  test "a spawn costs 10, and a run its steps" (fn t ->
+    let w = played (List.concat ann_in [spawn_lever]);
+    t.eq (989, ["1 for eval", "10 for spawn"]) (
+      inspiration "ann" w,
+      List.filter_map
+        (fn (e: World.Event) -> if e.event == "inspiration" then e.text else None)
+        w.events
+    )),
+  test "a spawn there is not enough for is refused, with when there will be" (fn t ->
+    let w = played (List.concat ann_in [ann_has 4, spawn_lever]);
+    t.eq (true, 1) (
+      heard?
+        ann
+        "That needs 10 Inspiration, and you have 3. You will have enough in 42 seconds."
+        w,
+      List.length (World.instances_of "/realm/commons/lever" w)
+    )),
+  test "/eval with none left is refused" (fn t ->
+    t.eq
+      ["That needs 1 Inspiration, and you have 0. You will have enough in 6 seconds."]
+      (heard ann (played (List.concat ann_in [ann_has 0, line ann "/eval 1 + 1"])))),
+  test "/update and /reset cost 5 each" (fn t ->
+    t.eq
+      ["That needs 5 Inspiration, and you have 4. You will have enough in 6 seconds."]
+      (heard ann (played (List.concat ann_in [ann_has 4, line ann "/reset me"])))),
+  test "an admin is held to none of it" (fn t ->
+    let w = played (List.concat ann_in [ann_admin, ann_has 0, spawn_lever]);
+    t.eq (2, 0) (
+      List.length (World.instances_of "/realm/commons/lever" w),
+      inspiration "ann" w
+    ))
+])
+
+group "Capacity" (fn () -> [
+  test "a builder who owns the most objects may spawn no more" (fn t ->
+    -- 199 more objects, and Ann's body makes 200.
+    let fill (w: World.World) =
+      match World.instance lever w with
+      | Some l ->
+        List.fold_left
+          (fn acc n -> World.put World.Instance(l, id = "/realm/commons/lever#%{n + 10}", owner = Some "ann") acc)
+          w
+          (List.range 1 199)
+      | None -> w;
+    let w = played (List.concat ann_in [fill, spawn_lever]);
+    t.eq (true, None) (
+      heard? ann "You own 200 objects, and the most is 200. Remove some to make more." w,
+      World.instance "/realm/commons/lever#210" w |> Option.map (fn (i: World.Instance) -> i.id)
+    ))
+])
+
+group "exploring" (fn () -> (
+  -- Bo owns the garden. Bo goes first, so the garden is made.
+  let explored =
+    List.concat both_in [
+      line bo "north",
+      line bo "south",
+      World.set_owner garden (Some "bo"),
+      World.emptied ann,
+      line ann "north"
+    ];
+  [
+    test "the first visit to a room another builder owns is inspiring" (fn t ->
+      let w = played explored;
+      t.eq (true, 1020) (heard? ann "You feel inspired." w, inspiration "ann" w)),
+    test "the second is not" (fn t ->
+      let w = played (List.concat explored [line ann "south", World.emptied ann, line ann "north"]);
+      t.eq (false, 1020) (heard? ann "You feel inspired." w, inspiration "ann" w)),
+    test "nor is a builder's own room" (fn t ->
+      let w = played (List.concat explored [World.emptied bo, line bo "north"]);
+      t.eq (false, 1000) (heard? bo "You feel inspired." w, inspiration "bo" w))
+  ]
+))
+
+group "/stat" (fn () -> [
+  test "/stat me shows Capacity and Inspiration" (fn t ->
+    t.eq
+      [
+        "Ann, builder.",
+        "Capacity: 1 of 200 objects, 0 of 100 files, 0B of 1MB of saved state.",
+        "Inspiration: 1000 of 1000, refilling 10 a minute.",
+        "Rooms explored: 0, 0 of 10 today."
+      ]
+      (heard ann (played (List.concat ann_in [line ann "/stat me"])))),
+  test "a builder may not see another's" (fn t ->
+    t.eq
+      ["Only an admin may see another's. Try /stat me."]
+      (heard ann (played (List.concat both_in [line ann "/stat bo"])))),
+  test "an admin may" (fn t ->
+    t.ok
+      (heard?
+        ann
+        "Bo, builder."
+        (played (List.concat both_in [ann_admin, line ann "/stat bo"]))))
+])

@@ -1,0 +1,83 @@
+-- Inspiration: what an account may do over time. Building and running code
+-- spend it, it refills at a fixed rate up to `full`, and exploring other
+-- builders' rooms earns more.
+--
+-- It is kept as an amount and the time it was that much, so nothing has
+-- to tick: the amount now is worked out from the time that has passed.
+
+import DateTime
+import Duration
+import Int
+import List
+import Map
+
+type Inspiration(amount: Int, at: DateTime)
+
+-- The refill stops here. A bonus can take the amount past it.
+let full = 1000
+
+-- A full amount at the epoch, which is full at any time after.
+let start = Inspiration(amount = full, at = 1970-01-01T00:00:00Z)
+
+-- One point comes back every 6 seconds, 10 a minute.
+let seconds_per_point = 6
+
+-- What a run of mudlib code costs: a point for each 1000 steps or part.
+let steps_per_point = 1000
+
+-- What each kind of work costs, in points.
+let spawn_cost = 10
+
+let build_cost = 5
+
+-- Exploring: the bonus for the first visit to a room, and how many rooms a
+-- day may earn one, so walking through hundreds of rooms is not a farm.
+let bonus = 20
+
+let bonuses_a_day = 10
+
+let _seconds (later: DateTime) (earlier: DateTime) = Duration.to_ms (later - earlier) / 1000
+
+-- The same Inspiration as of `now`, with the refill since added. A refill
+-- not yet a whole point is kept, so spending often loses nothing.
+let settle now (i: Inspiration) =
+  let gained = _seconds now i.at / seconds_per_point;
+  if i.amount >= full || i.amount + gained >= full then
+    Inspiration(amount = Int.max i.amount full, at = now)
+  else Inspiration(
+    amount = i.amount + gained,
+    at = i.at + Duration.seconds (gained * seconds_per_point)
+  )
+
+let amount now (i: Inspiration) = (settle now i).amount
+
+-- Take `cost` away. The amount may go below zero, when a run cost more than
+-- was left; the refill pays that back before anything else.
+let spend now cost (i: Inspiration) =
+  let s = settle now i;
+  Inspiration(s, amount = s.amount - cost)
+
+let earn now n (i: Inspiration) =
+  let s = settle now i;
+  Inspiration(s, amount = s.amount + n)
+
+-- How many seconds until there is `cost`: 0 when there is already.
+let wait now cost (i: Inspiration) =
+  let s = settle now i;
+  if s.amount >= cost then 0 else (cost - s.amount) * seconds_per_point - _seconds now s.at
+
+-- A wait in words: "36 seconds", "4 minutes".
+let wait_text seconds =
+  if seconds < 60 then "%{seconds} seconds"
+  else (
+    let minutes = (seconds + 59) / 60;
+    if minutes == 1 then "1 minute" else "%{minutes} minutes"
+  )
+
+-- What `steps` of mudlib code cost.
+let of_steps steps = (steps + steps_per_point - 1) / steps_per_point
+
+-- How many of the rooms in `explored` earned a bonus on the day of `now`.
+let today now (explored: Map DateTime) =
+  let day = DateTime.day_start now;
+  List.length (List.filter (fn t -> DateTime.day_start t == day) (Map.values explored))

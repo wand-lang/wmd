@@ -9,6 +9,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 
 import ./Evaluate
 import ./Files
+import ./Inspiration
 import ./Parse
 import ./Password
 import ./Snapshot
@@ -22,6 +23,7 @@ import Option
 import Random
 import Result
 import Shared
+import Size
 import String
 import Wand
 
@@ -115,6 +117,47 @@ let max_saved bp = if bp == "/std/login" then 1048576 else 65536
 -- An object that faults this many times in a row stops working, until its
 -- builder fixes it with /update or /reset.
 let fault_limit = 5
+
+-- Capacity: what one builder may own at once. It stops one builder from
+-- filling the world or the disk; removing things frees it.
+let max_owned = 200
+
+let max_files = 100
+
+let max_saved_total = 1048576
+
+-- ── Ownership ──────────────────────────────────────────────────────────
+
+-- The account key of a body, when it is one.
+let _key_of body (w: World.World) =
+  Option.map (fn (a: World.Account) -> String.lower a.name) (World.account_of body w)
+
+-- Whether an owner is held to no limits: no owner, which is the driver's
+-- and the admins' code, or an admin.
+let _exempt? owner (w: World.World) =
+  match owner with
+  | None -> true
+  | Some n -> (
+    match World.account n w with
+    | Some a -> a.role == "admin"
+    | None -> false
+  )
+
+-- Who owns `id`: its owner, or, for a room not made yet, the owner of its
+-- file.
+let _owner id (w: World.World) =
+  match World.instance id w with
+  | Some i -> i.owner
+  | None -> World.file_owner (World.blueprint_of id)
+
+-- Code the ownership rules do not hold to: the driver's and the admins'.
+let _trusted? id (w: World.World) = _exempt? (World.owner_of id w) w
+
+-- Whether the owner of `id` is the account of the player `p`.
+let _owns? id p (w: World.World) =
+  match (World.owner_of id w, _key_of p w) with
+  | (Some o, Some k) -> o == k
+  | _ -> false
 
 -- ── The read-only view ─────────────────────────────────────────────────
 
@@ -227,26 +270,57 @@ let _may_file (ctx: Core.Context) path (w: World.World) =
   else if !(may_edit? ctx.actor path w) then Error "%{ctx.actor} may not edit %{path}"
   else Ok()
 
+-- A player is told things by their own commands, by what is in the room
+-- with them, and by what their own account owns. A player's own body may
+-- tell anyone, as a page does.
+let _may_tell? (ctx: Core.Context) target (w: World.World) =
+  target == ctx.actor
+  || ctx.self == ctx.actor
+  || room_of target w == room_of ctx.self w
+  || _trusted? ctx.self w
+  || _owns? ctx.self target w
+
+-- An object makes things in itself, in what it holds, on the player whose
+-- command it runs, in the room it is in, or in a place its owner owns.
+let _may_spawn_in? (ctx: Core.Context) dest (w: World.World) =
+  dest == ctx.self
+  || dest == ctx.actor
+  || World.env_of dest w == Some ctx.self
+  || dest == room_of ctx.self w
+  || _trusted? ctx.self w
+  || Option.some? (World.owner_of ctx.self w) && _owner dest w == World.owner_of ctx.self w
+
 -- Whether `ctx.self` may ask for action `a`, and why not. Every rule on
 -- what mudlib code may do is here, in one place.
 let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
   match a with
   | Core.Say text -> _too_long text
-  | Core.Tell target text -> if World.session? target && !(_from_login? ctx) then
-      Error "only /std/login may tell a session"
+  | Core.Tell target text -> if World.session? target then
+      if _from_login? ctx then _too_long text else Error "only /std/login may tell a session"
+    else if !(_may_tell? ctx (World.resolve target) w) then
+      Error "may not tell %{target}: they are not here"
     else _too_long text
   | Core.Move obj dest -> (
     let o = World.resolve obj;
     let d = World.resolve dest;
     if World.session? dest then Error "may not move %{o} into a session"
     else if !(_may_move? ctx o w) then Error "may not move %{o}"
+    -- A player moves by their own command, or by what their own account
+    -- or an admin owns: a room cannot carry off whoever is in it.
+    else if player? o && o != ctx.actor && o != ctx.self && !(_trusted? ctx.self w || _owns? ctx.self o w) then
+      Error "may not move %{o}: a player moves by their own command"
     -- An editor is private to the one it was opened for.
     else if _editor? d && Option.and_then (fn (i: World.Instance) -> i.creator) (World.instance d w) != Some o then
       Error "may not move %{o} into %{d}"
     else Ok()
   )
-  | Core.Spawn bp _ -> if bp == player_bp || bp == "/std/login" then Error "may not spawn %{bp}"
+  | Core.Spawn bp dest -> (
+    let d = World.resolve dest;
+    if bp == player_bp || bp == "/std/login" then Error "may not spawn %{bp}"
+    else if !(_may_spawn_in? ctx d w) then
+      Error "may not spawn into %{d}: it is not here, and not its owner's"
     else Ok()
+  )
   | Core.Login _ _ _ -> if _from_login? ctx then Ok()
     else Error "only /std/login may log in"
   | Core.Register _ _ _ -> if _from_login? ctx then Ok()
@@ -264,12 +338,120 @@ let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
   | Core.Draft path _ -> _may_file ctx path w
   | Core.Run _ -> if _editor? ctx.self then Ok() else Error "only %{editor_bp} may run source"
 
+-- ── Capacity and Inspiration ───────────────────────────────────────────
+
+-- Who pays for action `a`: the builder at the editor for a file or a run,
+-- and otherwise the owner of the object that asks for it.
+let _payer (ctx: Core.Context) (a: Core.Action) (w: World.World) =
+  match a with
+  | Core.Check _ _ -> _key_of ctx.actor w
+  | Core.Save _ _ -> _key_of ctx.actor w
+  | Core.Draft _ _ -> _key_of ctx.actor w
+  | Core.Run _ -> _key_of ctx.actor w
+  | _ -> World.owner_of ctx.self w
+
+-- What action `a` costs in Inspiration, and what to call it in the log. A
+-- run is charged by the steps it took, after it runs.
+let _price (a: Core.Action) =
+  match a with
+  | Core.Spawn _ _ -> (Inspiration.spawn_cost, "spawn")
+  | Core.Check _ _ -> (Inspiration.build_cost, "check")
+  | Core.Save _ _ -> (Inspiration.build_cost, "save")
+  | _ -> (0, "")
+
+let _size bytes = Size.format (Size.of_bytes bytes)
+
+-- Whether a new file fits the Capacity of `owner`.
+let _file_room owner path (w: World.World) =
+  let n = Files.count w.lib_root owner;
+  if Files.exists? w.lib_root path || n < max_files then Ok()
+  else
+    Error "You have %{n} files, and the most is %{max_files}. Remove one to make another."
+
+-- Whether action `a` fits the Capacity of `owner`.
+let _capacity owner (a: Core.Action) (w: World.World) =
+  match a with
+  | Core.Spawn _ _ -> (
+    let n = List.length (World.owned owner w);
+    let bytes = World.saved_bytes owner w;
+    if n >= max_owned then
+      Error "You own %{n} objects, and the most is %{max_owned}. Remove some to make more."
+    else if bytes >= max_saved_total then
+      Error
+        "Your objects keep %{_size bytes} of saved state, and the most is %{_size max_saved_total}."
+    else Ok()
+  )
+  | Core.Save path _ -> _file_room owner path w
+  | Core.Draft path _ -> _file_room owner path w
+  | _ -> Ok()
+
+-- Whether the account `owner` has `cost` Inspiration now, and when it
+-- will if not.
+let _inspired owner cost (w: World.World) =
+  match World.account owner w with
+  | None -> Error "There is no account %{owner} to pay for that."
+  | Some acct -> (
+    let i = World.inspiration_of acct;
+    let have = Inspiration.amount w.now i;
+    if have >= cost then Ok()
+    else
+      Error
+        "That needs %{cost} Inspiration, and you have %{have}. You will have enough in %{Inspiration.wait_text (Inspiration.wait w.now cost i)}."
+  )
+
+-- Whether `payer` may pay for action `a`, and what it costs them.
+let budget payer (a: Core.Action) (w: World.World) = (
+  let (cost, _) = _price a;
+  match payer with
+  | Some p when !(_exempt? payer w) -> (
+    match _capacity p a w with
+    | Error why -> Error why
+    | Ok _ -> Result.map (fn _ -> cost) (_inspired p cost w)
+  )
+  | _ -> Ok 0
+)
+
+-- Spend `cost` of the Inspiration of `payer` on `what`, and log it.
+let _charge payer cost what (tx: Tx) =
+  match payer with
+  | Some p when cost > 0 && !(_exempt? payer tx.w) ->
+    tx
+    |> change (World.spend p cost tx.w.now)
+    |> _event World.Event(
+      at = "",
+      event = "inspiration",
+      actor = p,
+      text = Some "%{cost} for %{what}"
+    )
+  | _ -> tx
+
+-- Tell the player whose command it is why it was refused, when it was
+-- theirs to pay for.
+let _tell_payer (ctx: Core.Context) payer why (tx: Tx) =
+  if Option.some? payer && _key_of ctx.actor tx.w == payer then
+    change (World.tell ctx.actor why) tx
+  else tx
+
+-- A driver command that costs `cost`: run `k` when the account of `body`
+-- can pay, and charge it.
+let _pay body cost what k (tx: Tx) = (
+  let payer = _key_of body tx.w;
+  match payer with
+  | Some p when !(_exempt? payer tx.w) -> (
+    match _inspired p cost tx.w with
+    | Error why -> change (World.tell body why) tx
+    | Ok _ -> k (_charge payer cost what tx)
+  )
+  | _ -> k tx
+)
+
 -- ── Spawning ───────────────────────────────────────────────────────────
 
--- Make instance `id` of blueprint `bp` inside `dest`, and apply the actions
--- its `create` asks for. Nothing happens for a blueprint that is not in
--- the lib, or a create that raises; the event log says which.
-let _create id bp saved dest (tx: Tx) =
+-- Make instance `id` of blueprint `bp` inside `dest`, owned by `owner`, and
+-- apply the actions its `create` asks for. Nothing happens for a blueprint
+-- that is not in the lib, or a create that raises; the event log says
+-- which.
+let _create id bp saved dest owner (tx: Tx) =
   match Map.get bp tx.w.lib with
   | None -> _event (World.Event(at = "", event = "refused", actor = id, text = Some "no blueprint %{bp}")) tx
   | Some b -> (
@@ -279,23 +461,31 @@ let _create id bp saved dest (tx: Tx) =
       tx
       |> change
         (World.put
-          (World.Instance(id = id, blueprint = bp, object = init.object, env = dest, created = Some tx.at)))
+          (World.Instance(
+            id = id,
+            blueprint = bp,
+            object = init.object,
+            env = dest,
+            created = Some tx.at,
+            owner = owner
+          )))
       |> _apply_actions (ctx_for tx.w id id) init.actions
   )
 
 -- Make sure `id` exists: a room named by an exit is spawned the first time
--- someone goes there.
+-- someone goes there. It is owned by the owner of its file.
 and _ensure id (tx: Tx) =
   let full = World.resolve id;
   if Option.some? (World.instance full tx.w) then tx
-  else _create full (World.blueprint_of full) None None tx
+  else _create full (World.blueprint_of full) None None (World.file_owner (World.blueprint_of full)) tx
 
--- A new instance of `bp` in `dest`, made by `actor`'s command.
-and spawn bp dest actor (tx: Tx) =
+-- A new instance of `bp` in `dest`, made by `actor`'s command and owned by
+-- `owner`.
+and spawn bp dest actor owner (tx: Tx) =
   let id = "%{bp}#%{World.next_number bp tx.w}";
   tx
   |> _ensure dest
-  |> _create id bp None (Some (World.resolve dest))
+  |> _create id bp None (Some (World.resolve dest)) owner
   |> change (fn w -> World.set_made id (Some actor) (Some tx.at) None w)
   |> _event (World.Event(at = "", event = "spawn", actor = actor, object = Some id))
   |> _hook "enter" dest id actor
@@ -344,35 +534,78 @@ and _move (ctx: Core.Context) obj dest (tx: Tx) =
     | Some t -> ensured |> _ensure t |> change (World.move obj t)
     | None -> ensured;
   let looked = if player? obj then look obj moved else moved;
+  let explored =
+    match target with
+    | Some t when player? obj -> _explore obj (World.resolve t) looked
+    | _ -> looked;
   let left =
     match from with
-    | Some f -> _hook "leave" f obj ctx.actor looked
-    | None -> looked;
+    | Some f -> _hook "leave" f obj ctx.actor explored
+    | None -> explored;
   match target with
   | Some t -> _hook "enter" (World.resolve t) obj ctx.actor left
   | None -> left
 
+-- The first visit of a body to a room another builder owns gives its
+-- account an exploring bonus, up to `Inspiration.bonuses_a_day` rooms a
+-- day.
+and _explore body room (tx: Tx) =
+  match (World.account_of body tx.w, World.owner_of room tx.w) with
+  | (Some a, Some o) when World.env_of room tx.w == None
+    && o != String.lower a.name
+    && !(Map.has? room a.explored)
+    && Inspiration.today tx.w.now a.explored < Inspiration.bonuses_a_day ->
+    tx
+    |> change (World.inspire a.name room tx.w.now)
+    |> _event World.Event(at = "", event = "inspired", actor = body, room = Some room)
+    |> change (World.tell body "You feel inspired.")
+  | _ -> tx
+
+-- Check action `a` against the policy, then against the Capacity and
+-- Inspiration of whoever pays for it, and do it.
 and _act (ctx: Core.Context) (a: Core.Action) (tx: Tx) =
   match allowed ctx a tx.w with
   | Error why -> _refuse ctx why tx
   | Ok _ -> (
-    match a with
-    | Core.Say text -> _say ctx text tx
-    | Core.Tell target text -> change (World.tell target text) tx
-    | Core.Move obj dest -> _move ctx (World.resolve obj) dest tx
-    | Core.Spawn bp dest -> spawn bp dest ctx.actor tx
-    | Core.Login sid name typed -> login sid name typed tx
-    | Core.Register sid name typed -> register sid name typed tx
-    | Core.Hangup sid -> change (World.close_soon sid) tx
-    | Core.Remove obj ->
-      tx
-      |> change (World.remove obj)
-      |> _event (World.Event(at = "", event = "remove", actor = ctx.actor, object = Some (World.resolve obj)))
-    | Core.Check path source -> _answer ctx (Files.check tx.w.lib_root path source) tx
-    | Core.Save path source -> _save ctx path source tx
-    | Core.Draft path source -> _answer ctx (Files.draft tx.w.lib_root path source) tx
-    | Core.Run source -> eval ctx.actor source tx
+    let payer = _payer ctx a tx.w;
+    match budget payer a tx.w with
+    | Error why -> _short ctx a why (_refuse ctx why tx)
+    | Ok cost -> (let (_, what) = _price a; _do ctx payer a (_charge payer cost what tx))
   )
+
+-- Tell why an action was more than its payer had: the editor, through its
+-- `result` verb, for a file, and otherwise the player who paid.
+and _short (ctx: Core.Context) (a: Core.Action) why (tx: Tx) =
+  let failed action path =
+    Core.Outcome(
+      action = action,
+      path = path,
+      ok = false,
+      problems = [Core.Problem(severity = "error", line = 1, col = 1, message = why)]
+    );
+  match a with
+  | Core.Check path _ -> _answer ctx (failed "check" path) tx
+  | Core.Save path _ -> _answer ctx (failed "save" path) tx
+  | Core.Draft path _ -> _answer ctx (failed "draft" path) tx
+  | _ -> _tell_payer ctx (_payer ctx a tx.w) why tx
+
+and _do (ctx: Core.Context) payer (a: Core.Action) (tx: Tx) =
+  match a with
+  | Core.Say text -> _say ctx text tx
+  | Core.Tell target text -> change (World.tell target text) tx
+  | Core.Move obj dest -> _move ctx (World.resolve obj) dest tx
+  | Core.Spawn bp dest -> spawn bp dest ctx.actor payer tx
+  | Core.Login sid name typed -> login sid name typed tx
+  | Core.Register sid name typed -> register sid name typed tx
+  | Core.Hangup sid -> change (World.close_soon sid) tx
+  | Core.Remove obj ->
+    tx
+    |> change (World.remove obj)
+    |> _event (World.Event(at = "", event = "remove", actor = ctx.actor, object = Some (World.resolve obj)))
+  | Core.Check path source -> _answer ctx (Files.check tx.w.lib_root path source) tx
+  | Core.Save path source -> _save ctx path source tx
+  | Core.Draft path source -> _answer ctx (Files.draft tx.w.lib_root path source) tx
+  | Core.Run source -> eval ctx.actor source tx
 
 -- Save, and write the list of blueprints again, so a new one loads at
 -- the next start.
@@ -445,8 +678,16 @@ and reset actor ids (tx: Tx) =
 
 -- /eval: run `expr` for `body`, as mudlib code runs: checked, gated, and
 -- under the limits. A list of actions is checked and applied as the
--- body's own; any other value is shown with its type.
+-- body's own; any other value is shown with its type. It costs the steps
+-- it took, so it needs some Inspiration left to start.
 and eval body expr (tx: Tx) =
+  let payer = _key_of body tx.w;
+  let ready = if _exempt? payer tx.w then Ok() else _inspired (Option.default "" payer) 1 tx.w;
+  match ready with
+  | Error why -> change (World.tell body why) tx
+  | Ok _ -> _eval body payer expr tx
+
+and _eval body payer expr (tx: Tx) =
   match Evaluate.load tx.w.lib_root expr with
   | Error errors ->
     tx
@@ -456,7 +697,8 @@ and eval body expr (tx: Tx) =
     let ctx = ctx_for tx.w body body;
     let (r, steps) = _counted (fn () -> m.evaluate ctx);
     let logged =
-      _event (World.Event(at = "", event = "eval", actor = body, text = Some "%{expr} (%{steps} steps)")) tx;
+      _event (World.Event(at = "", event = "eval", actor = body, text = Some "%{expr} (%{steps} steps)")) tx
+      |> _charge payer (Inspiration.of_steps steps) "eval";
     match r with
     | Error why -> change (World.tell body "Something went wrong: %{why}") logged
     | Ok (Core.Shown text) -> change (World.tell body "=> %{text}") logged
@@ -590,7 +832,7 @@ and register sid name typed (tx: Tx) =
     let hashed = Password.hash tx.w.pepper (Random.hex 32) typed;
     tx
     |> _ensure arrival
-    |> _create body player_bp (Some saved) (Some arrival)
+    |> _create body player_bp (Some saved) (Some arrival) (Some (String.lower name))
     |> change (World.add_account (World.Account(name = name, body = body, password = hashed)))
     |> _hook "enter" arrival body body
     |> _event (World.Event(at = "", event = "signup", actor = sid, name = Some name, object = Some body))
@@ -751,6 +993,7 @@ let _examine body words (w: World.World) = (
           "  in: %{Option.default "nothing" i.env}",
           "  holds: %{_or_none (World.contents i.id w)}",
           "  made by: %{Option.default "the driver" i.creator}, %{Option.default "at boot" i.created}",
+          "  owner: %{Option.default "the admins" i.owner}",
           "  changed: %{Option.default "never" i.modified}",
           "  props: %{_or_none props}",
           "  verbs: %{_or_none (List.flatten (List.map (fn (v: Core.Verb) -> v.names) i.object.verbs))}",
@@ -796,7 +1039,7 @@ let _open_editor body state opened (tx: Tx) =
   else (
     let id = "%{editor_bp}#%{World.next_number editor_bp tx.w}";
     tx
-    |> _create id editor_bp (Some state) None
+    |> _create id editor_bp (Some state) None None
     |> change (World.set_made id (Some body) (Some tx.at) None)
     |> _event World.Event(at = "", event = "spawn", actor = body, object = Some id)
     |> _tell_room here body "%{short_of body tx.w} leaves for the editor."
@@ -848,7 +1091,7 @@ let _update body words (tx: Tx) =
       change (World.tell body "'%{path}' is not a mudlib path.") tx
     else if !(may_edit? body path tx.w) then
       change (World.tell body "You may not update %{path}.") tx
-    else update body path tx
+    else _pay body Inspiration.build_cost "update" (update body path) tx
 
 -- The instances /reset names: here, me, an object by name, an instance id,
 -- or a blueprint path for every instance of it.
@@ -880,8 +1123,41 @@ let _reset body words (tx: Tx) =
         ids;
     if refused != [] then
       change (World.tell body "You may not reset %{String.join ", " refused}.") tx
-    else reset body ids tx
+    else _pay body (Inspiration.build_cost * List.length ids) "reset" (reset body ids) tx
   )
+
+-- An account's Capacity and Inspiration, as /stat shows them.
+let _stat_text (a: World.Account) (w: World.World) =
+  let key = String.lower a.name;
+  let i = World.inspiration_of a;
+  let lines =
+    [
+      "%{a.name}, %{a.role}.",
+      "Capacity: %{List.length (World.owned key w)} of %{max_owned} objects, %{Files.count w.lib_root key} of %{max_files} files, %{_size (World.saved_bytes key w)} of %{_size max_saved_total} of saved state.",
+      "Inspiration: %{Inspiration.amount w.now i} of %{Inspiration.full}, refilling %{60 / Inspiration.seconds_per_point} a minute.",
+      "Rooms explored: %{Map.size a.explored}, %{Inspiration.today w.now a.explored} of %{Inspiration.bonuses_a_day} today."
+    ];
+  let notes = if a.role == "admin" then ["An admin is held to neither limit."] else [];
+  String.join "\n" (List.concat lines notes)
+
+-- /stat: a builder's own Capacity and Inspiration, or, for an admin,
+-- anyone's.
+let _stat body words (tx: Tx) = (
+  let me = World.account_of body tx.w;
+  let found =
+    (if words == "" || words == "me" then
+       match me with
+       | Some a -> Ok a
+       | None -> Error "You have no account."
+     else if Option.map (fn (a: World.Account) -> a.role) me != Some "admin" then
+       Error "Only an admin may see another's. Try /stat me."
+     else match World.account words tx.w with
+       | Some a -> Ok a
+       | None -> Error "There is no one called %{words}.");
+  match found with
+  | Error why -> change (World.tell body why) tx
+  | Ok a -> (let text = _stat_text a tx.w; change (World.tell body text) tx)
+)
 
 -- A command line from a session that is logged in.
 let _command_line sid body at line (tx: Tx) =
@@ -912,6 +1188,7 @@ let _command_line sid body at line (tx: Tx) =
       | None -> change (_who body) logged
     )
     | "/examine" -> change (_examine body (_after_verb full)) logged
+    | "/stat" -> _stat body (_after_verb full) logged
     | "/edit" -> _edit body (_after_verb full) logged
     | "/update" -> _update body (_after_verb full) logged
     | "/reset" -> _reset body (_after_verb full) logged
@@ -1061,6 +1338,15 @@ let snapshot! state path at = (
   Snapshot.write! path (Snapshot.of_world (Shared.get state))
 )
 
+-- Who owns an object a snapshot kept. A version 1 file did not keep
+-- owners, so there a body is its account's and anything else is the owner
+-- of its file.
+let _restored_owner (f: Snapshot.File) (s: Snapshot.Saved) =
+  if f.version >= 2 then s.owner
+  else match List.find (fn (a: World.Account) -> a.body == s.id) f.accounts with
+    | Some a -> Some (String.lower a.name)
+    | None -> World.file_owner s.blueprint
+
 -- Bring back what a snapshot kept: the accounts, then every object, made
 -- again by its blueprint's `create` from its saved state.
 let restore state (f: Snapshot.File) at =
@@ -1072,7 +1358,7 @@ let restore state (f: Snapshot.File) at =
   let tx =
     List.fold_left
       (fn t (s: Snapshot.Saved) -> t
-      |> _create s.id s.blueprint (Some s.state) s.env
+      |> _create s.id s.blueprint (Some s.state) s.env (_restored_owner f s)
       |> change (World.set_made s.id s.creator s.created s.modified)
       |> change (World.keep_saved s.id s.state))
       accounts
@@ -1089,7 +1375,7 @@ let make_account state name typed role at =
   let tx =
     t
     |> _ensure arrival
-    |> _create body player_bp (Some saved) (Some arrival)
+    |> _create body player_bp (Some saved) (Some arrival) (Some (String.lower name))
     |> change
       (World.add_account World.Account(
         name = name,

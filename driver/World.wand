@@ -6,11 +6,14 @@
 -- pipeline. Session fibers change only their own session, outbox and the
 -- input queue; everything else is changed by the one driver fiber.
 
+import JSON
 import List
 import Map
 import Option
 import Result
 import String
+
+import ./Inspiration
 
 let Core = import ../lib/std/core
 
@@ -22,6 +25,11 @@ let Core = import ../lib/std/core
 -- makes its furniture. It is None for what the driver made. `created`
 -- and `modified` are the times of the inputs that made it and last
 -- changed it.
+--
+-- `owner` is the account, by its key, whose Capacity the object counts
+-- against and whose Inspiration its work spends. It is None for the
+-- driver's and the admins' code in /std and /realm. `size` is how many
+-- bytes its saved state was at the last snapshot.
 type Instance(
   id: String,
   blueprint: String,
@@ -31,6 +39,8 @@ type Instance(
   creator: Option String = None,
   created: Option String = None,
   modified: Option String = None,
+  owner: Option String = None,
+  size: Int = 0,
   -- How many of its calls in a row have faulted. It is not saved: a
   -- restart gives every object a new start.
   faults: Int = 0
@@ -42,14 +52,18 @@ type Session(id: String, body: Option String = None, closing: Bool = false)
 -- An account: its name as written, its body, its password as
 -- "./password" keeps one, and its role, "builder" or "admin". `home` is
 -- the room its body goes home to, when not the arrival room, and
--- `last_seen` when its session last ended.
+-- `last_seen` when its session last ended. `inspiration` is None until it
+-- first spends or earns any, which is the same as full. `explored` is
+-- every room that has given it an exploring bonus, and when.
 type Account(
   name: String,
   body: String,
   password: String,
   role: String = "builder",
   home: Option String = None,
-  last_seen: Option String = None
+  last_seen: Option String = None,
+  inspiration: Option Inspiration.Inspiration = None,
+  explored: Map DateTime = {}
 )
 
 -- What a session hands the driver.
@@ -159,6 +173,31 @@ let set_made id creator created modified (w: World) =
   | Some i -> put Instance(i, creator = creator, created = created, modified = modified) w
   | None -> w
 
+-- ── Ownership ──────────────────────────────────────────────────────────
+
+let owner_of id (w: World) = Option.and_then (fn (i: Instance) -> i.owner) (instance id w)
+
+let set_owner id owner (w: World) =
+  match instance id w with
+  | Some i -> put Instance(i, owner = owner) w
+  | None -> w
+
+-- Who owns the file of blueprint path `path`: the builder whose home it is
+-- in, as ann for /home/ann/lamp. The rest of the mudlib is the admins'.
+let file_owner path =
+  match String.split "/" path with
+  | ["" :: "home" :: name :: _ :: _] -> Some name
+  | _ -> None
+
+-- The instances `owner` owns.
+let owned owner (w: World) =
+  List.filter (fn (i: Instance) -> i.owner == Some owner) (Map.values w.instances)
+
+-- How many bytes of saved state `owner`'s instances had at the last
+-- snapshot.
+let saved_bytes owner (w: World) =
+  List.fold_left (fn n (i: Instance) -> n + i.size) 0 (owned owner w)
+
 -- The instances of blueprint `bp`, by id.
 let instances_of bp (w: World) =
   List.map
@@ -210,6 +249,32 @@ let set_home body room (w: World) =
   _put_account body (fn a -> Account(a, home = Some room)) w
 
 let seen body at (w: World) = _put_account body (fn a -> Account(a, last_seen = Some at)) w
+
+-- Change the account with key `name`.
+let _put_named name f (w: World) =
+  match account name w with
+  | Some a -> add_account (f a) w
+  | None -> w
+
+-- An account's Inspiration, full when it has never spent any.
+let inspiration_of (a: Account) = Option.default Inspiration.start a.inspiration
+
+let spend name cost now (w: World) =
+  _put_named
+    name
+    (fn a -> Account(a, inspiration = Some (Inspiration.spend now cost (inspiration_of a))))
+    w
+
+-- An exploring bonus, for the first visit to `room`.
+let inspire name room now (w: World) =
+  _put_named
+    name
+    (fn a -> Account(
+      a,
+      inspiration = Some (Inspiration.earn now Inspiration.bonus (inspiration_of a)),
+      explored = Map.set room now a.explored
+    ))
+    w
 
 -- ── Sessions ───────────────────────────────────────────────────────────
 
@@ -330,7 +395,7 @@ let close sid at (w: World) =
 -- Keep what an object's `save` gave, until the object changes again.
 let keep_saved id (j: JSON) (w: World) =
   match instance id w with
-  | Some i -> put Instance(i, saved = Some j) w
+  | Some i -> put Instance(i, saved = Some j, size = String.length (JSON.stringify j)) w
   | None -> w
 
 let snapshot_due (w: World) = World(w, snapshot_due = true)

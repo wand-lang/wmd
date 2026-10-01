@@ -108,6 +108,14 @@ let draft (lib: Path) path source = (
   | Ok _ -> Core.Outcome(action = "draft", path = path, ok = true, text = Some text)
 )
 
+-- How many files are in the home of the builder `name`.
+let count (lib: Path) name =
+  let home = Path.join lib (Path.of_string "./home/%{String.lower name}");
+  if FS.dir? home then List.length (FS.glob_in **/*.wand home) else 0
+
+-- Whether the file of `path` is there yet.
+let exists? (lib: Path) path = FS.exists? (file_of lib path)
+
 -- The source of the file of `path`, or None when there is no such file.
 let read (lib: Path) path =
   let file = file_of lib path;

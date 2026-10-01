@@ -22,9 +22,11 @@ type Saved(
   state: JSON,
   creator: Option String = None,
   created: Option String = None,
-  modified: Option String = None
+  modified: Option String = None,
+  owner: Option String = None
 )
 
+-- Version 1 did not keep owners. A file with no version is version 1.
 type File(version: Int = 1, accounts: List World.Account, instances: List Saved)
 
 -- The file for a world whose every instance has its saved state. An
@@ -32,6 +34,7 @@ type File(version: Int = 1, accounts: List World.Account, instances: List Saved)
 -- written as something it never said.
 let of_world (w: World.World) =
   File(
+    version = 2,
     accounts = Map.values w.accounts,
     instances =
       List.filter_map
@@ -43,7 +46,8 @@ let of_world (w: World.World) =
             state = s,
             creator = i.creator,
             created = i.created,
-            modified = i.modified
+            modified = i.modified,
+            owner = i.owner
           ))
           i.saved)
         (Map.values w.instances)

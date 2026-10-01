@@ -1,0 +1,76 @@
+-- Inspiration as an amount and a time: the refill, spending and waiting.
+
+import ../Inspiration
+import Duration
+
+import Map
+
+let {test, group} = import Test
+
+let noon = 2026-09-30T12:00:00Z
+
+let later seconds = noon + Duration.seconds seconds
+
+let half = Inspiration.Inspiration(amount = 500, at = noon)
+
+group "the refill" (fn () -> [
+  test "one point comes back every 6 seconds" (fn t ->
+    t.eq (500, 510, 600) (
+      Inspiration.amount noon half,
+      Inspiration.amount (later 60) half,
+      Inspiration.amount (later 600) half
+    )),
+  test "it stops at full" (fn t -> t.eq 1000 (Inspiration.amount (later 86400) half)),
+  test "an account that never spent any is full" (fn t ->
+    t.eq 1000 (Inspiration.amount noon Inspiration.start)),
+  test "a refill not yet a whole point is kept" (fn t ->
+    -- 4 seconds is no point yet; 4 more is the first, with 2 over.
+    let spent = Inspiration.spend (later 4) 0 half;
+    t.eq (500, 501, 502) (
+      Inspiration.amount (later 4) spent,
+      Inspiration.amount (later 8) spent,
+      Inspiration.amount (later 14) spent
+    ))
+])
+
+group "spending and earning" (fn () -> [
+  test "a spend takes away from the amount now" (fn t ->
+    t.eq 400 (Inspiration.amount (later 60) (Inspiration.spend (later 60) 110 half))),
+  test "a run that cost more than was left leaves less than none" (fn t ->
+    t.eq (-20) (Inspiration.amount noon (Inspiration.spend noon 520 half))),
+  test "a bonus may go past full, and the refill does not take it back" (fn t ->
+    let rich = Inspiration.earn noon 20 Inspiration.start;
+    t.eq (1020, 1020) (Inspiration.amount noon rich, Inspiration.amount (later 600) rich))
+])
+
+group "waiting" (fn () -> [
+  test "there is no wait for what there is already" (fn t ->
+    t.eq 0 (Inspiration.wait noon 500 half)),
+  test "the wait is 6 seconds a point, less what has refilled" (fn t ->
+    let low = Inspiration.Inspiration(amount = 3, at = noon);
+    t.eq (42, 38) (Inspiration.wait noon 10 low, Inspiration.wait (later 4) 10 low)),
+  test "in words" (fn t ->
+    t.eq ("42 seconds", "1 minute", "3 minutes") (
+      Inspiration.wait_text 42,
+      Inspiration.wait_text 60,
+      Inspiration.wait_text 121
+    ))
+])
+
+test "a run costs a point for each 1000 steps or part" (fn t ->
+  t.eq (0, 1, 1, 2, 100) (
+    Inspiration.of_steps 0,
+    Inspiration.of_steps 1,
+    Inspiration.of_steps 1000,
+    Inspiration.of_steps 1001,
+    Inspiration.of_steps 100000
+  ))
+
+test "only today's bonuses count toward the day's" (fn t ->
+  let explored =
+    Map.from_list [
+      ("/home/bo/hall#0", 2026-09-29T23:59:59Z),
+      ("/home/bo/den#0", 2026-09-30T00:00:00Z),
+      ("/home/cy/attic#0", 2026-09-30T11:00:00Z)
+    ];
+  t.eq 2 (Inspiration.today noon explored))
