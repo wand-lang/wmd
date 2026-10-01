@@ -3,7 +3,7 @@
 }
 
 -- DO NOT EDIT: interface, written by `wand p`
-version 0.2.2
+version 0.3.0
 
 type driver/Engine.Tx(
   w: World.Current,
@@ -91,7 +91,7 @@ type driver/World.Current(
   lib_root: Path = ./lib,
   lib: Map Driver.Blueprint = {},
   paths: Paths = Paths(),
-  library: Option Driver.Library = None,
+  dig: Option (String -> String -> String -> String) = None,
   realms: Map Driver.Realm = {},
   editor_before: Option Driver.Blueprint = None,
   help: Map String = {},
