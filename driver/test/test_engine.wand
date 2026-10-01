@@ -68,10 +68,16 @@ let both_in =
   List.concat ann_in (List.concat (signed_up bo "bo") [world.emptied ann, world.emptied bo])
 
 group "login" (fn () -> [
-  test "a new connection is asked for a name" (fn t ->
-    t.eq
-      ["Welcome to WMD, the World of Many Doors.", "What is your name?"]
-      (heard ann (played [world.open_next at]))),
+  test "a new connection sees the doors, then is asked for a name" (fn t ->
+    let lines = heard ann (played [world.open_next at]);
+    t.eq (
+      12,
+      Some "  .=======================================================================.",
+      [
+        "        W  O  R  L  D     O  F     M  A  N  Y     D  O  O  R  S",
+        "What is your name?"
+      ]
+    ) (List.length lines, List.head lines, List.drop 10 lines)),
   test "a name that is not 2 to 16 letters is refused" (fn t ->
     t.eq
       ["A name is 2 to 16 letters. What is your name?"]
