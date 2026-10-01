@@ -286,12 +286,13 @@ let run! (o: Opts) = (
     );
     Engine.boot state (_now ());
     IO.println "wmd listening on %{o.port}, world in %{o.world}, logging to %{o.logs}";
-    Par.all! [
+    -- The server runs until the first branch ends, so the git loop is a
+    -- branch only with --git: a branch that does nothing ends at once.
+    Par.all! (List.concat [
       fn () -> Net.listen o.port |> Par.each_stream 256 (Session.serve state),
       fn () -> _driver state o o.tick,
       fn () -> Clock.every 60s (fn () -> Shared.update state World.snapshot_due),
-      fn () -> Clock.every 1s (fn () -> Log.flush! state o.logs),
-      fn () -> if o.git then _git state o (Clock.now ())
-    ]
+      fn () -> Clock.every 1s (fn () -> Log.flush! state o.logs)
+    ] (if o.git then [fn () -> _git state o (Clock.now ())] else []))
   )
 )
