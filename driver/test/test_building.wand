@@ -166,6 +166,13 @@ group "short forms" (fn () -> [
         (fn (n, _) -> n)
         (Driver.exit_named "x" {"n*orth" = Driver.Exit(to = "/r/a")})
     )),
+  test "an exit's name may be several words, in any case" (fn t ->
+    t.eq
+      [Some "The Commons", Some "The Commons", Some "The Commons", None]
+      (List.map (fn typed -> Option.map
+        (fn (n, _) -> n)
+        (Driver.exit_named typed {"The Commons" = Driver.Exit(to = "/r/square")})
+      ) ["the commons", "THE  Commons", "  the commons ", "the"])),
   test "a verb answers to a short form" (fn t ->
     built! (List.concat in_hall [line "lo"]) (fn w ->
       t.ok (List.any? (fn l -> l == "A new room") (heard w))))

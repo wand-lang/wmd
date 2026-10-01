@@ -313,14 +313,18 @@ let names? n word =
     String.starts_with? least word && String.starts_with? word "%{least}%{rest}"
   | _ -> word == n
 
--- The exit that `word` names, with its name as shown: ("north", e) for n
--- in `{"n*orth" = e}`. A name in full beats a start of one.
-let exit_named word (exits: Map Exit) = (
+-- The exit that `words` name, with its name as shown: ("north", e) for n
+-- in `{"n*orth" = e}`. A name may be several words, as "the commons", and
+-- case and the spaces between words do not count. A name in full beats a
+-- start of one.
+let exit_named words (exits: Map Exit) = (
+  let plain s = String.join " " (String.words (String.lower s));
+  let typed = plain words;
   let all = Map.to_list exits;
   let shown (n, e) = (name_of n, e);
-  match List.find (fn (n, _) -> name_of n == word) all with
+  match List.find (fn (n, _) -> plain (name_of n) == typed) all with
   | Some found -> Some (shown found)
-  | None -> Option.map shown (List.find (fn (n, _) -> names? n word) all)
+  | None -> Option.map shown (List.find (fn (n, _) -> names? (plain n) typed) all)
 )
 
 -- The name /dig gives an exit: the six directions with their short forms,

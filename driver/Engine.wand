@@ -1323,7 +1323,8 @@ let _list o =
   | Some x -> [x]
   | None -> []
 
--- Match a line to a verb and run it. A bare exit name is `go` that way.
+-- Match a line to a verb and run it. A bare exit name, of one word or
+-- more, is `go` that way.
 let command body line (tx: Tx) = (
   let here = room_of body tx.w;
   let verb = String.lower (Option.default "" (String.word 0 line));
@@ -1351,8 +1352,10 @@ let command body line (tx: Tx) = (
     run ctx (fn () -> v.run ctx parsed) tx
   )
   | None -> (
+    -- The whole line, so an exit of several words, as "the commons", is
+    -- one too.
     match Option.and_then
-      (fn (r: World.Instance) -> Driver.exit_named verb r.object.exits)
+      (fn (r: World.Instance) -> Driver.exit_named line r.object.exits)
       (World.instance here tx.w) with
     | Some(name, _) -> command body "go %{name}" tx
     | None -> change (World.tell body (_unmatched tx.w verb dobj)) tx
