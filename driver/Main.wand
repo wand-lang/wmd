@@ -1,10 +1,15 @@
-uses {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Random, Shared}
+uses {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Random, Shared, Shell(git)}
 
--- The server: the telnet listener, the driver loop, the snapshot timer and
--- the event logger, side by side, over one Shared World.
+-- The server: the telnet listener, the driver loop, the snapshot timer,
+-- the event logger and, with --git, the git fiber, side by side, over one
+-- Shared World.
 
 import Clock
 import Env
+import Map
+import Option
+import Path
+import String
 import FS
 import IO
 import List
@@ -15,6 +20,7 @@ import Result
 import Shared
 
 import ./Engine
+import ./Git
 import ./Log
 import ./Library
 import ./Session
@@ -27,7 +33,9 @@ type Opts(
   logs: Path = ./logs,
   lib: Path = ./lib,
   world: Path = ./world.json,
-  tick: Duration = 2s
+  tick: Duration = 2s,
+  -- Whether the Library is a git working copy to pull, commit and push.
+  git: Bool = false
 )
 
 let _now () = "%{Clock.now ()}"
@@ -39,6 +47,8 @@ let problem (o: Opts) =
   if !(FS.dir? o.lib) then Some "no Library at %{o.lib}; run wmd init to make a world"
   else if Env.get "WMD_PEPPER" == None then
     Some "WMD_PEPPER is not set; it is the secret every password is hashed with"
+  else if o.git && !(Git.repo? o.lib) then
+    Some "--git, but %{o.lib} is not in a git working copy"
   else None
 
 -- A snapshot is written by the driver loop, between inputs. The timer only
@@ -49,11 +59,167 @@ let _snapshot state path =
   | Ok _ -> ()
   | Error why -> IO.println_err "wmd: snapshot to %{path} failed: %{why}"
 
+-- ── Git ────────────────────────────────────────────────────────────────
+
+-- The file of blueprint path `path`, from the Library root, as git names
+-- it: r/home/ann/lamp.wand for /r/home/ann/lamp.
+let _file_of path = "%{String.slice 1 (String.length path) path}.wand"
+
+-- Commit the saves the driver has made since the last commit: one commit
+-- for each account, with it as the author.
+let _commit_saves state (o: Opts) =
+  let (w: World.Current) = Shared.get state;
+  let saves = w.unsaved;
+  let _ = Shared.update state (World.committing (List.length saves));
+  List.each
+    (fn (key, paths) -> (
+      let name =
+        Option.default
+          key
+          (Option.map (fn (a: World.Account) -> a.name) (World.account key w));
+      let message = "%{name} saved %{String.join ", " paths}";
+      match Git.commit o.lib "%{name} <%{key}@wmd>" message (List.map _file_of paths) with
+      | Error why ->
+        IO.println_err "wmd: git did not commit %{String.join ", " paths}: %{why}"
+      | Ok _ -> ()
+    ))
+    (World.batches saves)
+
+-- Commit the latest world.json. The driver loop writes it; this only
+-- commits what is there.
+let _commit_world (o: Opts) =
+  match Git.commit (Path.dirname o.world) "wmd <wmd>" "The world" [
+    Path.to_string (Path.basename o.world)
+  ] with
+  | Error why -> IO.println_err "wmd: git did not commit %{o.world}: %{why}"
+  | Ok _ -> ()
+
+-- Tell every Keymaster `text`: now, or when they next wake.
+let _tell_keymasters text (w: World.Current) =
+  List.fold_left
+    (fn acc (a: World.Account) -> if a.role == "keymaster" then World.notice a.name text acc
+      else acc)
+    w
+    (Map.values w.accounts)
+
+-- Push what is committed, and give back the files under the Library that
+-- came in with someone else's commits, if the push put these after them.
+-- When pushing stops, or goes on again, the Keymasters are told.
+let _push state (o: Opts) = (
+  let (now: World.Current) = Shared.get state;
+  let was = now.stopped;
+  let went () =
+    if was != None then (
+      let _ =
+        Shared.update state (fn w ->
+          w
+          |> World.stop_pushing None
+          |> _tell_keymasters "The server pushes to the game's repo again.");
+      ()
+    );
+  match Git.push o.lib with
+  | Git.Pushed -> (went (); [])
+  | Git.Rebased files -> (went (); files)
+  | Git.Failed why -> (IO.println_err "wmd: git did not push: %{why}"; [])
+  | Git.Conflict why -> (
+    let _ = Git.push_aside o.lib "wmd-server";
+    if was == None then (
+      IO.println_err "wmd: git stopped pushing: %{why}";
+      let _ =
+        Shared.update state (fn w ->
+          w
+          |> World.stop_pushing (Some why)
+          |> _tell_keymasters
+            "The server stopped pushing to the game's repo: someone pushed first, and %{why}. Its commits are on the branch wmd-server. Merge that branch into the main one, and push: the server then pushes again, and /pull brings in the merge.");
+      ()
+    );
+    []
+  )
+)
+
+-- Run each /pull asked for, after the push, so commits not yet pushed do
+-- not stop a fast-forward. Each asker is told what came in, or why nothing
+-- did. `came` are the files the push brought in: the first asker is told
+-- of them too, or, with no one asking, they load as a /pull loads them.
+let _pulls state (o: Opts) came = (
+  let (now: World.Current) = Shared.get state;
+  let asked = now.pulls;
+  let why_not =
+    Option.map
+      (fn why -> "pushing stopped, because %{why}; merge the branch wmd-server first")
+      now.stopped;
+  let _ = Shared.update state (World.pulling (List.length asked));
+  if asked == [] && came != [] then (
+    let _ = Shared.update state (World.queue (World.Pulled(_now ()) None came));
+    ()
+  );
+  let _ =
+    List.fold_left
+      (fn before body ->
+        let at = _now ();
+        let _ =
+          (
+            let pulled =
+              (match why_not with
+               | Some why -> Error why
+               | None -> Git.pull o.lib);
+            match pulled with
+            | Ok files ->
+              Shared.update
+                state
+                (World.queue (World.Pulled at (Some body) (List.concat before files)))
+            | Error why -> Shared.update state (fn w ->
+              (if before == [] then w else World.queue (World.Pulled at (Some body) before) w)
+              |> World.tell body "Nothing was pulled: %{why}")
+          )
+        in
+        [])
+      came
+      asked;
+  ()
+)
+
+-- One round of the git fiber: the saves, the world when it is due, the
+-- push, and the /pulls.
+let _git_round state (o: Opts) world? = (
+  _commit_saves state o;
+  if world? then _commit_world o;
+  _pulls state o (_push state o);
+  let _ = Git.tidy o.lib;
+  ()
+)
+
+-- Every minute, or at once on a /pull, commit and push. world.json is
+-- committed every 15 minutes, from `last`, and at shutdown, because it
+-- changes almost every minute while anyone is on.
+let _git state (o: Opts) (last: DateTime) = (
+  let _ =
+    Par.timeout 60s (fn () -> Shared.wait state (fn (w: World.Current) -> w.pulls != []));
+  let now = Clock.now ();
+  let world? = now >= last + 15m;
+  _git_round state o world?;
+  _git state o (if world? then now else last)
+)
+
+-- As the server starts: commit what an earlier run saved and did not
+-- commit, then come up to the game's repo, before the Library loads.
+let _git_start! (o: Opts) = (
+  let left = Result.get! (Git.dirty o.lib);
+  if left != [] then
+    match Git.commit o.lib "wmd <wmd>" "Saves from before the restart" left with
+  | Error why -> IO.println_err "wmd: git did not commit what was left: %{why}"
+  | Ok _ -> ();
+  match Git.pull o.lib with
+  | Ok files -> IO.println "wmd: pulled %{List.length files} changed Library files"
+  | Error why -> IO.println_err "wmd: did not pull: %{why}"
+)
+
 -- The world before anything is restored: the pepper, the Library and where
 -- its files are. A file that does not load is left out and said, and the
 -- rest of the world starts: a builder's broken file does not stop the
 -- server.
 let _start! (o: Opts) = (
+  if o.git then _git_start! o;
   let loaded = Library.load_all! o.lib;
   List.each
     (fn (path, why) -> IO.println_err "wmd: %{path} did not load: %{why}")
@@ -63,7 +229,8 @@ let _start! (o: Opts) = (
   else Library.into loaded World.Current(
     World.with_pepper (Env.get! "WMD_PEPPER"),
     lib_root = o.lib,
-    help = Library.help! o.lib
+    help = Library.help! o.lib,
+    git = o.git
   )
 )
 
@@ -107,7 +274,11 @@ let run! (o: Opts) = (
   -- closed, and after the driver loop has stopped.
   with Resource.make
     (fn () -> ())
-    (fn () -> (_snapshot state o.world; Log.flush! state o.logs)) as _ -> (
+    (fn () -> (
+      _snapshot state o.world;
+      Log.flush! state o.logs;
+      if o.git then _git_round state o true
+    )) as _ -> (
     (
       match Snapshot.read! o.world with
       | Some f -> (let _ = Engine.restore state f (_now ()); ())
@@ -119,7 +290,8 @@ let run! (o: Opts) = (
       fn () -> Net.listen o.port |> Par.each_stream 256 (Session.serve state),
       fn () -> _driver state o o.tick,
       fn () -> Clock.every 60s (fn () -> Shared.update state World.snapshot_due),
-      fn () -> Clock.every 1s (fn () -> Log.flush! state o.logs)
+      fn () -> Clock.every 1s (fn () -> Log.flush! state o.logs),
+      fn () -> if o.git then _git state o (Clock.now ())
     ]
   )
 )

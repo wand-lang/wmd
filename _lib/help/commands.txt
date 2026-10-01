@@ -36,6 +36,7 @@ For Stewards and Keymasters:
   /link <exit> <path> [view]
                        add an exit from here to a room that is there
   /flags, /resolve     review and resolve flags
+  /pull                Keymasters: load what was pushed to the game's repo
 
 The rest are verbs: your own, such as say, pose and home; the room's and
 its things'; and the realm's, such as look and go. An exit works by its

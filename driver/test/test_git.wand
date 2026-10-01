@@ -1,0 +1,140 @@
+uses {Clock, FS.Read, FS.Write, Shell(git)}
+
+-- The game's git working copy, against real repos: a bare origin, the
+-- server's clone and a person's clone, each in a temporary directory.
+
+import ../Git
+
+import FS
+import Path
+import Shell
+
+let {test, group} = import Test
+
+-- A commit in the person's clone `dir`, of `file` with `text`, pushed.
+let _theirs! dir file text = (
+  FS.mkdir! (Path.dirname (Path.join dir file));
+  FS.write_file! (Path.join dir file) text;
+  let _ = Shell.run! (Shell.in_dir dir $*(git add --all));
+  let _ =
+    Shell.run!
+      (Shell.in_dir
+        dir
+        $*(git -c user.name=Bo -c user.email=bo commit --quiet --message %{"Bo's change"}));
+  let _ = Shell.run! (Shell.in_dir dir $*(git push --quiet));
+  ()
+)
+
+-- The origin, the server's clone and the person's clone, under `d`, with
+-- one commit that has lib/r.wand and wand.pkg. `f` gets the server's lib/
+-- and the person's clone.
+let _repos! d f = (
+  let origin = Path.join d ./origin.git;
+  let server = Path.join d ./server;
+  let person = Path.join d ./person;
+  let _ = Shell.run! $*(git init --quiet --bare --initial-branch=main %{origin});
+  let _ = Shell.query $*(git clone --quiet %{origin} %{person});
+  FS.write_file! (Path.join person ./wand.pkg) "{}";
+  _theirs! person ./lib/r.wand "let x = 1";
+  let _ = Shell.query $*(git clone --quiet %{origin} %{server});
+  f (Path.join server ./lib) person
+)
+
+-- The author and the subject of the last commit in `dir`.
+let _last! dir = Shell.run! (Shell.in_dir dir $*(git log -1 %{"--format=%an|%s"}))
+
+group "a commit" (fn () -> [
+  test "names the account as its author, and only its files" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib _ -> (
+      FS.write_file! (Path.join lib ./r.wand) "let x = 2";
+      FS.write_file! (Path.join lib ./other.wand) "let y = 1";
+      let made = Git.commit lib "Ann <ann@wmd>" "Ann saved /r" ["r.wand"];
+      t.eq (Ok true, "Ann|Ann saved /r", Ok ["other.wand"]) (
+        made,
+        _last! lib,
+        Git.dirty lib
+      )
+    ))),
+  test "is not made when nothing changed" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib _ ->
+      t.eq (Ok false) (Git.commit lib "Ann <ann@wmd>" "Nothing" ["r.wand"]))),
+  test "takes a file that was removed" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib _ -> (
+      FS.delete! (Path.join lib ./r.wand);
+      t.eq (Ok true) (Git.commit lib "Ann <ann@wmd>" "Ann removed /r" ["r.wand"])
+    )))
+])
+
+group "a pull" (fn () -> [
+  test "comes up to the upstream branch, and says which files under lib/ came in" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib person -> (
+      _theirs! person ./lib/r/home/bo/lamp.wand "let lamp = 1";
+      _theirs! person ./README.md "Read me";
+      t.eq (Ok ["r/home/bo/lamp.wand"], true) (
+        Git.pull lib,
+        FS.exists? (Path.join lib ./r/home/bo/lamp.wand)
+      )
+    ))),
+  test "with nothing upstream brings in nothing" (fn t ->
+    with FS.temp_dir "wmd_git_" as d -> _repos! d (fn lib _ -> t.eq (Ok []) (Git.pull lib))),
+  test "of a new wand.pkg is refused, and nothing comes in" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib person -> (
+      _theirs! person ./wand.pkg "{ wand = 1.0.0 }";
+      _theirs! person ./lib/r.wand "let x = 3";
+      t.eq (
+        Error "the pull was refused: it changes wand.pkg, and a new driver needs a deploy",
+        "let x = 1"
+      ) (Git.pull lib, FS.read_file! (Path.join lib ./r.wand))
+    )))
+])
+
+group "a push" (fn () -> [
+  test "sends the commits here upstream" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib person -> (
+      FS.write_file! (Path.join lib ./r.wand) "let x = 2";
+      let _ = Git.commit lib "Ann <ann@wmd>" "Ann saved /r" ["r.wand"];
+      let pushed = Git.push lib;
+      let _ = Shell.run! (Shell.in_dir person $*(git pull --quiet));
+      t.eq (Git.Pushed, "let x = 2") (pushed, FS.read_file! (Path.join person ./lib/r.wand))
+    ))),
+  test "after someone else's, of other files, follows theirs" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib person -> (
+      _theirs! person ./lib/r/home/bo/lamp.wand "let lamp = 1";
+      FS.write_file! (Path.join lib ./r.wand) "let x = 2";
+      let _ = Git.commit lib "Ann <ann@wmd>" "Ann saved /r" ["r.wand"];
+      t.eq (Git.Rebased ["r/home/bo/lamp.wand"], "Ann|Ann saved /r") (
+        Git.push lib,
+        _last! lib
+      )
+    ))),
+  test "after someone else's, of the same file, stops" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib person -> (
+      _theirs! person ./lib/r.wand "let x = 3";
+      FS.write_file! (Path.join lib ./r.wand) "let x = 2";
+      let _ = Git.commit lib "Ann <ann@wmd>" "Ann saved /r" ["r.wand"];
+      t.eq (Git.Conflict "both changed lib/r.wand", "let x = 2") (
+        Git.push lib,
+        FS.read_file! (Path.join lib ./r.wand)
+      )
+    ))),
+  test "counts a change not yet committed as this server's" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib person -> (
+      _theirs! person ./lib/r.wand "let x = 3";
+      FS.write_file! (Path.join lib ./other.wand) "let y = 1";
+      let _ = Git.commit lib "Ann <ann@wmd>" "Ann saved /other" ["other.wand"];
+      FS.write_file! (Path.join lib ./r.wand) "let x = 2";
+      t.eq (Git.Conflict "both changed lib/r.wand") (Git.push lib)
+    ))),
+  test "with nothing to send is done" (fn t ->
+    with FS.temp_dir "wmd_git_" as d ->
+    _repos! d (fn lib _ -> t.eq Git.Pushed(Git.push lib)))
+])

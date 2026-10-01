@@ -1,5 +1,5 @@
 #!/usr/bin/env wand
-uses {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Proc, Random, Shared}
+uses {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Proc, Random, Shared, Shell(git)}
 
 -- The wmd server. Run it from the repo as ./wmd, and make a new world
 -- first with ./wmd init --admin <name>.
@@ -27,7 +27,7 @@ match Proc.args () with
   )
 )
 | rest -> (
-  match Args.parse Main.Opts.decoder rest with
+  match Args.read Main.Opts.parser rest with
   | Error e -> stop e
   | Ok o -> (
     match Main.problem o with

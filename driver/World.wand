@@ -105,11 +105,19 @@ type Flag(
   resolution: Option String = None
 )
 
+-- A file saved in the game: its blueprint path, and the account whose
+-- save it was, which git names as the author.
+type Wrote(path: String, key: String)
+
 -- What a session hands the driver.
 type Input =
   Connect String String
   | Line String String String
   | Gone String String (Option String)
+  -- The Library files that changed under the driver, relative to the
+  -- Library root, and who asked for them, if anyone did: a /pull, or
+  -- what another push brought in.
+  | Pulled String (Option String) (List String)
 
 -- A call-out: the verb `verb` of `target`, to run once at `due`. `id` tells
 -- apart two that are otherwise the same.
@@ -220,7 +228,18 @@ type Current(
   built: Map String = {},
   -- The room each reviewer came from, by their body, while they visit a
   -- request. It is not saved.
-  visiting: Map String = {}
+  visiting: Map String = {},
+  -- Whether the Library is a git working copy that the driver commits
+  -- to. It is not saved.
+  git: Bool = false,
+  -- The files saved in the game that git has not yet committed, oldest
+  -- first. It is not saved: a file left out is committed at the next
+  -- start.
+  unsaved: List Wrote = [],
+  -- Who asked for a /pull that has not yet run, by their body.
+  pulls: List String = [],
+  -- Why the driver stopped pushing, until a person puts it right.
+  stopped: Option String = None
 )
 
 let empty =
@@ -461,6 +480,7 @@ let at_of (i: Input) =
   | Connect _ at -> at
   | Line _ at _ -> at
   | Gone _ at _ -> at
+  | Pulled at _ _ -> at
 
 -- True while the driver has not finished with something a session sent.
 let pending? sid (w: Current) =
@@ -469,6 +489,7 @@ let pending? sid (w: Current) =
       | Connect s _ -> s == sid
       | Line s _ _ -> s == sid
       | Gone _ _ _ -> false
+      | Pulled _ _ _ -> false
     )
     w.inputs
 
@@ -752,3 +773,32 @@ let reward name now (w: Current) =
     name
     (fn a -> Account(a, inspiration = Inspiration.earn now Inspiration.bonus a.inspiration))
     w
+
+-- ── Git ────────────────────────────────────────────────────────────────
+
+-- The account `key` saved the file of `path`. Without git, nothing is kept.
+let wrote path key (w: Current) =
+  if !w.git then w else Current(w, unsaved = List.concat w.unsaved [Wrote(path, key)])
+
+-- The saves the git fiber has taken to commit.
+let committing n (w: Current) = Current(w, unsaved = List.drop n w.unsaved)
+
+-- The player `body` asks for a /pull.
+let ask_pull body (w: Current) = Current(w, pulls = List.concat w.pulls [body])
+
+-- The /pulls the git fiber has taken to run.
+let pulling n (w: Current) = Current(w, pulls = List.drop n w.pulls)
+
+-- Pushing stops, for `why`, or goes on again.
+let stop_pushing why (w: Current) = Current(w, stopped = why)
+
+-- The saves in `saves` as one commit for each account: its key, and the
+-- files it saved, by blueprint path. A file that two accounts saved is in
+-- the commit of the one who saved it last.
+let batches (saves: List Wrote) =
+  let last = List.fold_left (fn m (s: Wrote) -> Map.set s.path s.key m) Map.empty saves;
+  Map.to_list
+    (List.fold_left
+      (fn m (path, key) -> Map.update key [] (fn paths -> List.concat paths [path]) m)
+      Map.empty
+      (Map.to_list last))

@@ -1,0 +1,172 @@
+uses {Clock, Shell(git)}
+
+-- The game's git working copy. The live game runs on a checkout of its
+-- repo: the driver pulls it as it starts, commits what the game saves, and
+-- pushes each commit at once. Every command runs in a directory of the
+-- checkout, and every path is relative to that directory.
+--
+-- One fiber runs these, one at a time, so two commands never meet on the
+-- index.
+
+import List
+import Option
+import Path
+import Result
+import Shell
+import String
+
+-- How long one command may take before it is stopped. A push to a slow
+-- remote is the longest of them.
+let deadline = 30s
+
+-- What a command wrote, or why it failed: the last line of its error
+-- output, or of what it wrote when that is empty. git puts its hints first
+-- and the reason last.
+let _run dir (c: Command) =
+  match Shell.timeout deadline (fn () -> Shell.query (Shell.in_dir dir c)) with
+  | Error why -> Error why
+  | Ok r -> if Shell.ok? r then Ok (String.trim r.stdout)
+    else (
+      let said = if String.trim r.stderr == "" then r.stdout else r.stderr;
+      let lines = List.filter (fn l -> String.trim l != "") (String.lines said);
+      Error (Option.default "" (List.head (List.reverse lines)))
+    )
+
+let _run! dir c = Result.get! (_run dir c)
+
+let _lines text = List.filter (fn l -> l != "") (String.lines text)
+
+-- Whether `dir` is in a git working copy.
+let repo? dir = Result.ok? (_run dir $*(git rev-parse --is-inside-work-tree))
+
+-- The files under `dir` that changed since the last commit, and are not
+-- ignored.
+let dirty dir =
+  Result.map
+    (fn out -> List.unique (_lines out))
+    (_run dir $*(git ls-files --modified --deleted --others --exclude-standard))
+
+-- Commit `files`, as `author`, "Ann <ann@wmd>", with `message`, when any
+-- of them changed. Ok true when a commit was made. The server is the
+-- committer, whoever the author is.
+let commit dir author message files =
+  try (
+    List.each (fn f -> (let _ = _run! dir $*(git add --all -- %{f}); ())) files;
+    -- Nothing staged is nothing to commit: `git diff --quiet` exits 1 when
+    -- there is a change.
+    if Result.ok? (_run dir $*(git diff --cached --quiet)) then false
+    else (
+      _run!
+        dir
+        $*(git -c user.name=wmd -c user.email=wmd commit --quiet --author %{author} --message %{message});
+      true
+    )
+  )
+
+-- The files the commits on `from` change since it and `to` parted: from
+-- `dir`, and only those under it, or else every one, from the top of the
+-- checkout.
+let _changed dir from to =
+  Result.map _lines (_run dir $*(git diff --name-only --relative %{"%{to}...%{from}"}))
+
+let _changed_all dir from to =
+  Result.map _lines (_run dir $*(git diff --name-only %{"%{to}...%{from}"}))
+
+-- Why the upstream commits must not come in, if they must not: a change to
+-- wand.pkg is a new driver, which a running server cannot load.
+let _refused files =
+  if List.any? (fn f -> f == "wand.pkg" || String.ends_with? "/wand.pkg" f) files then
+    Some "it changes wand.pkg, and a new driver needs a deploy"
+  else None
+
+-- Fetch, and come up to the upstream branch when it only adds to this one.
+-- Ok with the files under `dir` that came in, from `dir`; Error with why
+-- nothing came in. A pull that is not a fast-forward is refused, and the
+-- checkout stays as it was.
+let pull dir =
+  try (
+    _run! dir $*(git fetch --quiet);
+    let all = Result.get! (_changed_all dir "@{u}" "HEAD");
+    match _refused all with
+    | Some why -> Result.get! (Error "the pull was refused: %{why}")
+    | None -> (
+      let files = Result.get! (_changed dir "@{u}" "HEAD");
+      if all != [] then (let _ = _run! dir $*(git merge --ff-only --quiet @{u}); ());
+      files
+    )
+  )
+
+-- What a push did.
+type Pushed =
+  -- It went, or there was nothing to push.
+  Pushed
+  -- Someone pushed first, and the commits here now follow theirs. These
+  -- are the files under `dir` that came in with theirs.
+  | Rebased (List String)
+  -- It did not go, for a reason the next push may not have.
+  | Failed String
+  -- Someone pushed first, and changed a file this server changed too: a
+  -- person must put the two together. It says which files.
+  | Conflict String
+
+-- The commits here that the upstream branch does not have, and the reverse.
+let _ahead dir =
+  Result.map (fn n -> n != "0") (_run dir $*(git rev-list --count @{u}..HEAD))
+
+let _behind dir =
+  Result.map (fn n -> n != "0") (_run dir $*(git rev-list --count HEAD..@{u}))
+
+-- Put the commits here after the upstream ones, when the two change
+-- different files. A change not yet committed counts as this server's.
+let _rebase dir =
+  try (
+    let theirs = Result.get! (_changed_all dir "@{u}" "HEAD");
+    let ours = Result.get! (_changed_all dir "HEAD" "@{u}");
+    let top = _run! dir $*(git rev-parse --show-toplevel);
+    let waiting = Result.get! (dirty (Path.of_string top));
+    let both =
+      List.filter (fn f -> List.any? (fn o -> o == f) (List.concat ours waiting)) theirs;
+    if both != [] then Conflict "both changed %{String.join ", " both}"
+    else match _refused theirs with
+      | Some why -> Failed "the upstream commits were not taken in: %{why}"
+      | None -> (
+        let came = Result.get! (_changed dir "@{u}" "HEAD");
+        match _run dir $*(git -c user.name=wmd -c user.email=wmd rebase --autostash --quiet @{u}) with
+        | Ok _ -> (
+          match _run dir $*(git push --quiet) with
+          | Ok _ -> Rebased came
+          | Error why -> Failed why
+        )
+        | Error why -> (let _ = _run dir $*(git rebase --abort); Conflict why)
+      )
+  )
+
+-- Send the commits here upstream. When someone pushed first, fetch theirs
+-- and put these after them, unless both changed one file.
+let push dir =
+  match _ahead dir with
+  | Error why -> Failed why
+  | Ok false -> Pushed
+  | Ok true -> (
+    match _run dir $*(git push --quiet) with
+    | Ok _ -> Pushed
+    | Error why -> (
+      match Result.and_then (fn _ -> _behind dir) (_run dir $*(git fetch --quiet)) with
+      | Ok true -> (
+        match _rebase dir with
+        | Ok p -> p
+        | Error e -> Failed e
+      )
+      | Ok false -> Failed why
+      | Error e -> Failed e
+    )
+  )
+
+-- Pack the repo when git says it needs it.
+let tidy dir = _run dir $*(git gc --auto --quiet)
+
+-- Push the commits here to the branch `branch` of origin, in place of what
+-- it held: where they wait while a person puts them together with the
+-- upstream ones.
+let push_aside dir branch =
+  _run dir $*(git push --force --quiet origin %{"HEAD:refs/heads/%{branch}"})

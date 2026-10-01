@@ -1,0 +1,115 @@
+uses {FS.Read, FS.Write, Random, Shared}
+
+-- Git in the game: the saves kept for git to commit, /pull, and the files
+-- that come in from the game's repo.
+
+import ../Engine
+import ../Library
+import ../World
+import FS
+import List
+import Resource
+import Result
+import Shared
+
+let {test, group} = import Test
+
+let loaded = Library.load_all! ./_lib
+
+let at = "2026-09-30T12:00:00Z"
+
+let dee = World.session_id 0
+
+let dee_body = "/std/player#0"
+
+let line text = World.queue (World.Line dee at text)
+
+let home = ./_lib/r/home/dee
+
+let _clean () = (
+  let _ = FS.delete_tree home;
+  match FS.list_dir ./_lib/r/home with
+  | Ok [] -> (let _ = FS.delete_tree ./_lib/r/home; ())
+  | _ -> ()
+)
+
+let git_on (w: World.Current) = World.Current(w, git = true)
+
+let keymaster (w: World.Current) =
+  match World.account "dee" w with
+  | Some a -> World.add_account World.Account(a, role = "keymaster") w
+  | None -> w
+
+-- Dee signs up, with the world `start` made of it, and plays `changes`;
+-- `check` gets the world. Whatever Dee builds is removed after.
+let played! start changes check =
+  if FS.exists? home then
+    Result.get! (Error "%{home} exists: these tests build there, and remove it after")
+  else with Resource.make (fn () -> ()) (fn () -> _clean ()) as _ ->
+  with Shared.make (start (Library.into loaded (World.with_pepper "test pepper"))) as state -> (
+    Engine.boot state at;
+    List.each
+      (fn f -> (Shared.update state f; Engine.step state))
+      (List.concat
+        [
+          World.open_next at,
+          line "dee",
+          line "2000-05-01",
+          line "dee-password",
+          line "dee-password",
+          line "sign rules",
+          World.emptied dee
+        ]
+        changes);
+    check (Shared.get state)
+  )
+
+let heard (w: World.Current) = List.filter (fn l -> l != "") (World.outbox dee w)
+
+group "a save" (fn () -> [
+  test "with git, is kept for git to commit, with its account" (fn t ->
+    played! git_on [line "/dig hall hall"] (fn w ->
+      t.eq [World.Wrote(path = "/r/home/dee/hall", key = "dee")] w.unsaved)),
+  test "without git, is not kept" (fn t ->
+    played! (fn w -> w) [line "/dig hall hall"] (fn w -> t.eq [] w.unsaved))
+])
+
+group "/pull" (fn () -> [
+  test "is for a Keymaster" (fn t ->
+    played! git_on [line "/pull"] (fn w ->
+      t.eq (["Only a Keymaster pulls the Library."], []) (heard w, w.pulls))),
+  test "without git, says so" (fn t ->
+    played! (fn w -> w) [keymaster, line "/pull"] (fn w ->
+      t.eq ["This server does not keep its Library in git."] (heard w))),
+  test "asks the git fiber to pull" (fn t ->
+    played! git_on [keymaster, line "/pull"] (fn w ->
+      t.eq (["Pulling the Library from its repo."], [dee_body]) (heard w, w.pulls)))
+])
+
+group "files that came in" (fn () -> [
+  test "load again, and the one who asked is told" (fn t ->
+    played! git_on [World.queue (World.Pulled at (Some dee_body) ["r/learning/lever.wand", "README.md"])] (fn w ->
+      t.eq
+        (List.reverse (heard w) |> List.head)
+        (Some "Pulled 2 changed files, and loaded 1 blueprint again."))),
+  test "when there are none, the Library is up to date" (fn t ->
+    played! git_on [World.queue (World.Pulled at (Some dee_body) [])] (fn w ->
+      t.eq ["The Library is up to date."] (heard w))),
+  test "with init.wand among them, says to restart" (fn t ->
+    played! git_on [World.queue (World.Pulled at (Some dee_body) ["init.wand"])] (fn w ->
+      t.eq
+        [
+          "Pulled 1 changed file, and loaded 0 blueprints again. init.wand changed: restart the server to load it."
+        ]
+        (heard w)))
+])
+
+test "the saves to commit are one batch for each account, a file going to its last saver" (fn t ->
+  t.eq
+    [("ann", ["/r/a", "/r/c"]), ("bo", ["/r/b"])]
+    (World.batches [
+      World.Wrote(path = "/r/a", key = "ann"),
+      World.Wrote(path = "/r/b", key = "ann"),
+      World.Wrote(path = "/r/c", key = "ann"),
+      World.Wrote(path = "/r/b", key = "bo")
+    ]))

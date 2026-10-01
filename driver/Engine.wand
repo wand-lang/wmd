@@ -10,6 +10,7 @@ uses {FS.Read, FS.Write, Random, Shared}
 import ./Evaluate
 import ./Files
 import ./Inspiration
+import ./Library
 import ./Parse
 import ./Password
 import ./Scan
@@ -258,6 +259,13 @@ let room_realms room (w: World.Current) = (
 -- The account key of a body, when it is one.
 let _key_of body (w: World.Current) =
   Option.map (fn (a: World.Account) -> String.lower a.name) (World.account_of body w)
+
+-- The body `actor` saved the file of `path`, for git to commit with its
+-- account as the author.
+let _wrote actor path (tx: Tx) =
+  match _key_of actor tx.w with
+  | Some key -> change (World.wrote path key) tx
+  | None -> tx
 
 -- Whether an owner is held to no limits: no owner, which is the driver's
 -- and the Keymasters' code, or a Keymaster.
@@ -988,7 +996,7 @@ and _save (ctx: Driver.Context) path source (tx: Tx) =
 -- A file was saved by the player `actor`: each open request it is in notes
 -- it, and a new one was built by them.
 and _saved actor path fresh (tx: Tx) =
-  let noted = change (World.touched path) tx;
+  let noted = tx |> change (World.touched path) |> _wrote actor path;
   match _key_of actor tx.w with
   | Some key when fresh -> change (World.set_built path key) noted
   | _ -> noted
@@ -1692,6 +1700,7 @@ let _dig body words (tx: Tx) = (
           let dug =
             tx
             |> _charge payer cost "dig"
+            |> _wrote body path
             |> change (World.set_blueprint path b)
             |> change (fn w ->
               match payer with
@@ -1718,13 +1727,15 @@ let _dig body words (tx: Tx) = (
               if saved.ok then
                 dug
                 |> change (World.touched from)
+                |> _wrote body from
                 |> update body from
                 |> change (World.tell body "Dug %{name} to %{path}.")
               else change (World.tell body hand) dug
             )
             | _ -> change (World.tell body hand) dug
         )
-        | (true, Error why) -> tell "The room at %{path} was made, but did not load: %{why}"
+        | (true, Error why) ->
+          _wrote body path (tell "The room at %{path} was made, but did not load: %{why}")
         | (false, _) ->
           tell
             "The room at %{path} could not be made: %{String.join "; " (List.map (fn (p: Driver.Problem) -> p.message) o.problems)}"
@@ -1795,6 +1806,7 @@ let _copy body words (tx: Tx) =
           | (true, Ok b) ->
             tx
             |> _charge (Some key) cost "copy"
+            |> _wrote body to
             |> change (World.set_blueprint to b)
             |> change (World.set_built to key)
             |> _event World.Event(
@@ -1809,9 +1821,9 @@ let _copy body words (tx: Tx) =
                 body
                 "Copied %{from} to %{to}. %{use}, and change it with /edit %{to}.")
           | (true, Error why) ->
-            change
-              (World.tell body "Copied %{from} to %{to}, but it did not load: %{why}")
-              tx
+            tx
+            |> _wrote body to
+            |> change (World.tell body "Copied %{from} to %{to}, but it did not load: %{why}")
           | (false, _) ->
             change
               (World.tell
@@ -2197,6 +2209,7 @@ let _link body words (tx: Tx) = (
         if saved.ok then
           tx
           |> change (World.touched from)
+          |> _wrote body from
           |> update body from
           |> _event World.Event(
             at = "",
@@ -2679,6 +2692,18 @@ let _set_paused body words paused (tx: Tx) =
 -- The verbs whose lines a report can show.
 let _speech = ["say", "pose", "semipose"]
 
+-- /pull, for a Keymaster: the git fiber comes up to the game's repo, and
+-- the files that came in load as /update loads them.
+let _pull body (tx: Tx) =
+  if !(_keymaster? body tx.w) then
+    change (World.tell body "Only a Keymaster pulls the Library.") tx
+  else if !tx.w.git then
+    change (World.tell body "This server does not keep its Library in git.") tx
+  else
+    tx
+    |> change (World.ask_pull body)
+    |> change (World.tell body "Pulling the Library from its repo.")
+
 -- /help: the topics, or one of them.
 let _help body words (w: World.Current) = (
   let topics =
@@ -2760,6 +2785,7 @@ let _command_line sid body at line (tx: Tx) =
       | "/unlock" -> _set_locked body (_after_verb full) false logged
       | "/edit" -> _edit body (_after_verb full) logged
       | "/update" -> _update body (_after_verb full) logged
+      | "/pull" -> _pull body logged
       | "/reset" -> _reset body (_after_verb full) logged
       | "/eval" -> (
         match _after_verb full with
@@ -2825,6 +2851,47 @@ let _to_login sid line (tx: Tx) =
     )
   )
 
+-- ── Git ────────────────────────────────────────────────────────────────
+
+-- The blueprint path of a file under the Library, as /r/home/bo/lamp for
+-- r/home/bo/lamp.wand, when it is a Library file the driver loads.
+let _pulled_path file =
+  if !(String.ends_with? ".wand" file) || file == "init.wand" then None
+  else Some "/%{String.slice 0 (String.length file - 5) file}"
+
+-- `n` of `thing`, as 1 blueprint or 2 blueprints.
+let _count n thing = if n == 1 then "1 %{thing}" else "%{n} %{thing}s"
+
+-- The files under the Library that changed under the driver, from it. Each
+-- blueprint that is there loads again as /update loads it, and the help
+-- topics are read again. `actor` is told what came in.
+let pulled actor (files: List String) (tx: Tx) =
+  let who = Option.default "" actor;
+  let loads =
+    List.filter
+      (fn p -> Scan.claims? "Blueprint" (Option.default "" (Files.read tx.w.lib_root p)))
+      (List.filter_map _pulled_path files);
+  let help = Result.default tx.w.help (try Library.help! tx.w.lib_root);
+  let helped =
+    if List.any? (fn f -> String.starts_with? "help/" f) files then
+      change (fn w -> World.Current(w, help = help)) tx
+    else tx;
+  let restart =
+    if List.any? (fn f -> f == "init.wand") files then
+      " init.wand changed: restart the server to load it."
+    else "";
+  let told =
+    if files == [] then "The Library is up to date."
+    else "Pulled %{_count (List.length files) "changed file"}, and loaded %{_count (List.length loads) "blueprint"} again.%{restart}";
+  List.fold_left (fn acc p -> update who p acc) helped loads
+  |> _event World.Event(
+    at = "",
+    event = "pull",
+    actor = who,
+    text = Some (String.join " " files)
+  )
+  |> change (World.tell who told)
+
 let run_input (i: World.Input) (tx: Tx) =
   match i with
   | World.Connect sid _ -> verb (login_id tx.w) sid "connect" tx
@@ -2848,6 +2915,7 @@ let run_input (i: World.Input) (tx: Tx) =
       |> change (World.seen b tx.at)
     | None -> verb (login_id tx.w) sid "done" tx
   )
+  | World.Pulled _ actor files -> pulled actor files tx
 
 -- ── The loop ───────────────────────────────────────────────────────────
 
