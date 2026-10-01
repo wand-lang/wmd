@@ -3,7 +3,7 @@
 }
 
 -- DO NOT EDIT: interface, written by `wand p`
-version 0.1.1
+version 0.2.0
 
 type driver/Engine.Tx(
   w: World.Current,
@@ -11,6 +11,7 @@ type driver/Engine.Tx(
   at: String,
   hooks: Bool = true
 )
+type driver/Git.Pushed = Pushed | Rebased (List String) | Failed String | Conflict String
 type driver/Init.InitOpts(
   lib: Path = ./lib,
   world: Path = ./world.json,
@@ -30,7 +31,8 @@ type driver/Main.Opts(
   logs: Path = ./logs,
   lib: Path = ./lib,
   world: Path = ./world.json,
-  tick: Duration = 2s
+  tick: Duration = 2s,
+  git: Bool = false
 )
 type driver/Parse.Found = NoWords | Found String | Missing String | Ambiguous String (List String)
 type driver/Parse.Split(dobj: List String, prep: Option String, iobj: List String)
@@ -101,7 +103,11 @@ type driver/World.Current(
   requests: List Request = [],
   adopted: Map String = {},
   built: Map String = {},
-  visiting: Map String = {}
+  visiting: Map String = {},
+  git: Bool = false,
+  unsaved: List Wrote = [],
+  pulls: List String = [],
+  stopped: Option String = None
 )
 type driver/World.Event(
   at: String,
@@ -129,6 +135,7 @@ type driver/World.Input =
   Connect String String
   | Line String String String
   | Gone String String (Option String)
+  | Pulled String (Option String) (List String)
 type driver/World.Instance(
   id: String,
   blueprint: String,
@@ -168,6 +175,7 @@ type driver/World.Request(
 )
 type driver/World.Session(id: String, body: Option String = None, closing: Bool = false)
 type driver/World.Signed(version: Int, at: DateTime)
+type driver/World.Wrote(path: String, key: String)
 type driver.Action =
   Say String
   | Tell ObjId String
@@ -308,6 +316,7 @@ driver/Engine.may_enter?      : String -> String -> Current -> Bool
 driver/Engine.player?         : String -> Current -> Bool
 driver/Engine.player_bp       : Current -> String
 driver/Engine.players_in      : String -> Current -> List String
+driver/Engine.pulled          : Option String -> List String -> Tx -> Tx ! {FS.Read, FS.Write, Random}
 driver/Engine.realm?          : String -> Current -> Bool
 driver/Engine.realm_id        : 'a -> String
 driver/Engine.realms_of       : String -> Current -> List String
@@ -334,7 +343,7 @@ driver/Engine.update          : String -> String -> Tx -> Tx ! {FS.Read, FS.Writ
 driver/Engine.verb            : String -> String -> String -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
 driver/Engine.verb_with       : String -> String -> Parsed -> Tx -> Tx ! {FS.Read, FS.Write, Random | 'e}
 driver/Engine.view            : Current -> String -> WorldView ! 'e
-driver/Evaluate.load        : Path -> String -> String -> Result (List String) interface_module_15.Evaluation ! {FS.Read, FS.Write}
+driver/Evaluate.load        : Path -> String -> String -> Result (List String) interface_module_16.Evaluation ! {FS.Read, FS.Write}
 driver/Evaluate.result_type : String -> String
 driver/Evaluate.source      : 'a -> String -> String -> String
 driver/Files.allowed_effects : List String
@@ -349,6 +358,14 @@ driver/Files.read            : Path -> 'a -> Option String ! {FS.Read}
 driver/Files.save            : Path -> String -> String -> Outcome ! {FS.Read, FS.Write}
 driver/Files.valid?          : String -> Bool
 driver/Files.with_exit       : 'a -> 'b -> Option String -> String -> Option String
+driver/Git.commit     : Path -> 'a -> 'b -> List 'c -> Result String Bool ! {Clock, Shell}
+driver/Git.deadline   : Duration
+driver/Git.dirty      : Path -> Result String (List String) ! {Clock, Shell}
+driver/Git.pull       : Path -> Result String (List String) ! {Clock, Shell}
+driver/Git.push       : Path -> Pushed ! {Clock, Shell}
+driver/Git.push_aside : Path -> 'a -> Result String String ! {Clock, Shell}
+driver/Git.repo?      : Path -> Bool ! {Clock, Shell}
+driver/Git.tidy       : Path -> Result String String ! {Clock, Shell}
 driver/Init.run! : InitOpts -> Result String Unit ! {Clock, Env, FS.Read, FS.Write, IO, Raise, Random, Shared}
 driver/Inspiration.amount            : DateTime -> Inspiration -> Int
 driver/Inspiration.bonus             : Int
@@ -373,8 +390,8 @@ driver/Log.append! : Path -> Event -> Unit ! {FS.Write, Raise}
 driver/Log.file    : Path -> Event -> Path
 driver/Log.flush!  : Shared Current -> Path -> Unit ! {FS.Write, Raise, Shared}
 driver/Log.line    : Event -> String
-driver/Main.problem : Opts -> Option String ! {Env, FS.Read}
-driver/Main.run!    : Opts -> Unit ! {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Raise, Random, Shared}
+driver/Main.problem : Opts -> Option String ! {Clock, Env, FS.Read, Shell}
+driver/Main.run!    : Opts -> Unit ! {Clock, Env, FS.Read, FS.Write, IO, Net.Listen, Raise, Random, Shared, Shell}
 driver/Parse.found?   : String -> Found -> Bool
 driver/Parse.found_id : Found -> Option String
 driver/Parse.resolve  : Current -> String -> String -> List String -> Found
@@ -397,11 +414,13 @@ driver/World.add_flag         : Flag -> Current -> Current
 driver/World.add_request      : Request -> Current -> Current
 driver/World.adopt            : List String -> String -> Current -> Current
 driver/World.all_logged       : Current -> Current
+driver/World.ask_pull         : String -> Current -> Current
 driver/World.at_of            : Input -> String
 driver/World.attach           : String -> String -> Current -> Current
 driver/World.back             : String -> Current -> Current
 driver/World.ban              : String -> String -> Current -> Current
 driver/World.banned?          : String -> String -> Current -> Bool
+driver/World.batches          : List Wrote -> List (String, List String)
 driver/World.blueprint_of     : String -> String
 driver/World.call_out         : String -> DateTime -> String -> Current -> Current
 driver/World.callouts_of      : String -> Current -> List Callout
@@ -409,6 +428,7 @@ driver/World.close            : String -> String -> Current -> Current
 driver/World.close_request    : Int -> String -> Current -> Current
 driver/World.close_soon       : String -> Current -> Current
 driver/World.closing?         : String -> Current -> Bool
+driver/World.committing       : Int -> Current -> Current
 driver/World.contents         : String -> Current -> List String
 driver/World.dequeued         : Int -> Current -> Current
 driver/World.drop_callouts    : String -> Current -> Current
@@ -438,6 +458,7 @@ driver/World.owner_of         : String -> Current -> Option String
 driver/World.pending?         : String -> Current -> Bool
 driver/World.pending_callout? : Int -> Current -> Bool
 driver/World.public?          : Instance -> Bool
+driver/World.pulling          : Int -> Current -> Current
 driver/World.put              : Instance -> Current -> Current
 driver/World.queue            : Input -> Current -> Current
 driver/World.ran              : Int -> Current -> Current
@@ -457,7 +478,7 @@ driver/World.session_id       : 'a -> String
 driver/World.session_of       : String -> Current -> Option Session
 driver/World.set_access       : String -> Allowed -> Bool -> Current -> Current
 driver/World.set_allowed      : String -> Allowed -> Current -> Current
-driver/World.set_blueprint    : String -> interface_module_15.Blueprint -> Current -> Current
+driver/World.set_blueprint    : String -> interface_module_16.Blueprint -> Current -> Current
 driver/World.set_built        : String -> String -> Current -> Current
 driver/World.set_held         : String -> Bool -> Current -> Current
 driver/World.set_home         : String -> String -> Current -> Current
@@ -466,13 +487,14 @@ driver/World.set_made         : String -> Option String -> Option String -> Opti
 driver/World.set_object       : String -> Object -> String -> Current -> Current
 driver/World.set_owner        : String -> Option String -> Current -> Current
 driver/World.set_paused       : String -> Bool -> Current -> Current
-driver/World.set_realm        : String -> interface_module_15.Realm -> Current -> Current
+driver/World.set_realm        : String -> interface_module_16.Realm -> Current -> Current
 driver/World.sign             : String -> Int -> DateTime -> Current -> Current
 driver/World.sleep_for        : Duration -> DateTime -> Current -> Option Duration
 driver/World.snapshot_due     : Current -> Current
 driver/World.snapshot_due?    : Current -> Bool
 driver/World.snapshot_taken   : Current -> Current
 driver/World.spend            : String -> Int -> DateTime -> Current -> Current
+driver/World.stop_pushing     : Option String -> Current -> Current
 driver/World.tell             : String -> String -> Current -> Current
 driver/World.tell_session     : String -> String -> Current -> Current
 driver/World.ticking?         : Current -> Bool
@@ -483,6 +505,7 @@ driver/World.uninvite         : String -> String -> Current -> Current
 driver/World.visit            : String -> String -> Current -> Current
 driver/World.with_pepper      : String -> Current
 driver/World.worked           : String -> Current -> Current
+driver/World.wrote            : String -> String -> Current -> Current
 driver.dig_marker  : String
 driver.import_from : String -> String -> String
 driver.nothing     : Reply
