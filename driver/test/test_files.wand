@@ -56,7 +56,7 @@ group "a room /dig makes" (fn () -> [
       (Some "%{Driver.dig_marker}\nlet exits = {up = Driver.Exit(to = \"/r/a\")}")
       (Files.with_exit "up" "/r/a" None "%{Driver.dig_marker}\nlet exits = {}")),
   test "leaves a room written by hand alone" (fn t ->
-    t.ok (Files.with_exit "up" "/r/a" None "let exits = {}" == None)),
+    t.eq None (Files.with_exit "up" "/r/a" None "let exits = {}")),
   test "writes a view, escaped, so it reads back as typed" (fn t ->
     t.eq
       "up = Driver.Exit(to = \"/r/a\", view = Some \"A sign: \\\"Keep out\\\" \\\\ \\\%{name}\")"

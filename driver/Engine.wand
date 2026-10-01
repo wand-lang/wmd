@@ -182,8 +182,7 @@ let _charter chain (w: World.Current) =
 -- Keymasters.
 let _owner_in chain path (w: World.Current) =
   match (_charter chain w).owner with
-  | Some rule ->
-    Option.map String.lower (Result.default (None (_rule (fn () -> rule path))))
+  | Some rule -> Option.map String.lower (Result.default None (_rule (fn () -> rule path)))
   | None -> None
 
 -- The realms a blueprint path is in, nearest first, up to the Commons. A

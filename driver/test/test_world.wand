@@ -64,7 +64,7 @@ let beating = World.Current(World.empty, beating = Map.set "/clock#0" true Map.e
 
 group "how long the driver may sleep" (fn () -> [
   test "for ever, with nothing to tick" (fn t ->
-    t.ok (World.sleep_for 2s noon World.empty == None)),
+    t.eq None (World.sleep_for 2s noon World.empty)),
   test "until the next heartbeat, while something has one" (fn t ->
     t.eq (Some 2s, Some 500ms) (
       World.sleep_for 2s noon beating,
