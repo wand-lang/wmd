@@ -13,4 +13,5 @@ implement Core.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
   let allowed = Core.Everyone;
+  let contracts = [];
   let charter = Realm.no_charter

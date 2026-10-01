@@ -1,6 +1,12 @@
+uses {FS.Read, FS.Write}
+
 -- Mudlib files by blueprint path.
 
 import ../Files
+import FS
+import Option
+import Path
+import String
 
 let {test, group} = import Test
 
@@ -28,3 +34,41 @@ group "a file moved to another directory" (fn () -> [
       "let Core = import ../std/core"
       (Files.moved "/r/home/ann/lever" "/r/lever" "let Core = import ../../../std/core"))
 ])
+
+group "a room /dig makes" (fn () -> [
+  test "imports std from its own directory" (fn t ->
+    t.eq "../../../../std/core" (Files.import_to "/r/home/ann/shop/front" "/std/core")),
+  test "takes one more exit below the marker" (fn t ->
+    let made = Files.dug_room "/r/home/ann/shop/front" "west" "/r/home/ann/hall";
+    t.eq
+      (Some true)
+      (Option.map
+        (fn s -> String.contains? `east = Room.exit "/r/home/ann/shop/back",` s)
+        (Files.with_exit "east" "/r/home/ann/shop/back" None made))),
+  test "fills an empty exits block" (fn t ->
+    t.eq
+      (Some
+        "-- The exits. /dig adds one here, and you can change them by hand.\nlet exits = {up = Room.exit \"/r/a\"}")
+      (Files.with_exit
+        "up"
+        "/r/a"
+        None
+        "-- The exits. /dig adds one here, and you can change them by hand.\nlet exits = {}")),
+  test "leaves a room written by hand alone" (fn t ->
+    t.eq (None (Files.with_exit "up" "/r/a" None "let exits = {}"))),
+  test "writes a view, escaped, so it reads back as typed" (fn t ->
+    t.eq
+      "up = Core.Exit(Room.exit \"/r/a\", view = Some \"A sign: \\\"Keep out\\\" \\\\ \\\%{name}\")"
+      (Files.exit_line "up" "/r/a" (Some "A sign: \"Keep out\" \\ \%{name}")))
+])
+
+test "lists a directory: each blueprint by its name, and each directory with a /" (fn t ->
+  with FS.temp_dir "wmd_files_" as lib -> (
+    FS.mkdir! (Path.join lib ./r/home/ann/shop);
+    FS.write_file! (Path.join lib ./r/home/ann/lamp.wand) "";
+    FS.write_file! (Path.join lib ./r/home/ann/notes.txt) "";
+    t.eq (Some ["lamp", "shop/"], None) (
+      Files.list lib "/r/home/ann",
+      Files.list lib "/r/home/bo"
+    )
+  ))

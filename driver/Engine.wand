@@ -230,6 +230,29 @@ let realm? id (w: World.World) = Map.has? (World.blueprint_of id) w.realms
 let _granted? id (g: Core.Grant) (w: World.World) =
   List.any? (fn x -> x == g) (_charter (realms_of (World.blueprint_of id) w) w).grants
 
+-- Whether the account `key` has a contract to build `path`, from a realm
+-- `path` is in.
+let contracted? key path (w: World.World) =
+  List.any?
+    (fn p -> match Map.get p w.realms with
+      | Some r ->
+        List.any?
+          (fn (c: Core.Contract) -> Some (String.lower c.builder) == key
+          && String.starts_with? "%{c.path}/" path)
+          r.contracts
+      | None -> false
+    )
+    (realms_of path w)
+
+-- The realms a room is in, nearest first: the realm it joined, when it
+-- joined one outside its directory, and otherwise the realms of its file.
+let room_realms room (w: World.World) = (
+  let bp = World.blueprint_of room;
+  match Map.get bp w.adopted with
+  | Some realm when Map.has? realm w.realms && file_owner realm w == None -> realm :: realms_of realm w
+  | _ -> realms_of bp w
+)
+
 -- ── Ownership ──────────────────────────────────────────────────────────
 
 -- The account key of a body, when it is one.
@@ -263,6 +286,20 @@ let _owns? id p (w: World.World) =
   | (Some o, Some k) -> o == k
   | _ -> false
 
+-- Whether the player `body` may edit the file of blueprint path `path`:
+-- a Keymaster may edit any file, a Citizen the files they own and those a
+-- contract lets them build, and a Steward the files of the realms that
+-- name them.
+let may_edit? body path (w: World.World) =
+  match World.account_of body w with
+  | Some a ->
+    Files.valid? path
+    && (a.role == "keymaster"
+    || file_owner path w == Some (String.lower a.name)
+    || steward? (Some (String.lower a.name)) path w
+    || contracted? (Some (String.lower a.name)) path w)
+  | None -> false
+
 -- ── The read-only view ─────────────────────────────────────────────────
 
 -- The room an object is in, climbing out of whatever holds it. A room is
@@ -291,9 +328,15 @@ let start_allowed path (w: World.World) =
   )
   | [] -> Core.Everyone
 
+-- Whether the account `key` reviews request `r`: a Keymaster reviews every
+-- request, and a Steward the requests to their realm.
+let reviewer? key (r: World.Request) (w: World.World) =
+  Option.some? key && (_exempt? key w || _keeps? key (r.realm :: realms_of r.realm w) w)
+
 -- Whether `body` may go into `room`. Its owner and the Keymasters always may.
 -- Anyone else may when the room allows them and its owner has not banned
--- them. A room not made yet allows whom its realm says a new one does. Only
+-- them, and a reviewer may go into the rooms of an open request they
+-- review. A room not made yet allows whom its realm says a new one does. Only
 -- a body is kept out: anything else may go anywhere it is moved, and a body
 -- may go into anything that is not a room.
 let may_enter? body room (w: World.World) =
@@ -313,9 +356,16 @@ let may_enter? body room (w: World.World) =
     | (Some o, Some k) -> World.banned? o k w
     | _ -> false
   in
+  let reviewing =
+    List.any?
+      (fn (r: World.Request) -> r.open
+      && List.any? (fn p -> p == World.blueprint_of room) r.rooms
+      && reviewer? key r w)
+      w.requests;
   !(player? body)
   || Option.some? key && (key == owner || _exempt? key w)
   || named && !banned
+  || reviewing
 
 -- The version of the rules: the number after "version" on the first line
 -- of the rules help topic, as 3 in "The rules of WMD, version 3.", and 1
@@ -377,6 +427,8 @@ let view (w: World.World) viewer =
     awake? = fn id -> Option.some? (World.session_of id w),
     home_of = fn id -> home_of id w,
     may_enter? = fn b r -> may_enter? b (World.resolve r) w,
+    may_edit? = fn b path -> may_edit? b path w,
+    made? = fn id -> Option.some? (World.instance id w),
     help_of = fn topic -> Map.get topic w.help
   )
 -- The context of an object being looked at by `viewer`.
@@ -446,18 +498,6 @@ let _too_long text =
   if String.length text > max_line then
     Error "a line of %{String.length text} characters, and the most is %{max_line}"
   else Ok()
-
--- Whether the player `body` may edit the file of blueprint path `path`:
--- a Keymaster may edit any file, a Citizen the files they own, and a
--- Steward the files of the realms that name them.
-let may_edit? body path (w: World.World) =
-  match World.account_of body w with
-  | Some a ->
-    Files.valid? path
-    && (a.role == "keymaster"
-    || file_owner path w == Some (String.lower a.name)
-    || steward? (Some (String.lower a.name)) path w)
-  | None -> false
 
 -- Only an object of a realm that grants MayCheckSave may check or save a
 -- file, and only one its actor may edit.
@@ -566,7 +606,7 @@ let _realms_say room rule (w: World.World) =
       | _ -> acc
     )
     Ok()
-    (realms_of (World.blueprint_of room) w)
+    (room_realms room w)
 
 -- Whether `ctx.self` may ask for action `a`, and why not: the driver's
 -- policy first, then the `allows` rule of every realm the object's room is
@@ -611,11 +651,14 @@ let _price (a: Core.Action) =
 let _size bytes = Size.format (Size.of_bytes bytes)
 
 -- Whether a new file fits the Capacity of `owner`.
--- How many mudlib files the account `key` owns, by the owner rules.
+-- How many mudlib files count against the account `key`: those it owns,
+-- by the owner rules, and those it builds under a contract.
 let file_count key (w: World.World) =
   List.length
     (List.filter
-      (fn f -> file_owner (Scan.path_in w.lib_root f) w == Some key)
+      (fn f ->
+        let p = Scan.path_in w.lib_root f;
+        file_owner p w == Some key || contracted? (Some key) p w)
       (Scan.files w.lib_root))
 
 let _file_room owner path (w: World.World) =
@@ -737,12 +780,7 @@ let _find (w: World.World) holders verb dobj iobj =
 -- asked: the body, the room, the objects the command names, then each
 -- realm the room is in.
 let _holders body here named (w: World.World) =
-  List.unique
-    (List.flatten [
-      [body, here],
-      named,
-      List.map realm_id (realms_of (World.blueprint_of here) w)
-    ])
+  List.unique (List.flatten [[body, here], named, List.map realm_id (room_realms here w)])
 
 -- ── Spawning ───────────────────────────────────────────────────────────
 
@@ -832,7 +870,11 @@ and _move (ctx: Core.Context) obj dest (tx: Tx) =
     else None;
   let moved =
     match target with
-    | Some t -> ensured |> _ensure t |> change (World.move obj t)
+    | Some t ->
+      ensured
+      |> _ensure t
+      |> change (World.move obj t)
+      |> (if player? obj then _ensure_exits (World.resolve t) else fn x -> x)
     | None -> ensured;
   let looked = if player? obj then look obj moved else moved;
   let explored =
@@ -847,11 +889,23 @@ and _move (ctx: Core.Context) obj dest (tx: Tx) =
   | Some t -> _hook "enter" (World.resolve t) obj ctx.actor left
   | None -> left
 
--- The first visit of a body to a public room another builder owns gives its
--- account an exploring bonus, up to `Inspiration.bonuses_a_day` rooms a
--- day.
+-- Make the rooms the exits of `room` lead to, so a player who arrives can
+-- look through them.
+and _ensure_exits room (tx: Tx) =
+  match World.instance room tx.w with
+  | Some i -> List.fold_left (fn acc (e: Core.Exit) -> _ensure e.to acc) tx (Map.values i.object.exits)
+  | None -> tx
+
+-- The first visit of a body to a public room another Citizen built, or
+-- owns, gives its account an exploring bonus, up to
+-- `Inspiration.bonuses_a_day` rooms a day, and the room's builder as much,
+-- with no cap: each visitor counts once.
 and _explore body room (tx: Tx) =
-  match (World.account_of body tx.w, World.owner_of room tx.w) with
+  let builder =
+    match Map.get (World.blueprint_of room) tx.w.built with
+    | Some b -> Some b
+    | None -> World.owner_of room tx.w;
+  match (World.account_of body tx.w, builder) with
   | (Some a, Some o) when World.env_of room tx.w == None
     && Option.map World.public? (World.instance room tx.w) == Some true
     && o != String.lower a.name
@@ -861,6 +915,9 @@ and _explore body room (tx: Tx) =
     |> change (World.inspire a.name room tx.w.now)
     |> _event World.Event(at = "", event = "inspired", actor = body, room = Some room)
     |> change (World.tell body "You feel inspired.")
+    -- Its builder earns as much, once for each new visitor.
+    |> change (World.reward o tx.w.now)
+    |> _event World.Event(at = "", event = "rewarded", actor = o, room = Some room, name = Some a.name)
   | _ -> tx
 
 -- Check action `a` against the policy, then against the Capacity and
@@ -906,7 +963,11 @@ and _do (ctx: Core.Context) payer (a: Core.Action) (tx: Tx) =
     |> _event (World.Event(at = "", event = "remove", actor = ctx.actor, object = Some (World.resolve obj)))
   | Core.Check path source -> _answer ctx (Files.check tx.w.lib_root path source) tx
   | Core.Save path source -> _save ctx path source tx
-  | Core.Draft path source -> _answer ctx (Files.draft tx.w.lib_root path source) tx
+  | Core.Draft path source -> (
+    let fresh = !(Files.exists? tx.w.lib_root path);
+    let o = Files.draft tx.w.lib_root path source;
+    _answer ctx o (if o.ok then _saved ctx.actor path fresh tx else tx)
+  )
   | Core.Run source -> eval ctx.actor source tx
   | Core.Acknowledge body -> _signed body tx
   | Core.After wait name -> change (World.call_out ctx.self (tx.w.now + wait) name) tx
@@ -915,9 +976,18 @@ and _do (ctx: Core.Context) payer (a: Core.Action) (tx: Tx) =
 -- the next start.
 -- A save that passes loads the new code at once, as /update does.
 and _save (ctx: Core.Context) path source (tx: Tx) =
+  let fresh = !(Files.exists? tx.w.lib_root path);
   let o = Files.save tx.w.lib_root path source;
-  let answered = _answer ctx o tx;
+  let answered = _answer ctx o (if o.ok then _saved ctx.actor path fresh tx else tx);
   if o.ok && _blueprint? source then update ctx.actor path answered else answered
+
+-- A file was saved by the player `actor`: each open request it is in notes
+-- it, and a new one was built by them.
+and _saved actor path fresh (tx: Tx) =
+  let noted = change (World.touched path) tx;
+  match _key_of actor tx.w with
+  | Some key when fresh -> change (World.set_built path key) noted
+  | _ -> noted
 
 -- Load the file of `path` again, and move every instance of it onto the
 -- new code: the old `save` gives each one's state, and the new `create`
@@ -1527,14 +1597,154 @@ let _verbs body words (w: World.World) =
                     ("%{short_of r w} answers to:" :: List.map (fn v -> "  %{_forms ri v}") ri.object.verbs)
                 | _ -> None
               )
-              (List.map realm_id (realms_of (World.blueprint_of id) w)));
+              (List.map realm_id (room_realms id w)));
       World.tell body (String.join "\n" (List.flatten [verbs, exits, realms])) w
     )
   )
   | _ -> World.tell body "You don't see a '%{words}' here." w
 
+-- What follows the first word of `words`.
+let _rest_of words =
+  String.trim
+    (String.slice
+      (String.length (Option.default "" (String.word 0 words)))
+      (String.length words)
+      words)
+
+-- Where each Citizen's home is: /r/home/ann for ann.
+let home_dir key = "/r/home/%{key}"
+
+-- The exit back to a room dug in a direction: south for north. Any other
+-- exit gets back.
+let _back_of name =
+  match name with
+  | "north" -> "south"
+  | "south" -> "north"
+  | "east" -> "west"
+  | "west" -> "east"
+  | "up" -> "down"
+  | "down" -> "up"
+  | _ -> "back"
+
+-- The directory of a blueprint path: /r/home/ann for /r/home/ann/hall.
+let _dir_of path =
+  let segs = String.split "/" path;
+  String.join "/" (List.take (List.length segs - 1) segs)
+
+-- /dig <exit> <path>: make a room at `path`, written out or from the
+-- directory of the room `body` is in, with an exit back, and add the exit
+-- `name` to it here. A room /dig made has a marked block of exits, which it
+-- adds to; to a room written by hand, the player adds it with /edit. It is
+-- paid for as a save.
+let _dig body words (tx: Tx) = (
+  let tell text = change (World.tell body text) tx;
+  let view = (let v = _rest_of (_rest_of words); if v == "" then None else Some v);
+  match String.words words with
+  | [name :: rel :: _] -> (
+    let here = room_of body tx.w;
+    let from = World.blueprint_of here;
+    -- A relative path starts in the directory of the room the player
+    -- stands in when the room is theirs: they own it, build it under a
+    -- contract, or keep its realm. Otherwise it starts in their home, so a
+    -- Keymaster digs in the Commons only with a path written out.
+    let key = _key_of body tx.w;
+    let mine = may_edit? body from tx.w;
+    let ours =
+      file_owner from tx.w == key || contracted? key from tx.w || steward? key from tx.w;
+    let base =
+      if ours then _dir_of from
+      else Option.default "" (Option.map (fn k -> home_dir k) (_key_of body tx.w));
+    let path = if String.starts_with? "/" rel then rel else "%{base}/%{rel}";
+    let exits =
+      Option.map (fn (i: World.Instance) -> i.object.exits) (World.instance here tx.w);
+    if !(Regex.match? r/^[a-z][a-z0-9_]*$/ name) then
+      tell "An exit's name is one word in lower case, as east or door."
+    else if !(Files.valid? path) then
+      tell "'%{path}' is not a mudlib path. One looks like /r/home/ann/shop/front."
+    else if !(may_edit? body path tx.w) then tell "You may not make %{path}."
+    else if Files.exists? tx.w.lib_root path then tell "%{path} is there already."
+    else if Option.map (Map.has? name) exits == Some true then
+      tell "%{short_of here tx.w} has an exit %{name} already."
+    else (
+      let payer = _key_of body tx.w;
+      let source = Files.dug_room path (_back_of name) from;
+      match budget payer (Core.Save path source) tx.w with
+      | Error why -> tell why
+      | Ok cost -> (
+        let o = Files.save tx.w.lib_root path source;
+        match (o.ok, Wand.load Core.Blueprint.loader (Files.file_of tx.w.lib_root path)) with
+        | (true, Ok b) -> (
+          let dug =
+            tx
+            |> _charge payer cost "dig"
+            |> change (World.set_blueprint path b)
+            |> change (fn w ->
+              match payer with
+              | Some k -> World.set_built path k w
+              | None -> w)
+            |> _event World.Event(
+              at = "",
+              event = "dig",
+              actor = body,
+              object = Some path,
+              text = Some name
+            );
+          let hand =
+            `Dug a room at %{path}. Add the exit to this room with /edit here: %{Files.exit_line name path view}`;
+          let away =
+            `Dug a room at %{path}. No exit leads there from %{short_of here tx.w}. Go there with /eval [Core.Move ctx.actor "%{path}"]`;
+          -- The exit goes here only when the new room is in this room's
+          -- area, or the player wrote its path out.
+          if !(mine && (ours || String.starts_with? "/" rel)) then
+            change (World.tell body away) dug
+          else match Option.map (Files.with_exit name path view) (Files.read tx.w.lib_root from) with
+            | Some (Some changed) -> (
+              let saved = Files.save tx.w.lib_root from changed;
+              if saved.ok then
+                dug
+                |> change (World.touched from)
+                |> update body from
+                |> change (World.tell body "Dug %{name} to %{path}.")
+              else change (World.tell body hand) dug
+            )
+            | _ -> change (World.tell body hand) dug
+        )
+        | (true, Error why) -> tell "The room at %{path} was made, but did not load: %{why}"
+        | (false, _) ->
+          tell
+            "The room at %{path} could not be made: %{String.join "; " (List.map (fn (p: Core.Problem) -> p.message) o.problems)}"
+      )
+    )
+  )
+  | _ -> tell "Dig where? /dig <exit> <path>, as /dig east shop/front."
+)
+
 -- The examples /copy may copy: the files of the Learning Hall.
 let learning = "/r/learning/"
+
+-- /files [directory]: the text that says what is in a directory: your home, or one you name,
+-- written out or from your home, as /files shop for /r/home/ann/shop. Only
+-- someone who may edit files there may list it.
+let _files body words (w: World.World) =
+  match World.account_of body w with
+  | None -> "You have no account."
+  | Some a -> (
+    let home = home_dir (String.lower a.name);
+    let trimmed =
+      if String.ends_with? "/" words then String.slice 0 (String.length words - 1) words
+      else words;
+    let dir =
+      if trimmed == "" then home
+      else if String.starts_with? "/" trimmed then trimmed
+      else "%{home}/%{trimmed}";
+    if !(Files.valid? dir) then
+      "'%{dir}' is not a mudlib directory. One looks like /r/home/ann/shop."
+    else if !(may_edit? body "%{dir}/x" w) then "You may not list %{dir}."
+    else match Files.list w.lib_root dir with
+      | Some names when names != [] ->
+        String.join "\n" ("%{dir}/:" :: List.map (fn n -> "  %{n}") names)
+      | _ -> "%{dir}/ is empty."
+  )
 
 -- /copy: write the file of a Learning Hall example into the builder's home,
 -- and load it, as a start to change. A file of that name already there is
@@ -1546,7 +1756,7 @@ let _copy body words (tx: Tx) =
     let from = World.blueprint_of id;
     let key = String.lower a.name;
     let to =
-      "/r/home/%{key}/%{Option.default "" (List.head (List.reverse (String.split "/" from)))}";
+      "%{home_dir key}/%{Option.default "" (List.head (List.reverse (String.split "/" from)))}";
     let room? = World.env_of id tx.w == None;
     if !(String.starts_with? learning from) then
       change
@@ -1571,6 +1781,7 @@ let _copy body words (tx: Tx) =
             tx
             |> _charge (Some key) cost "copy"
             |> change (World.set_blueprint to b)
+            |> change (World.set_built to key)
             |> _event World.Event(
               at = "",
               event = "copy",
@@ -1760,6 +1971,346 @@ let _ban body words yes (tx: Tx) =
       (World.tell body (if yes then "Ban whom? /ban bo" else "Unban whom? /unban bo"))
       tx
 
+-- ── Reviews ────────────────────────────────────────────────────────────
+
+-- The realm a player names: written out, as /r/guild, or by its name in
+-- the Commons, as guild. None when it is no realm, or one the Keymasters do
+-- not own.
+let _realm_named words (w: World.World) =
+  let path = if String.starts_with? "/" words then words else "/r/%{words}";
+  if Map.has? path w.realms && file_owner path w == None then Some path else None
+
+-- The rooms a request from `entrance` covers: the entrance, and every room
+-- in its directory that exits reach from it. The walk follows every exit a
+-- room declares, whatever its check says, so a shut door hides nothing,
+-- and makes each room it reaches, to read its exits.
+let _walk dir (seen: List String) todo (tx: Tx) =
+  match todo with
+  | [] -> (seen, tx)
+  | [p :: rest] -> if List.any? (fn s -> s == p) seen then _walk dir seen rest tx
+    else (
+      let made = _ensure p tx;
+      let next =
+        (match World.instance p made.w with
+         | Some i ->
+           List.filter
+             (fn q -> String.starts_with? dir q)
+             (List.map
+               (fn (e: Core.Exit) -> World.blueprint_of (World.resolve e.to))
+               (Map.values i.object.exits))
+         | None -> []);
+      _walk dir (List.concat seen [p]) (List.concat rest next) made
+    )
+
+-- Who is told of a request to `realm`: its Stewards, or the Keymasters
+-- when it has none.
+let _reviewers_of realm (w: World.World) =
+  let stewards = List.map String.lower (_charter (realm :: realms_of realm w) w).stewards;
+  if stewards != [] then stewards
+  else
+    List.map
+      (fn (a: World.Account) -> String.lower a.name)
+      (List.filter (fn (a: World.Account) -> a.role == "keymaster") (Map.values w.accounts))
+
+let _notice_all keys text (tx: Tx) =
+  List.fold_left (fn acc k -> change (World.notice k text) acc) tx keys
+
+-- What a request asks, in words: "join the Guild", or "open your building
+-- in the Guild".
+let _asks (r: World.Request) (w: World.World) =
+  let realm = short_of (realm_id r.realm) w;
+  if r.kind == "join" then "join %{realm}" else "open a building in %{realm}"
+
+-- The request numbered `words`, or for `here`, the open request of `body`
+-- that covers the room they are in.
+let _request_named body words (w: World.World) =
+  if words == "here" then
+    List.find
+      (fn (r: World.Request) -> r.open
+      && Some r.by == _key_of body w
+      && List.any? (fn p -> p == World.blueprint_of (room_of body w)) r.rooms)
+      w.requests
+  else Option.and_then (fn n -> World.request n w) (Result.to_option (String.to_int words))
+
+-- /review here <realm>: ask a realm to take the rooms from the one `body`
+-- is in. Rooms of their own join the realm and stay theirs; rooms they
+-- built inside the realm, under a contract, ask to be opened.
+let _review body words (tx: Tx) = (
+  let tell text = change (World.tell body text) tx;
+  match (String.words words, World.account_of body tx.w) with
+  | (["here", name], Some a) -> (
+    let key = String.lower a.name;
+    let here = room_of body tx.w;
+    let bp = World.blueprint_of here;
+    match _realm_named name tx.w with
+    | None -> tell "There is no realm called %{name}."
+    | Some realm -> (
+      let inside = List.any? (fn p -> p == realm) (realms_of bp tx.w);
+      let yours =
+        if inside then contracted? (Some key) bp tx.w else file_owner bp tx.w == Some key;
+      if !yours then tell "%{short_of here tx.w} is not yours to offer."
+      else match List.find
+        (fn (r: World.Request) -> r.open && List.any? (fn p -> p == bp) r.rooms)
+        tx.w.requests with
+        | Some r -> tell "Request #%{r.id} covers %{short_of here tx.w} already."
+        | None -> (
+          let (rooms, walked) = _walk "%{_dir_of bp}/" [] [bp] tx;
+          let r =
+            World.Request(
+              id = List.length tx.w.requests + 1,
+              by = key,
+              kind = if inside then "open" else "join",
+              realm = realm,
+              rooms = rooms,
+              at = tx.w.now
+            );
+          walked
+          |> change (World.add_request r)
+          |> _event World.Event(
+            at = "",
+            event = "review",
+            actor = body,
+            object = Some bp,
+            text = Some "#%{r.id} %{r.kind} %{realm}"
+          )
+          |> _notice_all
+            (_reviewers_of realm walked.w)
+            "Request #%{r.id}: %{a.name} asks to %{_asks r walked.w}, with %{List.length rooms} rooms from %{bp}. /visit %{r.id} to look."
+          |> change
+            (World.tell
+              body
+              "Your request #%{r.id} to %{_asks r walked.w} is waiting for its Stewards.")
+        )
+    )
+  )
+  | _ ->
+    tell "Ask a realm to take your rooms with /review here <realm>, as /review here guild."
+)
+
+-- One request, in a line.
+let _request_line (r: World.Request) =
+  let from = Option.default "" (List.head r.rooms);
+  let changed = if r.changed == [] then "" else ", changed since";
+  "#%{r.id} %{r.kind} %{r.realm}: %{List.length r.rooms} rooms from %{from}, by %{r.by} at %{r.at}%{changed}"
+
+-- /reviews [n]: your open requests and the ones waiting for you, or one
+-- whole: its rooms, and the files saved since it was asked.
+let _reviews body words (w: World.World) = (
+  let key = _key_of body w;
+  let mine (r: World.Request) = Some r.by == key || reviewer? key r w;
+  if words == "" then (
+    let open = List.filter (fn (r: World.Request) -> r.open && mine r) w.requests;
+    if open == [] then "No requests are open."
+    else String.join "\n" (List.map _request_line open)
+  )
+  else match _request_named body words w with
+    | Some r when mine r ->
+      String.join
+        "\n"
+        (List.flatten [
+          [_request_line r, "Rooms: %{String.join ", " r.rooms}"],
+          if r.changed == [] then []
+          else ["Saved since it was asked: %{String.join ", " r.changed}"],
+          [Option.default "Open." r.outcome]
+        ])
+    | _ -> "There is no request #%{words} for you."
+)
+
+-- /visit <n>: go to the entrance of a request you review, to look before
+-- you decide. Its builder is told.
+let _visit body words (tx: Tx) = (
+  let key = _key_of body tx.w;
+  match _request_named body words tx.w with
+  | Some r when r.open && reviewer? key r tx.w -> (
+    let from = room_of body tx.w;
+    let name = short_of body tx.w;
+    let entrance = Option.default from (List.head r.rooms);
+    tx
+    |> change (fn w -> if Map.has? body w.visiting then w else World.visit body from w)
+    |> _tell_room from body "%{name} leaves."
+    |> _move (ctx_for tx.w body body) body entrance
+    |> change (World.notice r.by "%{name} is reviewing your request #%{r.id}.")
+  )
+  | Some r when !r.open ->
+    change
+      (World.tell body "Request #%{r.id} is closed: %{Option.default "" r.outcome}.")
+      tx
+  | _ -> change (World.tell body "There is no request #%{words} for you to visit.") tx
+)
+
+-- Send `body` back from a visit: to where they came from, or home when that
+-- has closed to them.
+let _sent_back body (tx: Tx) =
+  match Map.get body tx.w.visiting with
+  | None -> tx
+  | Some from -> (
+    let to = if may_enter? body from tx.w then from else home_of body tx.w;
+    tx |> change (World.back body) |> _move (ctx_for tx.w body body) body to
+  )
+
+-- /back: return from a visit.
+let _back body (tx: Tx) =
+  if Map.has? body tx.w.visiting then _sent_back body tx
+  else change (World.tell body "You are not visiting a request.") tx
+
+-- Everyone visiting request `r` who may no longer be in its rooms goes back.
+let _visitors_back (r: World.Request) (tx: Tx) =
+  List.fold_left
+    (fn acc b -> if List.any? (fn p -> p == World.blueprint_of (room_of b acc.w)) r.rooms
+      && !(may_enter? b (room_of b acc.w) acc.w) then
+        _sent_back b acc
+      else acc)
+    tx
+    (Map.keys tx.w.visiting)
+
+-- /link <exit> <path>: add an exit from the room `body` is in to the room
+-- at `path`, which is there already, as /dig does for a room it makes.
+let _link body words (tx: Tx) = (
+  let tell text = change (World.tell body text) tx;
+  let view = (let v = _rest_of (_rest_of words); if v == "" then None else Some v);
+  match String.words words with
+  | [name :: path :: _] -> (
+    let here = room_of body tx.w;
+    let from = World.blueprint_of here;
+    let line = Files.exit_line name path view;
+    if !(may_edit? body from tx.w) then tell "%{short_of here tx.w} is not yours to change."
+    else if !(Files.exists? tx.w.lib_root path) then tell "There is no room at %{path}."
+    else match Option.and_then (Files.with_exit name path view) (Files.read tx.w.lib_root from) with
+      | Some changed -> (
+        let saved = Files.save tx.w.lib_root from changed;
+        if saved.ok then
+          tx
+          |> change (World.touched from)
+          |> update body from
+          |> _event World.Event(
+            at = "",
+            event = "link",
+            actor = body,
+            object = Some from,
+            text = Some "%{name} %{path}"
+          )
+          |> change (World.tell body "Linked %{name} to %{path}.")
+        else tell "The exit could not be added. Add it with /edit here: %{line}"
+      )
+      | None -> tell "Add the exit to this room with /edit here: %{line}"
+  )
+  | _ -> tell "Link where? /link <exit> <path>, as /link east /r/home/ann/shop/front."
+)
+-- /approve <n> [exit]: open a request's rooms to everyone. Rooms that join
+-- the realm are its now, and stay their builder's. With an exit, the
+-- Steward stands in a room of the realm, and the exit is added from there
+-- to the request's entrance, as /link adds one; the request is approved
+-- only when it can be.
+let _approve body words (tx: Tx) = (
+  let key = _key_of body tx.w;
+  let n = Option.default "" (String.word 0 words);
+  let exit = Option.default "" (String.word 1 words);
+  let view = _rest_of (_rest_of words);
+  let here = room_of body tx.w;
+  match _request_named body n tx.w with
+  | Some r when r.open && reviewer? key r tx.w -> (
+    let entrance = Option.default "" (List.head r.rooms);
+    let linkable =
+      if exit == "" then Ok()
+      else if !(List.any? (fn p -> p == r.realm) (room_realms here tx.w)) then
+        Error
+          "Stand in a room of %{short_of (realm_id r.realm) tx.w} to connect it from there."
+      else if !(may_edit? body (World.blueprint_of here) tx.w) then
+        Error "%{short_of here tx.w} is not yours to change."
+      else if Option.map
+        (Map.has? exit)
+        (Option.map (fn (i: World.Instance) -> i.object.exits) (World.instance here tx.w)) == Some true then
+        Error "%{short_of here tx.w} has an exit %{exit} already."
+      else Ok();
+    match linkable with
+    | Error why -> change (World.tell body why) tx
+    | Ok _ -> (
+      let opened =
+        List.fold_left
+          (fn acc p -> acc
+          |> _ensure p
+          |> change (World.set_allowed (World.resolve p) Core.Everyone))
+          tx
+          r.rooms;
+      let approved =
+        opened
+        |> change (fn w -> if r.kind == "join" then World.adopt r.rooms r.realm w else w)
+        |> change (World.close_request r.id "approved")
+        |> _event World.Event(at = "", event = "approve", actor = body, text = Some "#%{r.id}")
+        |> change
+          (World.notice
+            r.by
+            "Your request #%{r.id} to %{_asks r tx.w} was approved. Its rooms are public now.")
+        |> change (World.tell body "Approved #%{r.id}.");
+      if exit == "" then
+        change
+          (World.tell
+            body
+            "Connect it from a room of the realm with /link <exit> %{entrance}.")
+          approved
+      else _link body "%{exit} %{entrance} %{view}" approved
+    )
+  )
+  | _ -> change (World.tell body "There is no open request #%{n} for you to approve.") tx
+)
+
+-- /decline <n> <reason>: refuse a request, and tell its builder why.
+let _decline body words (tx: Tx) = (
+  let key = _key_of body tx.w;
+  let n = Option.default "" (String.word 0 words);
+  let reason = _rest_of words;
+  match _request_named body n tx.w with
+  | Some r when r.open && reviewer? key r tx.w -> if reason == "" then change (World.tell body "Say why: /decline %{n} <reason>.") tx
+    else
+      tx
+      |> change (World.close_request r.id "declined: %{reason}")
+      |> _event World.Event(
+        at = "",
+        event = "decline",
+        actor = body,
+        text = Some "#%{r.id} %{reason}"
+      )
+      |> change
+        (World.notice r.by "Your request #%{r.id} to %{_asks r tx.w} was declined: %{reason}")
+      |> change (World.tell body "Declined #%{r.id}.")
+      |> _visitors_back r
+  | _ -> change (World.tell body "There is no open request #%{n} for you to decline.") tx
+)
+
+-- /withdraw <n>, or /withdraw here: take back your own request before
+-- anyone decides on it, or take rooms that joined a realm out of it.
+let _withdraw body words (tx: Tx) =
+  let key = _key_of body tx.w;
+  let bp = World.blueprint_of (room_of body tx.w);
+  match _request_named body words tx.w with
+  | Some r when r.open && Some r.by == key ->
+    tx
+    |> change (World.close_request r.id "withdrawn")
+    |> _event World.Event(at = "", event = "withdraw", actor = body, text = Some "#%{r.id}")
+    |> _notice_all (_reviewers_of r.realm tx.w) "Request #%{r.id} was withdrawn."
+    |> change (World.tell body "Withdrew #%{r.id}.")
+    |> _visitors_back r
+  | _ -> (
+    -- The rooms here joined a realm: take them all out.
+    let joined =
+      List.find
+        (fn (r: World.Request) -> r.kind == "join"
+        && r.outcome == Some "approved"
+        && Some r.by == key
+        && List.any? (fn p -> p == bp) r.rooms
+        && Map.get bp tx.w.adopted == Some r.realm)
+        tx.w.requests;
+    match joined with
+    | Some r when words == "here" ->
+      tx
+      |> change (World.unadopt r.rooms)
+      |> _event World.Event(at = "", event = "leave", actor = body, text = Some "#%{r.id} %{r.realm}")
+      |> _notice_all (_reviewers_of r.realm tx.w) "The rooms of request #%{r.id} left %{short_of (realm_id r.realm) tx.w}."
+      |> change (World.tell body "Your rooms are out of %{short_of (realm_id r.realm) tx.w} now.")
+    | _ -> change (World.tell body "There is no request #%{words} of yours to withdraw.") tx
+  )
+
+
 -- /lock and /unlock: whether only what its owner owns may move a thing,
 -- or anything that can reach it.
 let _set_locked body words locked (tx: Tx) = (
@@ -1820,8 +2371,7 @@ let _steward_anywhere? body (w: World.World) =
 -- alone.
 let _reviews? body (f: World.Flag) (w: World.World) =
   _keymaster? body w
-  || f.kind != "person"
-  && steward? (_key_of body w) (World.blueprint_of (room_of f.target w)) w
+  || f.kind != "person" && _keeps? (_key_of body w) (room_realms (room_of f.target w) w) w
 
 -- What a room or a thing was when it was flagged: its text, and its file.
 -- Its own text, even when it is held, so a Keymaster sees what was there.
@@ -1917,14 +2467,6 @@ let _file_flag body kind target owner reason evidence (tx: Tx) =
        | _ -> filed);
     _hold_if_flagged f told
   )
-
--- What follows the first word of `words`.
-let _rest_of words =
-  String.trim
-    (String.slice
-      (String.length (Option.default "" (String.word 0 words)))
-      (String.length words)
-      words)
 
 -- /flag here <why>, and /flag <thing> <why>.
 let _flag body words (tx: Tx) = (
@@ -2171,6 +2713,9 @@ let _command_line sid body at line (tx: Tx) =
       | "/stat" -> _stat body (_after_verb full) logged
       | "/verbs" -> change (_verbs body (_after_verb full)) logged
       | "/copy" -> _copy body (_after_verb full) logged
+      | "/dig" -> _dig body (_after_verb full) logged
+      | "/files" ->
+        change (World.tell body (_files body (_after_verb full) logged.w)) logged
       | "/help" -> change (_help body (_after_verb full)) logged
       | "/flag" -> _flag body (_after_verb full) logged
       | "/report" -> _report body (_after_verb full) logged
@@ -2184,6 +2729,15 @@ let _command_line sid body at line (tx: Tx) =
       | "/uninvite" -> _invite body (_after_verb full) false logged
       | "/ban" -> _ban body (_after_verb full) true logged
       | "/unban" -> _ban body (_after_verb full) false logged
+      | "/review" -> _review body (_after_verb full) logged
+      | "/reviews" ->
+        change (World.tell body (_reviews body (_after_verb full) logged.w)) logged
+      | "/visit" -> _visit body (_after_verb full) logged
+      | "/back" -> _back body logged
+      | "/approve" -> _approve body (_after_verb full) logged
+      | "/decline" -> _decline body (_after_verb full) logged
+      | "/withdraw" -> _withdraw body (_after_verb full) logged
+      | "/link" -> _link body (_after_verb full) logged
       | "/lock" -> _set_locked body (_after_verb full) true logged
       | "/unlock" -> _set_locked body (_after_verb full) false logged
       | "/edit" -> _edit body (_after_verb full) logged
@@ -2453,7 +3007,14 @@ let restore state (f: Snapshot.File) at =
     List.fold_left
       (fn t (a: World.Account) -> change (World.add_account (_restored_account f a)) t)
       (begin (Shared.get state) at
-      |> change (fn w -> World.World(w, flags = f.flags))
+      |> change (fn w ->
+        World.World(
+          w,
+          flags = f.flags,
+          requests = f.requests,
+          adopted = f.adopted,
+          built = f.built
+        ))
       |> change (World.restore_callouts f.callouts))
       f.accounts;
   let tx =

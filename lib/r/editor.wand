@@ -17,4 +17,5 @@ implement Core.Realm =
     Error "the editor moves no one but the person at it"
   | _ -> Ok();
   let allowed = Core.Everyone;
+  let contracts = [];
   let charter = Realm.no_charter

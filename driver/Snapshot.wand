@@ -42,7 +42,10 @@ type File(
   accounts: List World.Account,
   instances: List Saved,
   flags: List World.Flag = [],
-  callouts: List World.Callout = []
+  callouts: List World.Callout = [],
+  requests: List World.Request = [],
+  adopted: Map String = {},
+  built: Map String = {}
 )
 
 -- The file for a world whose every instance has its saved state. An
@@ -54,6 +57,9 @@ let of_world (w: World.World) =
     accounts = Map.values w.accounts,
     flags = w.flags,
     callouts = w.callouts,
+    requests = w.requests,
+    adopted = w.adopted,
+    built = w.built,
     instances =
       List.filter_map
         (fn (i: World.Instance) -> Option.map

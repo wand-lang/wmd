@@ -259,3 +259,33 @@ test "names the roles of an older file anew, and dates its accounts by their bod
       (Some ("keymaster", Some 2026-09-30T12:00:00Z))
       (Option.map (fn (a: World.Account) -> (a.role, a.created)) (World.account "ann" after))
   ))
+
+test "keeps requests, the rooms that joined a realm, and who built what" (fn t ->
+  with FS.temp_dir "wmd_snap_" as d -> (
+    let path = Path.join d ./world.json;
+    let before =
+      with Shared.make start as state -> (
+        Engine.boot state at;
+        _play state;
+        Shared.update state (fn w ->
+          w
+          |> World.add_request World.Request(
+            id = 1,
+            by = "ann",
+            kind = "join",
+            realm = "/r/learning",
+            rooms = ["/r/home/ann/shop"],
+            at = 2026-09-30T12:00:00Z
+          )
+          |> World.adopt ["/r/home/ann/shop"] "/r/learning"
+          |> World.set_built "/r/home/ann/shop" "ann");
+        Engine.snapshot! state path at;
+        Shared.get state
+      );
+    let after = restored! path;
+    t.eq (before.requests, before.adopted, before.built) (
+      after.requests,
+      after.adopted,
+      after.built
+    )
+  ))

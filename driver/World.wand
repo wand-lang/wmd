@@ -115,6 +115,25 @@ type Input =
 -- apart two that are otherwise the same.
 type Callout(id: Int, target: String, due: DateTime, verb: String)
 
+-- A request to a realm's Stewards, as a flag is to the Keymasters: `by`,
+-- an account, asks the realm `realm` to take its `rooms`, by blueprint
+-- path, the entrance first, as they were when it asked. `kind` is "join",
+-- for rooms its own that join the realm and stay its own, or "open", for
+-- rooms it built inside the realm under a contract, which the realm owns.
+-- `changed` is each of those files saved since it asked. `outcome` is
+-- "approved", "declined: <reason>" or "withdrawn".
+type Request(
+  id: Int,
+  by: String,
+  kind: String,
+  realm: String,
+  rooms: List String,
+  at: DateTime,
+  changed: List String = [],
+  open: Bool = true,
+  outcome: Option String = None
+)
+
 -- One line of the event log. A field that does not apply is None, and the
 -- log line leaves it out.
 type Event(
@@ -170,7 +189,18 @@ type World(
   -- The call-outs not yet run, soonest first.
   callouts: List Callout = [],
   -- How many call-outs have been made: the next one's id.
-  callouts_made: Int = 0
+  callouts_made: Int = 0,
+  -- Every request to a realm, oldest first, open and closed.
+  requests: List Request = [],
+  -- The rooms that joined a realm outside its directory, by blueprint
+  -- path, and the realm each joined.
+  adopted: Map String = {},
+  -- Who built each room or thing, by its blueprint path: the Citizen whose
+  -- save made its file, whoever owns it now.
+  built: Map String = {},
+  -- The room each reviewer came from, by their body, while they visit a
+  -- request. It is not saved.
+  visiting: Map String = {}
 )
 
 let empty =
@@ -645,3 +675,54 @@ let open_flags target (w: World) =
   List.filter (fn (f: Flag) -> f.open && f.target == target) w.flags
 
 let set_held id held (w: World) = _put_instance id (fn i -> Instance(i, held = held)) w
+
+-- ── Requests ───────────────────────────────────────────────────────────
+
+let add_request (r: Request) (w: World) = World(w, requests = List.concat w.requests [r])
+
+let request n (w: World) = List.find (fn (r: Request) -> r.id == n) w.requests
+
+-- Close request `n` with `outcome`.
+let close_request n outcome (w: World) =
+  World(
+    w,
+    requests =
+      List.map
+        (fn (r: Request) -> if r.id == n then Request(r, open = false, outcome = Some outcome)
+          else r)
+        w.requests
+  )
+
+-- The file of `path` was saved: each open request it is in notes it.
+let touched path (w: World) =
+  World(
+    w,
+    requests =
+      List.map
+        (fn (r: Request) -> if r.open && List.any? (fn p -> p == path) r.rooms then
+            Request(r, changed = List.unique (List.concat r.changed [path]))
+          else r)
+        w.requests
+  )
+
+-- The rooms `rooms` join the realm `realm`, or leave the realm they joined.
+let adopt rooms realm (w: World) =
+  World(w, adopted = List.fold_left (fn m p -> Map.set p realm m) w.adopted rooms)
+
+let unadopt rooms (w: World) =
+  World(w, adopted = List.fold_left (fn m p -> Map.delete p m) w.adopted rooms)
+
+-- The Citizen `key` built the file of `path`.
+let set_built path key (w: World) = World(w, built = Map.set path key w.built)
+
+-- A reviewer who came from `room` visits, or is back.
+let visit body room (w: World) = World(w, visiting = Map.set body room w.visiting)
+
+let back body (w: World) = World(w, visiting = Map.delete body w.visiting)
+
+-- What the builder of a room earns when someone new first visits it.
+let reward name now (w: World) =
+  _put_named
+    name
+    (fn a -> Account(a, inspiration = Inspiration.earn now Inspiration.bonus a.inspiration))
+    w

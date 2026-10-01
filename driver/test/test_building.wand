@@ -1,0 +1,137 @@
+uses {FS.Read, FS.Write, Random, Shared}
+
+-- Building out a home: /dig, /files, and the file a room is in.
+
+import ../Engine
+import ../Mudlib
+import ../World
+import FS
+import List
+import Resource
+import Result
+import Shared
+
+let {test, group} = import Test
+
+let loaded = Mudlib.load_all! ./lib
+
+let at = "2026-09-30T12:00:00Z"
+
+let dee = World.session_id 0
+
+let dee_body = "/std/player#0"
+
+let line text = World.queue (World.Line dee at text)
+
+-- Dee's home, where these tests build. It must not exist before a test,
+-- and it is removed after one, so the mudlib is left as it was found.
+let home = ./lib/r/home/dee
+
+let _clean () = (
+  let _ = FS.delete_tree home;
+  match FS.list_dir ./lib/r/home with
+  | Ok [] -> (let _ = FS.delete_tree ./lib/r/home; ())
+  | _ -> ()
+)
+
+-- Dee signs up and plays `changes`; `check` gets the world.
+let built! changes check =
+  if FS.exists? home then
+    Result.get!
+      (Error "%{home} exists: the building tests build there, and remove it after")
+  else with Resource.make (fn () -> ()) (fn () -> _clean ()) as _ ->
+  with Shared.make World.World(
+    World.with_pepper "test pepper",
+    lib = loaded.lib,
+    realms = loaded.realms
+  ) as state -> (
+    Engine.boot state at;
+    List.each
+      (fn f -> (Shared.update state f; Engine.step state))
+      (List.concat
+        [
+          World.open_next at,
+          line "dee",
+          line "2000-05-01",
+          line "dee-password",
+          line "dee-password",
+          line "sign rules",
+          World.emptied dee
+        ]
+        changes);
+    check (Shared.get state)
+  )
+
+let heard (w: World.World) = List.filter (fn l -> l != "") (World.outbox dee w)
+
+let where (w: World.World) = World.env_of dee_body w
+
+-- Dee's first room, dug from the Commons, and Dee in it.
+let in_hall = [
+  line "/dig hall hall",
+  line `/eval [Core.Move ctx.actor "/r/home/dee/hall"]`,
+  World.emptied dee
+]
+
+group "/dig" (fn () -> [
+  test "from a room not yours, makes a room in your home and says how to go there" (fn t ->
+    built! [line "/dig hall hall"] (fn w ->
+      t.eq
+        [
+          `Dug a room at /r/home/dee/hall. No exit leads there from The Commons. Go there with /eval [Core.Move ctx.actor "/r/home/dee/hall"]`
+        ]
+        (heard w))),
+  test "from your own room, adds the exit and leads back" (fn t ->
+    built! (List.concat in_hall [line "/dig east shop/front", line "east", line "west"]) (fn w ->
+      t.eq (true, Some "/r/home/dee/hall#0") (
+        List.any? (fn l -> l == "Dug east to /r/home/dee/shop/front.") (heard w),
+        where w
+      ))),
+  test "makes the directories it needs" (fn t ->
+    built! (List.concat in_hall [line "/dig east shop/front"]) (fn _ ->
+      t.ok (FS.exists? ./lib/r/home/dee/shop/front.wand))),
+  test "will not dig an exit the room has" (fn t ->
+    built! (List.concat in_hall [
+      line "/dig east shop/front",
+      World.emptied dee,
+      line "/dig east shop/back"
+    ]) (fn w ->
+      t.eq ["A new room has an exit east already."] (heard w))),
+  test "digs only where you may build" (fn t ->
+    built! [line "/dig door /r/home/bo/den"] (fn w ->
+      t.eq ["You may not make /r/home/bo/den."] (heard w)))
+])
+
+group "/files" (fn () -> [
+  test "lists your home" (fn t ->
+    built! (List.concat in_hall [line "/dig east shop/front", World.emptied dee, line "/files"]) (fn w ->
+      t.eq ["/r/home/dee/:", "  hall", "  shop/"] (heard w))),
+  test "lists a directory in it" (fn t ->
+    built! (List.concat in_hall [line "/dig east shop/front", World.emptied dee, line "/files shop"]) (fn w ->
+      t.eq ["/r/home/dee/shop/:", "  front"] (heard w))),
+  test "lists only where you may build" (fn t ->
+    built! [line "/files /r/learning"] (fn w ->
+      t.eq ["You may not list /r/learning."] (heard w)))
+])
+
+group "look" (fn () -> [
+  test "shows the room's file to whoever may edit it" (fn t ->
+    built! (List.concat in_hall [line "look"]) (fn w ->
+      t.ok (List.any? (fn l -> l == "File: /r/home/dee/hall") (heard w)))),
+  test "and not to anyone else" (fn t ->
+    built! [line "look"] (fn w ->
+      t.not_ok (List.any? (fn l -> l == "File: /r/square") (heard w))))
+])
+
+group "looking through an exit" (fn () -> [
+  test "shows its view, when it has one" (fn t ->
+    built! [line "look west"] (fn w ->
+      t.eq
+        ["Through the open door to the west, a long hall lined with numbered doors."]
+        (heard w))),
+  test "and otherwise the room on the other side" (fn t ->
+    built! [line "look north"] (fn w ->
+      t.eq
+        ["The Garden", "A small walled garden. A path leads back south to the Commons."]
+        (heard w)))
+])

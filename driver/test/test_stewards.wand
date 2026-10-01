@@ -31,6 +31,7 @@ implement Core.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
   let allowed = Core.Everyone;
+  let contracts = [];
   let charter path =
     if path == "/r/guild/inner" then Core.Charter(stewards = ["Bo"]) else Core.Charter()
 `
@@ -48,6 +49,7 @@ implement Core.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
   let allowed = Core.Everyone;
+  let contracts = [];
   let charter = Realm.no_charter
 `
 

@@ -218,9 +218,11 @@ group "exploring" (fn () -> (
     test "the second is not" (fn t ->
       let w = played (List.concat explored [line ann "south", World.emptied ann, line ann "north"]);
       t.eq (false, 1020) (heard? ann "You feel inspired." w, inspiration "ann" w)),
-    test "nor is a builder's own room" (fn t ->
-      let w = played (List.concat explored [World.emptied bo, line bo "north"]);
-      t.eq (false, 1000) (heard? bo "You feel inspired." w, inspiration "bo" w))
+    test "and its builder earns as much" (fn t ->
+      t.eq 1020 (inspiration "bo" (played explored))),
+    test "but not from their own visit" (fn t ->
+      let w = played (List.concat explored [World.emptied bo, line bo "south", line bo "north"]);
+      t.eq (false, 1020) (heard? bo "You feel inspired." w, inspiration "bo" w))
   ]
 ))
 

@@ -51,6 +51,11 @@ type World(
   -- Whether a body may go into a room. A private room is closed to all
   -- but its owner, whoever it invites, and the admins.
   may_enter?: ObjId -> ObjId -> Bool,
+  -- Whether a player may edit the file of a blueprint path, as /r/home/ann/lamp.
+  may_edit?: ObjId -> String -> Bool,
+  -- Whether an object has been made yet. A room is made the first time
+  -- someone goes there.
+  made?: ObjId -> Bool,
   -- A help topic, as /help shows it: "rules" is the community rules.
   help_of: String -> Option String
 )
@@ -69,7 +74,10 @@ type Exit(
   to: ObjId,
   leave: Option String = None,
   arrive: Option String = None,
-  check: Option (Context -> Result String Unit) = None
+  check: Option (Context -> Result String Unit) = None,
+  -- What `look` that way shows, as through a window. With none, it shows
+  -- the room on the other side, to anyone who may go in.
+  view: Option String = None
 )
 
 -- Everything an object can ask of the world.
@@ -217,6 +225,11 @@ type Charter(
   grants: List Grant = []
 )
 
+-- A Steward's contract with a Citizen, by key, to build for the realm in
+-- the directory `path`, as /r/guild/forge: the Citizen may edit the files
+-- there, which the realm owns, until the contract is taken out.
+type Contract(path: String, builder: String)
+
 -- An area of the world with rules of its own, such as the Home realm or the
 -- Rules Hall. A realm is the file beside its directory: /r/home is the
 -- realm of the rooms in /r/home/, and /r, the Commons, of every room under
@@ -237,6 +250,8 @@ interface Realm(
   allows: Context -> Action -> Result String Unit ! {Random, Raise},
   -- Who may enter a new room of the realm, until its owner says otherwise.
   allowed: Allowed,
+  -- The Citizens building for the realm, which its Stewards write.
+  contracts: List Contract,
   -- The charter of each realm inside this one, by the path of its file.
   charter: String -> Charter ! {Random, Raise}
 )

@@ -20,6 +20,17 @@ How each lesson works:
      once. Type h in the editor for its commands.
   4. Make one of it, or go into it, with the /eval line /copy gives you.
 
+Your home is a directory, /r/home/<you>/, and you can make directories in
+it to keep your rooms in order, as /r/home/<you>/shop/. /edit and /dig make
+any directory a path needs, and /files lists what you have.
+
+To build your own rooms, /dig from where you stand. In the Commons,
+/dig hall hall makes your first room, /r/home/<you>/hall. In a room of
+yours, /dig east shop/front makes a room in the directory shop and an exit
+east to it, and the new room has an exit back. Go through the exit and
+/edit here to describe the new room. When you look at a room you may
+edit, the last line says which file it is.
+
 Tools that help:
 
   /verbs <thing>     what a thing answers to

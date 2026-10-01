@@ -20,4 +20,5 @@ implement Core.Realm =
   else Error "First read the rules on the wall, then sign them: sign rules.";
   let allows = Realm.anything;
   let allowed = Core.Everyone;
+  let contracts = [];
   let charter = Realm.no_charter

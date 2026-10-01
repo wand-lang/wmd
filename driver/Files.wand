@@ -10,6 +10,7 @@ uses {FS.Read, FS.Write}
 
 import FS
 import List
+import Option
 import Path
 import Regex
 import Result
@@ -144,6 +145,24 @@ let draft (lib: Path) path source = (
   | Ok _ -> Core.Outcome(action = "draft", path = path, ok = true, text = Some text)
 )
 
+-- What is in the directory of blueprint path `path`, sorted: each directory
+-- with a / after it, and each blueprint by its name, as shop/ and lamp.
+-- None when there is no such directory.
+let list (lib: Path) path =
+  let dir = Path.join lib (Path.of_string ".%{path}");
+  if !(FS.dir? dir) then None
+  else
+    Some
+      (List.sort
+        (List.filter_map
+          (fn p ->
+            let name = Path.to_string (Path.basename p);
+            if FS.dir? p then Some "%{name}/"
+            else if String.ends_with? ".wand" name && !(String.starts_with? "test_" name) then
+              Some (String.slice 0 (String.length name - 5) name)
+            else None)
+          (Result.default [] (FS.list_dir dir))))
+
 -- Whether the file of `path` is there yet.
 let exists? (lib: Path) path = FS.exists? (file_of lib path)
 
@@ -151,3 +170,68 @@ let exists? (lib: Path) path = FS.exists? (file_of lib path)
 let read (lib: Path) path =
   let file = file_of lib path;
   if FS.exists? file then Result.to_option (FS.read_file file) else None
+
+-- The relative import from the file of `path` to the file of blueprint path
+-- `target`: ../../../../std/core from /r/home/ann/shop/front to /std/core.
+let import_to path target =
+  _relative (_dir path) (List.filter (fn s -> s != "") (String.split "/" target))
+
+-- The line above the exits that /dig may add to.
+let dig_marker = "-- The exits. /dig adds one here, and you can change them by hand."
+
+-- The source of a room /dig makes at `path`, with one exit, `back`, to the
+-- room it was dug from.
+let dug_room path back from = `
+uses {Random}
+
+-- A room made by /dig. Give it a name and a description with /edit here.
+
+let Core = import %{import_to path "/std/core"}
+let Room = import %{import_to path "/std/room"}
+
+%{dig_marker}
+let exits = {
+  %{back} = Room.exit "%{from}"
+}
+
+let room =
+  Core.Object(
+    Room.room "A new room" "Nothing is here yet. Describe it with /edit here.",
+    exits = exits
+  )
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = room)
+`
+
+-- `s` split at the first `sep`: what is before it and what is after.
+let _split_once sep s =
+  match String.split sep s with
+  | [first :: rest] when rest != [] -> Some (first, String.join sep rest)
+  | _ -> None
+
+-- `v` written as the inside of a Wand string: a backslash, a quote and the
+-- start of an interpolation each escaped, so any text reads back as typed.
+let _escaped v =
+  v |> String.replace "\\" "\\\\" |> String.replace `"` `\"` |> String.replace "\%{" "\\\%{"
+
+-- The line of Wand for the exit `name` to `to`, with what `look` that way
+-- shows, when it has a view.
+let exit_line name to (view: Option String) =
+  match view with
+  | Some v -> `%{name} = Core.Exit(Room.exit "%{to}", view = Some "%{_escaped v}")`
+  | None -> `%{name} = Room.exit "%{to}"`
+
+-- `source` with the exit `name` to `to` added to the exits below its
+-- /dig marker, or None when it has no marker, as a room written by hand.
+let with_exit name to (view: Option String) source =
+  let opening = "let exits = {";
+  let entry = exit_line name to view;
+  Option.and_then
+    (fn (before, after) -> Option.map
+      (fn (between, rest) ->
+        let added =
+          if String.starts_with? "}" (String.trim_left rest) then entry else "\n  %{entry},";
+        "%{before}%{dig_marker}%{between}%{opening}%{added}%{rest}")
+      (_split_once opening after))
+    (_split_once dig_marker source)

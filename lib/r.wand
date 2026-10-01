@@ -35,6 +35,7 @@ let _way_out (w: Core.World) room exits =
 
 let _room (ctx: Core.Context) =
   let w = ctx.world;
+  let file = Option.default ctx.here (List.head (String.split "#" ctx.here));
   let here = List.filter (fn o -> o != ctx.actor) (w.contents ctx.here);
   let people = List.filter w.player? here;
   let things = List.filter (fn o -> !(w.player? o)) here;
@@ -48,7 +49,9 @@ let _room (ctx: Core.Context) =
       List.map
         (fn p -> if w.awake? p then "%{w.short_of p} is here."
           else "%{w.short_of p} is here, asleep.")
-        people
+        people,
+      -- Whoever may edit the room sees which file it is.
+      if w.may_edit? ctx.actor file then ["File: %{file}"] else []
     ];
   Core.tell ctx (String.join "\n" lines)
 
@@ -61,7 +64,20 @@ let _detail (ctx: Core.Context) words = (
   | None -> Core.tell ctx "You don't see a '%{words}' here."
 )
 
--- `look`, `look lever`, `look at lever`, `look at window`.
+-- `look east`: what lies that way, as through a window. The exit's own
+-- view, when it has one, and otherwise the room on the other side, to
+-- anyone who may go in. A force hides a room you may not enter, so no one
+-- sees into a private room, or one they are banned from.
+let _through (ctx: Core.Context) (e: Core.Exit) = (
+  let w = ctx.world;
+  match e.view with
+  | Some v -> Core.tell ctx v
+  | None -> if !(w.may_enter? ctx.actor e.to) then Core.tell ctx "A force hides what lies that way."
+    else if !(w.made? e.to) then Core.tell ctx "You can't make out what lies that way."
+    else Core.tell ctx "%{w.short_of e.to}\n%{w.long_of e.to}"
+)
+
+-- `look`, `look lever`, `look at lever`, `look at window`, and `look east`.
 let _look (ctx: Core.Context) (p: Core.Parsed) = (
   let words =
     String.trim
@@ -70,7 +86,12 @@ let _look (ctx: Core.Context) (p: Core.Parsed) = (
   match (p.dobj, p.iobj) with
   | (Some o, _) -> Core.tell ctx (ctx.world.long_of o)
   | (None, Some o) -> Core.tell ctx (ctx.world.long_of o)
-  | _ -> if words == "" || words == "here" then _room ctx else _detail ctx words
+  | _ -> (
+    if words == "" || words == "here" then _room ctx
+    else match Map.get (String.lower words) (ctx.world.exits_of ctx.here) with
+      | Some e -> _through ctx e
+      | None -> _detail ctx words
+  )
 )
 
 -- ── go ─────────────────────────────────────────────────────────────────
@@ -98,7 +119,7 @@ let _go (ctx: Core.Context) (p: Core.Parsed) = (
   | Some e -> (
     let check = Option.default (fn _ -> Ok()) e.check;
     if !(ctx.world.may_enter? ctx.actor e.to) then
-      Core.tell ctx "That way is still being built."
+      Core.tell ctx "A force keeps you from going that way."
     else match check ctx with
       | Error why -> Core.tell ctx why
       | Ok _ -> Core.Reply(
@@ -144,4 +165,5 @@ implement Core.Realm =
   let commands = Realm.anything;
   let allows = Realm.anything;
   let allowed = Core.Everyone;
+  let contracts = [];
   let charter = _charter

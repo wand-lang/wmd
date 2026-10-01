@@ -7,6 +7,9 @@ has not turned them off:
   /stat me             your Capacity and Inspiration
   /verbs [thing]       what a thing, or this room, answers to
   /edit [path]         edit a file in your home, as /edit /r/home/ann/lamp
+  /dig <exit> <path> [view]
+                       dig a new room and an exit to it, as /dig east shop/front
+  /files [directory]   list the files and directories in your home
   /copy <thing>        copy an example from the Learning Hall into your home
   /update [path]       load a file's new code
   /reset [thing]       make a thing again from its file
@@ -17,7 +20,22 @@ has not turned them off:
   /ban, /unban         keep one person out of all your rooms, or not
   /lock, /unlock       whether others may move a thing you own
   /flag, /report       tell the Keymasters something breaks the rules
+  /review here <realm> ask a realm to take the rooms from here, as
+                       /review here guild
+  /reviews [n]         your requests, and the ones waiting for you
+  /withdraw <n>|here   take back a request, or take your rooms out of a
+                       realm they joined
   /quit                leave
+
+For Stewards and Keymasters:
+
+  /visit <n>, /back    go to the rooms of a request, and come back
+  /approve <n> [exit] [view]
+                       open a request's rooms, and connect them from here
+  /decline <n> <why>   refuse a request, and tell its builder why
+  /link <exit> <path> [view]
+                       add an exit from here to a room that is there
+  /flags, /resolve     review and resolve flags
 
 The rest are verbs: your own, such as say, pose and home; the room's and
 its things'; and the realm's, such as look and go. An exit works by its

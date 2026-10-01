@@ -1,0 +1,273 @@
+uses {FS.Read, FS.Write, Random, Shared}
+
+-- Reviews: a Citizen asks a realm to take rooms, its Steward visits them,
+-- and approves or declines; and contracts to build for a realm.
+
+import ../Engine
+import ../Files
+import ../Mudlib
+import ../World
+import FS
+import List
+import Map
+import Option
+import Resource
+import Result
+import Shared
+
+let {test, group} = import Test
+
+-- The Guild, whose charter names Bo the Steward of the Inner realm in it.
+-- The Inner realm gives Dee a contract to build its forge, and its hall
+-- has a marked block of exits, as a room /dig makes.
+let guild = `
+uses {Random}
+
+let Core = import ../std/core
+let Realm = import ../std/realm
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = Realm.object "the Guild" [])
+
+implement Core.Realm =
+  let commands = Realm.anything;
+  let allows = Realm.anything;
+  let allowed = Core.Everyone;
+  let contracts = [];
+  let charter path =
+    if path == "/r/guild/inner" then Core.Charter(stewards = ["Bo"]) else Core.Charter()
+`
+
+let inner = `
+uses {Random}
+
+let Core = import ../../std/core
+let Realm = import ../../std/realm
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = Realm.object "the Inner Guild" [])
+
+implement Core.Realm =
+  let commands = Realm.anything;
+  let allows = Realm.anything;
+  let allowed = Core.Everyone;
+  let contracts = [Core.Contract(path = "/r/guild/inner/forge", builder = "Dee")];
+  let charter = Realm.no_charter
+`
+
+let hall = Files.dug_room "/r/guild/inner/hall" "out" "/r/square"
+
+let _write! () = (
+  FS.mkdir! ./lib/r/guild/inner;
+  FS.write_file! ./lib/r/guild.wand guild;
+  FS.write_file! ./lib/r/guild/inner.wand inner;
+  FS.write_file! ./lib/r/guild/inner/hall.wand hall
+)
+
+let _clean () = (
+  let _ = FS.delete_tree ./lib/r/guild;
+  let _ = FS.delete ./lib/r/guild.wand;
+  let _ = FS.delete_tree ./lib/r/home/dee;
+  match FS.list_dir ./lib/r/home with
+  | Ok [] -> (let _ = FS.delete_tree ./lib/r/home; ())
+  | _ -> ()
+)
+
+let loaded = (_write! (); let l = Mudlib.load_all! ./lib; _clean (); l)
+
+let at = "2026-09-30T12:00:00Z"
+
+let dee = World.session_id 0
+
+let bo = World.session_id 1
+
+let dee_body = "/std/player#0"
+
+let bo_body = "/std/player#1"
+
+let said sid text = World.queue (World.Line sid at text)
+
+let signed_up sid name = [
+  World.open_next at,
+  said sid name,
+  said sid "2000-05-01",
+  said sid "%{name}-password",
+  said sid "%{name}-password",
+  said sid "sign rules"
+]
+
+-- Dee's shop: a front room, dug from the Commons into her home, and a back
+-- room east of it.
+let shop = [
+  said dee "/dig shop shop/front",
+  said dee `/eval [Core.Move ctx.actor "/r/home/dee/shop/front"]`,
+  said dee "/dig east back"
+]
+
+-- Dee and Bo signed up, Dee in her shop, and her request to join the Inner
+-- Guild asked, with nothing heard.
+let asked = List.flatten [
+  signed_up dee "dee",
+  signed_up bo "bo",
+  shop,
+  [said dee "/review here /r/guild/inner", World.emptied dee, World.emptied bo]
+]
+
+let played! changes check =
+  if FS.exists? ./lib/r/home/dee then
+    Result.get!
+      (Error "./lib/r/home/dee exists: these tests build there, and remove it after")
+  else with Resource.make (fn () -> _write! ()) (fn () -> _clean ()) as _ ->
+  with Shared.make World.World(
+    World.with_pepper "test pepper",
+    lib = loaded.lib,
+    realms = loaded.realms
+  ) as state -> (
+    Engine.boot state at;
+    List.each (fn f -> (Shared.update state f; Engine.step state)) changes;
+    check (Shared.get state)
+  )
+
+let heard sid (w: World.World) = List.filter (fn l -> l != "") (World.outbox sid w)
+
+let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid w)
+
+let where body (w: World.World) = World.env_of body w
+
+group "asking" (fn () -> [
+  test "covers the rooms of the entrance's directory its exits reach" (fn t ->
+    played! asked (fn w ->
+      t.eq
+        (Some (["/r/home/dee/shop/front", "/r/home/dee/shop/back"], "join"))
+        (Option.map (fn (r: World.Request) -> (r.rooms, r.kind)) (World.request 1 w)))),
+  test "tells the asker its number, and the Stewards" (fn t ->
+    played! (List.flatten [
+      signed_up dee "dee",
+      signed_up bo "bo",
+      shop,
+      [World.emptied dee, said dee "/review here /r/guild/inner"]
+    ]) (fn w ->
+      t.eq (true, true) (
+        heard? dee "Your request #1 to join the Inner Guild is waiting for its Stewards." w,
+        heard?
+          bo
+          "Request #1: Dee asks to join the Inner Guild, with 2 rooms from /r/home/dee/shop/front. /visit 1 to look."
+          w
+      ))),
+  test "is listed for both" (fn t ->
+    played! (List.concat asked [said bo "/reviews"]) (fn w ->
+      t.eq
+        [
+          "#1 join /r/guild/inner: 2 rooms from /r/home/dee/shop/front, by dee at 2026-09-30T12:00:00Z"
+        ]
+        (heard bo w))),
+  test "notes the files saved since" (fn t ->
+    played! (List.concat asked [said dee "/dig up attic", World.emptied bo, said bo "/reviews 1"]) (fn w ->
+      t.ok (heard? bo "Saved since it was asked: /r/home/dee/shop/front" w)))
+])
+
+group "visiting" (fn () -> [
+  test "takes a reviewer into the private rooms, and tells the builder" (fn t ->
+    played! (List.concat asked [said bo "/visit 1", said bo "east"]) (fn w ->
+      t.eq (Some "/r/home/dee/shop/back#0", true) (
+        where bo_body w,
+        heard? dee "Bo is reviewing your request #1." w
+      ))),
+  test "ends with /back where it began" (fn t ->
+    played! (List.concat asked [said bo "/visit 1", said bo "/back"]) (fn w ->
+      t.eq (Some "/r/square#0") (where bo_body w))),
+  test "is for reviewers only" (fn t ->
+    played! (List.concat asked [said dee "/visit 1"]) (fn w ->
+      t.eq ["There is no request #1 for you to visit."] (heard dee w)))
+])
+
+group "deciding" (fn () -> [
+  test "approving opens the rooms, and they join the realm" (fn t ->
+    played! (List.concat asked [said bo "/approve 1"]) (fn w ->
+      t.eq (true, Some "/r/guild/inner", ["/r/guild/inner", "/r/guild", "/r"]) (
+        Option.map World.public? (World.instance "/r/home/dee/shop/back#0" w) == Some true,
+        Map.get "/r/home/dee/shop/front" w.adopted,
+        Engine.room_realms "/r/home/dee/shop/front#0" w
+      ))),
+  test "the rooms stay their builder's" (fn t ->
+    played! (List.concat asked [said bo "/approve 1"]) (fn w ->
+      t.eq (Some "dee") (Engine.file_owner "/r/home/dee/shop/front" w))),
+  test "declining needs a reason, and tells the builder" (fn t ->
+    played! (List.concat asked [said bo "/decline 1", said bo "/decline 1 too dark"]) (fn w ->
+      t.eq (true, true) (
+        heard? bo "Say why: /decline 1 <reason>." w,
+        heard? dee "Your request #1 to join the Inner Guild was declined: too dark" w
+      ))),
+  test "declining sends a visitor back" (fn t ->
+    played! (List.concat asked [said bo "/visit 1", said bo "/decline 1 too dark"]) (fn w ->
+      t.eq (Some "/r/square#0") (where bo_body w)))
+])
+
+group "withdrawing" (fn () -> [
+  test "takes back a request before anyone decides" (fn t ->
+    played! (List.concat asked [said dee "/withdraw here"]) (fn w ->
+      t.eq (Some (Some "withdrawn"), true) (
+        Option.map (fn (r: World.Request) -> r.outcome) (World.request 1 w),
+        heard? bo "Request #1 was withdrawn." w
+      ))),
+  test "takes rooms that joined out of the realm" (fn t ->
+    played! (List.concat asked [said bo "/approve 1", said dee "/withdraw here"]) (fn w ->
+      t.eq (None, ["/r/home", "/r"]) (
+        Map.get "/r/home/dee/shop/front" w.adopted,
+        Engine.room_realms "/r/home/dee/shop/front#0" w
+      )))
+])
+
+group "a contract" (fn () -> [
+  test "lets its builder edit the realm's files in its directory, and only those" (fn t ->
+    played! asked (fn w ->
+      t.eq (true, false) (
+        Engine.may_edit? dee_body "/r/guild/inner/forge/anvil" w,
+        Engine.may_edit? dee_body "/r/guild/inner/hall" w
+      )))
+])
+
+group "/link" (fn () -> [
+  test "adds an exit from a room of the realm to the rooms" (fn t ->
+    played! (List.concat asked [
+      said bo "/approve 1",
+      said bo `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
+      said bo "/link shop /r/home/dee/shop/front",
+      said bo "shop"
+    ]) (fn w ->
+      t.eq (true, Some "/r/home/dee/shop/front#0") (
+        heard? bo "Linked shop to /r/home/dee/shop/front." w,
+        where bo_body w
+      )))
+])
+
+group "/approve with an exit" (fn () -> [
+  test "connects the rooms from the room of the realm the Steward stands in" (fn t ->
+    played! (List.concat asked [
+      said bo `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
+      said bo "/approve 1 shop",
+      said bo "shop"
+    ]) (fn w ->
+      t.eq (true, true, Some "/r/home/dee/shop/front#0") (
+        heard? bo "Approved #1." w,
+        heard? bo "Linked shop to /r/home/dee/shop/front." w,
+        where bo_body w
+      ))),
+  test "approves nothing from a room outside the realm" (fn t ->
+    played! (List.concat asked [said bo "/approve 1 shop"]) (fn w ->
+      t.eq (true, Some true) (
+        heard? bo "Stand in a room of the Inner Guild to connect it from there." w,
+        Option.map (fn (r: World.Request) -> r.open) (World.request 1 w)
+      )))
+])
+
+group "a view" (fn () -> [
+  test "/approve writes one on the exit it adds" (fn t ->
+    played! (List.concat asked [
+      said bo `/eval [Core.Move ctx.actor "/r/guild/inner/hall"]`,
+      said bo `/approve 1 shop Through the arch, a "small" shop.`,
+      World.emptied bo,
+      said bo "look shop"
+    ]) (fn w ->
+      t.eq [`Through the arch, a "small" shop.`] (heard bo w)))
+])

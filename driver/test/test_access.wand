@@ -90,7 +90,10 @@ let bo_takes = line bo `/eval [Core.Move "/r/lever#0" ctx.actor]`
 group "a private room" (fn () -> [
   test "is closed to other builders" (fn t ->
     let w = after [line ann "north"];
-    t.eq (["That way is still being built."], Some square) (heard ann w, where ann_body w)),
+    t.eq (["A force keeps you from going that way."], Some square) (
+      heard ann w,
+      where ann_body w
+    )),
   test "is open to its owner" (fn t ->
     let w = after [line bo "south", line bo "north"];
     t.eq (Some garden) (where bo_body w)),
@@ -210,7 +213,7 @@ group "bans" (fn () -> [
         World.emptied ann,
         line ann "north"
       ];
-    t.eq (true, ["That way is still being built."], Some square) (
+    t.eq (true, ["A force keeps you from going that way."], Some square) (
       heard? bo "Ann may no longer come into your rooms." w,
       heard ann w,
       where ann_body w
@@ -240,4 +243,9 @@ group "a public room" (fn () -> [
     t.eq
       ["The Garden is public: anyone may come in. /private here closes it."]
       (heard bo (after [line bo "/public here", World.emptied bo, line bo "/invite ann"])))
+])
+
+group "looking into a private room" (fn () -> [
+  test "shows nothing of it" (fn t ->
+    t.eq ["A force hides what lies that way."] (heard ann (after [line ann "look north"])))
 ])
