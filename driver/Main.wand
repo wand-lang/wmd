@@ -48,12 +48,6 @@ let _snapshot state path =
   | Ok _ -> ()
   | Error why -> IO.println_err "wmd: snapshot to %{path} failed: %{why}"
 
-let _drive state path = (
-  Engine.step state;
-  if World.tick_due? (Shared.get state) then Engine.tick state (_now ());
-  if World.snapshot_due? (Shared.get state) then _snapshot state path
-)
-
 -- The world before anything is restored: the pepper, the mudlib and where
 -- its files are. A file that does not load is left out and said, and the
 -- rest of the world starts: a builder's broken file does not stop the
@@ -71,25 +65,36 @@ let _start! (o: Opts) = (
   )
 )
 
--- The driver sleeps until there is input, a tick or a snapshot is due, and
--- wakes on the update that queues it.
-let _driver state path = (
-  let _ =
-    Shared.wait state (fn (w: World.World) ->
-      w.inputs != [] || World.tick_due? w || World.snapshot_due? w);
-  _drive state path;
-  _driver state path
-)
-
--- A tick is due every `every` while some object has a heartbeat or a
--- call-out waits. With nothing to tick, the timer sleeps until there is.
--- A tick that takes longer than `every` makes the next one late: ticks do
--- not stack up.
-let _timer state every = (
-  let _ = Shared.wait state World.ticking?;
-  Clock.sleep every;
-  Shared.update state World.tick_due;
-  _timer state every
+-- The driver sleeps until there is input or a snapshot is due, and wakes
+-- on the update that queues it. While something has to tick, it sleeps no
+-- longer than until the tick: the next heartbeat, `o.tick` after the start
+-- of the last one, or else the soonest call-out. Only this fiber changes
+-- what has a heartbeat or a call-out, so nothing moves the tick while it
+-- sleeps. A tick that takes longer than `o.tick` makes the next one late:
+-- ticks do not stack up.
+--
+-- `left` is the time to the next heartbeat. It is measured with
+-- Clock.timed, because a DateTime keeps whole seconds only, and a clock
+-- step would spoil two readings of Clock.now.
+let _driver state (o: Opts) left = (
+  let ready (w: World.World) = w.inputs != [] || World.snapshot_due? w;
+  let (slept, _) =
+    Clock.timed (fn () ->
+      let _ =
+        match World.sleep_for left (Clock.now ()) (Shared.get state) with
+        | None -> Ok (Shared.wait state ready)
+        | Some d -> Par.timeout d (fn () -> Shared.wait state ready)
+      in
+      Engine.step state);
+  let after = left - slept;
+  let next =
+    if World.sleep_for after (Clock.now ()) (Shared.get state) == Some 0s then (
+      let (took, _) = Clock.timed (fn () -> Engine.tick state (_now ()));
+      o.tick - took
+    )
+    else after;
+  if World.snapshot_due? (Shared.get state) then _snapshot state o.world;
+  _driver state o next
 )
 
 let run! (o: Opts) = (
@@ -110,8 +115,7 @@ let run! (o: Opts) = (
     IO.println "wmd listening on %{o.port}, world in %{o.world}, logging to %{o.logs}";
     Par.all! [
       fn () -> Net.listen o.port |> Par.each_stream 256 (Session.serve state),
-      fn () -> _driver state o.world,
-      fn () -> _timer state o.tick,
+      fn () -> _driver state o o.tick,
       fn () -> Clock.every 60s (fn () -> Shared.update state World.snapshot_due),
       fn () -> Clock.every 1s (fn () -> Log.flush! state o.logs)
     ]

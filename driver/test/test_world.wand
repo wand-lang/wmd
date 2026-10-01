@@ -56,3 +56,31 @@ group "outboxes" (fn () -> [
 
 test "all_logged takes every event out" (fn t ->
   t.eq [] (World.all_logged (World.open_next at World.empty)).events)
+
+let noon = 2026-09-30T12:00:00Z
+
+-- A world where `/clock#0` has a heartbeat.
+let beating = World.World(World.empty, beating = Map.set "/clock#0" true Map.empty)
+
+group "how long the driver may sleep" (fn () -> [
+  test "for ever, with nothing to tick" (fn t ->
+    t.ok (World.sleep_for 2s noon World.empty == None)),
+  test "until the next heartbeat, while something has one" (fn t ->
+    t.eq (Some 2s, Some 500ms) (
+      World.sleep_for 2s noon beating,
+      World.sleep_for 500ms noon beating
+    )),
+  test "until the soonest call-out, when nothing has a heartbeat" (fn t ->
+    let w =
+      World.empty
+      |> World.call_out "/timer#0" (noon + 15m) "ring"
+      |> World.call_out "/timer#0" (noon + 30s) "ring";
+    t.eq (Some 30s) (World.sleep_for 2s noon w)),
+  test "not at all, when a call-out is late" (fn t ->
+    t.eq
+      (Some 0s)
+      (World.sleep_for
+        2s
+        (noon + 5s)
+        (World.call_out "/timer#0" (noon + 1s) "ring" World.empty)))
+])

@@ -1950,7 +1950,6 @@ let _call_out (c: World.Callout) (tx: Tx) =
 -- an input is. What a heartbeat or a call-out starts waits for the next
 -- tick.
 let tick state at = (
-  Shared.update state World.tick_taken;
   let (w: World.World) = Shared.get state;
   List.each
     (fn id ->

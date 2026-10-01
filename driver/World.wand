@@ -157,16 +157,13 @@ type World(
   flags: List Flag = [],
   -- The last lines each body said, for a report. They are not saved.
   said: Map (List String) = {},
-  -- The instances with a heartbeat, by id, so the timer sees whether there
+  -- The instances with a heartbeat, by id, so the driver sees whether there
   -- is anything to tick without looking at every object.
   beating: Map Bool = {},
   -- The call-outs not yet run, soonest first.
   callouts: List Callout = [],
   -- How many call-outs have been made: the next one's id.
-  callouts_made: Int = 0,
-  -- Set by the timer and cleared by the tick, which the driver fiber takes,
-  -- as a snapshot is.
-  tick_due: Bool = false
+  callouts_made: Int = 0
 )
 
 let empty =
@@ -520,11 +517,13 @@ let restore_callouts cs (w: World) =
 -- call-out not yet run.
 let ticking? (w: World) = Map.size w.beating > 0 || w.callouts != []
 
-let tick_due (w: World) = World(w, tick_due = true)
-
-let tick_taken (w: World) = World(w, tick_due = false)
-
-let tick_due? (w: World) = w.tick_due
+-- How long the driver may sleep before it must tick: `left`, the time to
+-- the next heartbeat, while some object has one, and otherwise until the
+-- soonest call-out. A call-out already due is 0s. None when there is
+-- nothing to tick.
+let sleep_for (left: Duration) (now: DateTime) (w: World) =
+  if Map.size w.beating > 0 then Some left
+  else Option.map (fn (c: Callout) -> c.due - now) (List.head w.callouts)
 
 -- A new world that hashes passwords with `pepper`.
 let with_pepper pepper = World(empty, pepper = pepper)
