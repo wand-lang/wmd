@@ -1,0 +1,286 @@
+uses {FS.Read, FS.Write, Random, Shared}
+
+-- Heartbeats and call-outs: the driver's tick, what it charges, and what
+-- survives a restart.
+
+import ../Engine
+import ../Inspiration
+import ../Mudlib
+import ../Snapshot
+import ../World
+import Duration
+import FS
+import JSON
+import List
+import Map
+import Option
+import Path
+import Result
+import Shared
+
+let {test, group} = import Test
+
+-- Three blueprints that only these tests use. A file loads only from inside
+-- the real lib/, so they are written there, loaded, and removed at once.
+let clock = `
+uses {Random}
+
+import JSON
+import Result
+
+let Core = import ../../std/core
+
+type State(beats: Int = 0)
+
+let make (s: State) =
+  Core.Object(
+    names = ["clock"],
+    short = fn _ -> "clock",
+    long = fn _ -> "A clock.",
+    props = Some (fn _ -> {beats = JSON.of_int s.beats}),
+    heartbeat = Some (fn _ -> Core.Reply(next = Some (make State(beats = s.beats + 1)))),
+    save = fn () -> State.encoder s
+  )
+
+implement Core.Blueprint =
+  let create _ saved = match saved with
+  | None -> Core.Init(object = make State())
+  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+`
+
+let timer = `
+uses {Random}
+
+import JSON
+import List
+import Result
+
+let Core = import ../../std/core
+
+type State(heard: List String = [])
+
+let after actions = Core.Verb(names = [], run = fn _ _ -> Core.Reply(actions = actions))
+
+let make (s: State) =
+  let heard name =
+    Core.Verb(
+      names = [name],
+      run = fn _ _ -> Core.Reply(next = Some (make State(heard = List.concat s.heard [name])))
+    );
+  Core.Object(
+    names = ["timer"],
+    short = fn _ -> "timer",
+    long = fn _ -> "A timer.",
+    props = Some (fn _ -> {heard = JSON.of_list (List.map JSON.of_string s.heard)}),
+    verbs = [
+      heard "ring",
+      heard "early",
+      heard "late",
+      Core.Verb(after [Core.After 30s "ring"], names = ["set"]),
+      Core.Verb(after [Core.After 60s "late", Core.After 30s "early"], names = ["wind"]),
+      Core.Verb(after [Core.After 1s "nothing"], names = ["stray"])
+    ],
+    save = fn () -> State.encoder s
+  )
+
+implement Core.Blueprint =
+  let create _ saved = match saved with
+  | None -> Core.Init(object = make State())
+  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+`
+
+let broken = `
+uses {Random}
+
+import JSON
+import Result
+
+let Core = import ../../std/core
+
+let thing =
+  Core.Object(
+    names = ["gadget"],
+    short = fn _ -> "gadget",
+    long = fn _ -> "A gadget.",
+    heartbeat = Some (fn _ -> Result.get! (Error "out of order")),
+    save = fn () -> JSON.null
+  )
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = thing)
+`
+
+let dir = ./lib/home/tock
+
+let lib = (
+  FS.mkdir! dir;
+  List.each (fn (name, source) -> FS.write_file! (Path.join dir name) source) [
+    (./clock.wand, clock),
+    (./timer.wand, timer),
+    (./broken.wand, broken)
+  ];
+  let loaded = (Mudlib.load_all! ./lib).lib;
+  let _ = FS.delete_tree dir;
+  match FS.list_dir ./lib/home with
+  | Ok [] -> (let _ = FS.delete_tree ./lib/home; ())
+  | _ -> ();
+  loaded
+)
+
+let start = World.World(World.with_pepper "test pepper", lib = lib)
+
+let noon = 2026-09-30T12:00:00Z
+
+let at = "%{noon}"
+
+-- The time `n` seconds after noon, as an input carries it.
+let after n = "%{noon + Duration.seconds n}"
+
+let clock_id = "/home/tock/clock#0"
+
+let timer_id = "/home/tock/timer#0"
+
+let broken_id = "/home/tock/broken#0"
+
+-- What a test does to the world, one step at a time.
+let on time f state =
+  let _ = Shared.update state (Engine.commit (f (Engine.begin (Shared.get state) time)));
+  ()
+
+let spawn bp owner = on at (Engine.spawn bp Engine.arrival "test" owner)
+
+let verb id name time = on time (Engine.verb id id name)
+
+let tick time state = Engine.tick state time
+
+-- Tock, who owns what a test spawns with Some "tock", with `amount`
+-- Inspiration at noon.
+let tock amount state =
+  let _ =
+    Shared.update
+      state
+      (World.add_account World.Account(
+        name = "tock",
+        body = "/std/player#9",
+        password = "",
+        inspiration = Inspiration.Inspiration(amount = amount, at = noon)
+      ));
+  ()
+
+let played steps =
+  with Shared.make start as state -> (
+    Engine.boot state at;
+    List.each (fn f -> f state) steps;
+    Shared.get state
+  )
+
+let prop id key (w: World.World) = (Engine.view w id).prop id key
+
+let beats w = prop clock_id "beats" w
+
+let heard w = prop timer_id "heard" w
+
+let words xs = Some (JSON.of_list (List.map JSON.of_string xs))
+
+let events (w: World.World) = List.map (fn (e: World.Event) -> e.event) w.events
+
+group "heartbeats" (fn () -> [
+  test "the test blueprints loaded" (fn t ->
+    t.eq (true, true, true) (
+      Map.has? "/home/tock/clock" lib,
+      Map.has? "/home/tock/timer" lib,
+      Map.has? "/home/tock/broken" lib
+    )),
+  test "an object with a heartbeat is called on every tick" (fn t ->
+    t.eq
+      (Some (JSON.of_int 2))
+      (beats (played [spawn "/home/tock/clock" None, tick at, tick (after 2)]))),
+  test "nothing ticks in a world with no heartbeat and no call-out" (fn t ->
+    t.eq (false, true, true) (
+      World.ticking? (played []),
+      World.ticking? (played [spawn "/home/tock/clock" None]),
+      World.ticking? (played [spawn "/home/tock/timer" None, verb timer_id "set" at])
+    )),
+  test "a heartbeat charges its owner the steps it took" (fn t ->
+    let w = played [tock 1000, spawn "/home/tock/clock" (Some "tock"), tick at];
+    t.eq (Some (JSON.of_int 1), Some 999) (
+      beats w,
+      Option.map
+        (fn (a: World.Account) -> Inspiration.amount noon a.inspiration)
+        (World.account "tock" w)
+    )),
+  test "a heartbeat that keeps faulting stops" (fn t ->
+    let w =
+      played
+        (List.concat
+          [spawn "/home/tock/broken" None]
+          (List.map (fn n -> tick (after (2 * n))) [0, 1, 2, 3, 4, 5, 6]));
+    t.eq (5, 1) (
+      List.length (List.filter (fn e -> e == "fault") (events w)),
+      List.length (List.filter (fn e -> e == "broken") (events w))
+    ))
+])
+
+group "call-outs" (fn () -> [
+  test "a call-out runs once, when its time has come" (fn t ->
+    let set = [spawn "/home/tock/timer" None, verb timer_id "set" at];
+    t.eq (words [], 1, words ["ring"], words ["ring"], 0) (
+      heard (played (List.concat set [tick (after 29)])),
+      List.length (played (List.concat set [tick (after 29)])).callouts,
+      heard (played (List.concat set [tick (after 30)])),
+      heard (played (List.concat set [tick (after 30), tick (after 60)])),
+      List.length (played (List.concat set [tick (after 30)])).callouts
+    )),
+  test "call-outs run oldest first" (fn t ->
+    t.eq
+      (words ["early", "late"])
+      (heard
+        (played [spawn "/home/tock/timer" None, verb timer_id "wind" at, tick (after 60)]))),
+  test "a call-out to a verb the object does not have is dropped, and logged" (fn t ->
+    let w = played [spawn "/home/tock/timer" None, verb timer_id "stray" at, tick (after 1)];
+    t.eq ([], true) (w.callouts, List.any? (fn e -> e == "refused") (events w))),
+  test "removing an object drops its call-outs" (fn t ->
+    t.eq
+      []
+      (World.remove timer_id (played [spawn "/home/tock/timer" None, verb timer_id "set" at])).callouts),
+  test "call-outs are kept in world.json and run after a restart" (fn t ->
+    with FS.temp_dir "wmd_time_" as d -> (
+      let path = Path.join d ./world.json;
+      let _ =
+        played [
+          spawn "/home/tock/timer" None,
+          verb timer_id "set" at,
+          fn state -> Engine.snapshot! state path at
+        ];
+      let kept = Option.get! (Snapshot.read! path);
+      let restored =
+        with Shared.make start as state -> (
+          Engine.restore state kept (after 10);
+          Engine.boot state (after 10);
+          tick (after 30) state;
+          Shared.get state
+        );
+      t.eq (1, words ["ring"]) (List.length kept.callouts, heard restored)
+    )),
+  -- Tock can pay when the call-out is set, and then goes into debt. By 72
+  -- seconds the refill pays the heartbeat and the call-out a point each.
+  test "an owner out of Inspiration pauses heartbeats and call-outs until it refills" (fn t ->
+    let paused =
+      [
+        tock 0,
+        spawn "/home/tock/clock" (Some "tock"),
+        spawn "/home/tock/timer" (Some "tock"),
+        verb timer_id "set" at,
+        tock (0 - 10),
+        tick (after 30)
+      ];
+    let w = played paused;
+    let refilled = played (List.concat paused [tick (after 72)]);
+    t.eq (Some (JSON.of_int 0), words [], 1, Some (JSON.of_int 1), words ["ring"]) (
+      beats w,
+      heard w,
+      List.length w.callouts,
+      beats refilled,
+      heard refilled
+    ))
+])

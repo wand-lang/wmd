@@ -57,8 +57,9 @@ type World(
 
 -- Who is asking, about what, where and when. `self` is the object the call
 -- is on. `actor` is the player who typed the command, or `self` when the
--- driver calls an object on its own. `time` is when the command arrived:
--- mudlib code reads no clock of its own.
+-- driver calls an object on its own, as for a heartbeat. `time` is when the
+-- command arrived, or when the driver made the call: mudlib code reads no
+-- clock of its own.
 type Context(self: ObjId, actor: ObjId, here: ObjId, world: World, time: DateTime)
 
 -- A way out of a room. A message left as None gets the driver's default.
@@ -111,6 +112,10 @@ type Action =
   -- Rules Hall, /realm/rules, may ask this; the driver keeps the signing on
   -- the account and moves the body to the Commons.
   | Acknowledge ObjId
+  -- Run the object's own verb of this name once, with no arguments, after
+  -- this long: a call-out. The driver keeps it in world.json, so it
+  -- survives a restart, and drops it when the object is removed.
+  | After Duration String
 
 -- A command the object answers to. `run` gets the parsed command, with
 -- dobj and iobj already matched to objects.
@@ -141,6 +146,9 @@ type Object(
   -- While the room a player is in has one, the player's lines come here
   -- unparsed.
   input: Option (Context -> String -> Reply ! {Random, Raise}) = None,
+  -- Called every 2 seconds, for what an object does on its own: a cat
+  -- that wanders, a fire that dies down.
+  heartbeat: Option (Context -> Reply ! {Random, Raise}) = None,
   -- The state to keep: what `create` gets back as `saved`.
   save: Unit -> JSON
 )

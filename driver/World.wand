@@ -107,6 +107,10 @@ type Input =
   | Line String String String
   | Gone String String (Option String)
 
+-- A call-out: the verb `verb` of `target`, to run once at `due`. `id` tells
+-- apart two that are otherwise the same.
+type Callout(id: Int, target: String, due: DateTime, verb: String)
+
 -- One line of the event log. A field that does not apply is None, and the
 -- log line leaves it out.
 type Event(
@@ -152,7 +156,17 @@ type World(
   -- Every flag, oldest first, open and resolved.
   flags: List Flag = [],
   -- The last lines each body said, for a report. They are not saved.
-  said: Map (List String) = {}
+  said: Map (List String) = {},
+  -- The instances with a heartbeat, by id, so the timer sees whether there
+  -- is anything to tick without looking at every object.
+  beating: Map Bool = {},
+  -- The call-outs not yet run, soonest first.
+  callouts: List Callout = [],
+  -- How many call-outs have been made: the next one's id.
+  callouts_made: Int = 0,
+  -- Set by the timer and cleared by the tick, which the driver fiber takes,
+  -- as a snapshot is.
+  tick_due: Bool = false
 )
 
 let empty =
@@ -184,7 +198,13 @@ let session? id = String.starts_with? "session:" id
 
 let instance id (w: World) = Map.get (resolve id) w.instances
 
-let put (i: Instance) (w: World) = World(w, instances = Map.set i.id i w.instances)
+let put (i: Instance) (w: World) =
+  World(
+    w,
+    instances = Map.set i.id i w.instances,
+    beating = if Option.some? i.object.heartbeat then Map.set i.id true w.beating
+      else Map.delete i.id w.beating
+  )
 
 let env_of id (w: World) = Option.and_then (fn (i: Instance) -> i.env) (instance id w)
 
@@ -249,8 +269,15 @@ let instances_of bp (w: World) =
 -- Use `b` for blueprint `path` from now on.
 let set_blueprint path (b: Core.Blueprint) (w: World) = World(w, lib = Map.set path b w.lib)
 
--- Take an object out of the world.
-let remove id (w: World) = World(w, instances = Map.delete (resolve id) w.instances)
+-- Take an object out of the world, with its call-outs.
+let remove id (w: World) =
+  let full = resolve id;
+  World(
+    w,
+    instances = Map.delete full w.instances,
+    beating = Map.delete full w.beating,
+    callouts = List.filter (fn (c: Callout) -> c.target != full) w.callouts
+  )
 
 let move id dest (w: World) =
   match instance id w with
@@ -442,6 +469,62 @@ let snapshot_due (w: World) = World(w, snapshot_due = true)
 let snapshot_taken (w: World) = World(w, snapshot_due = false)
 
 let snapshot_due? (w: World) = w.snapshot_due
+
+-- ── Time ───────────────────────────────────────────────────────────────
+
+-- Keep `cs` soonest first. Two due at the same time stay in the order
+-- they were made.
+let _soonest cs = List.sort_by (fn (c: Callout) -> c.due) cs
+
+-- Run the verb `verb` of `target` at `due`.
+let call_out target due verb (w: World) =
+  World(
+    w,
+    callouts =
+      _soonest
+        (List.concat w.callouts [
+          Callout(id = w.callouts_made, target = resolve target, due = due, verb = verb)
+        ]),
+    callouts_made = w.callouts_made + 1
+  )
+
+-- The call-outs of `target` not yet run.
+let callouts_of target (w: World) =
+  List.filter (fn (c: Callout) -> c.target == resolve target) w.callouts
+
+-- The call-outs whose time has come by `now`, oldest first.
+let due now (w: World) = List.filter (fn (c: Callout) -> c.due <= now) w.callouts
+
+let pending_callout? n (w: World) = List.any? (fn (c: Callout) -> c.id == n) w.callouts
+
+-- A call-out has run, or will not.
+let ran n (w: World) =
+  World(w, callouts = List.filter (fn (c: Callout) -> c.id != n) w.callouts)
+
+let drop_callouts target (w: World) =
+  World(
+    w,
+    callouts = List.filter (fn (c: Callout) -> c.target != resolve target) w.callouts
+  )
+
+-- The call-outs a snapshot kept. New ones are numbered after them.
+let restore_callouts cs (w: World) =
+  World(
+    w,
+    callouts = _soonest cs,
+    callouts_made =
+      List.fold_left (fn n (c: Callout) -> Int.max n (c.id + 1)) w.callouts_made cs
+  )
+
+-- Whether there is anything to tick: an object with a heartbeat, or a
+-- call-out not yet run.
+let ticking? (w: World) = Map.size w.beating > 0 || w.callouts != []
+
+let tick_due (w: World) = World(w, tick_due = true)
+
+let tick_taken (w: World) = World(w, tick_due = false)
+
+let tick_due? (w: World) = w.tick_due
 
 -- A new world that hashes passwords with `pepper`.
 let with_pepper pepper = World(empty, pepper = pepper)

@@ -25,7 +25,8 @@ type Opts(
   port: Port = :4000,
   logs: Path = ./logs,
   lib: Path = ./lib,
-  world: Path = ./world.json
+  world: Path = ./world.json,
+  tick: Duration = 2s
 )
 
 let _now () = "%{Clock.now ()}"
@@ -49,6 +50,7 @@ let _snapshot state path =
 
 let _drive state path = (
   Engine.step state;
+  if World.tick_due? (Shared.get state) then Engine.tick state (_now ());
   if World.snapshot_due? (Shared.get state) then _snapshot state path
 )
 
@@ -69,12 +71,25 @@ let _start! (o: Opts) = (
   )
 )
 
--- The driver sleeps until there is input or a snapshot is due, and wakes on
--- the update that queues it.
+-- The driver sleeps until there is input, a tick or a snapshot is due, and
+-- wakes on the update that queues it.
 let _driver state path = (
-  let _ = Shared.wait state (fn (w: World.World) -> w.inputs != [] || World.snapshot_due? w);
+  let _ =
+    Shared.wait state (fn (w: World.World) ->
+      w.inputs != [] || World.tick_due? w || World.snapshot_due? w);
   _drive state path;
   _driver state path
+)
+
+-- A tick is due every `every` while some object has a heartbeat or a
+-- call-out waits. With nothing to tick, the timer sleeps until there is.
+-- A tick that takes longer than `every` makes the next one late: ticks do
+-- not stack up.
+let _timer state every = (
+  let _ = Shared.wait state World.ticking?;
+  Clock.sleep every;
+  Shared.update state World.tick_due;
+  _timer state every
 )
 
 let run! (o: Opts) = (
@@ -96,6 +111,7 @@ let run! (o: Opts) = (
     Par.all! [
       fn () -> Net.listen o.port |> Par.each_stream 256 (Session.serve state),
       fn () -> _driver state o.world,
+      fn () -> _timer state o.tick,
       fn () -> Clock.every 60s (fn () -> Shared.update state World.snapshot_due),
       fn () -> Clock.every 1s (fn () -> Log.flush! state o.logs)
     ]

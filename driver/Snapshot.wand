@@ -1,8 +1,9 @@
 uses {FS.Read, FS.Write}
 
--- world.json: what survives a restart. The accounts, and every object's
--- blueprint, place and saved state. Sessions are not in it, so after a
--- restart everyone logs in again and finds their body where they left it.
+-- world.json: what survives a restart. The accounts, every object's
+-- blueprint, place and saved state, and the call-outs not yet run. Sessions
+-- are not in it, so after a restart everyone logs in again and finds their
+-- body where they left it.
 -- The pepper is not in it either.
 
 import FS
@@ -37,7 +38,8 @@ type File(
   version: Int = 1,
   accounts: List World.Account,
   instances: List Saved,
-  flags: List World.Flag = []
+  flags: List World.Flag = [],
+  callouts: List World.Callout = []
 )
 
 -- The file for a world whose every instance has its saved state. An
@@ -48,6 +50,7 @@ let of_world (w: World.World) =
     version = 2,
     accounts = Map.values w.accounts,
     flags = w.flags,
+    callouts = w.callouts,
     instances =
       List.filter_map
         (fn (i: World.Instance) -> Option.map

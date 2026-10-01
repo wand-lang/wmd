@@ -374,7 +374,9 @@ group "more driver commands" (fn () -> [
         "  owner: the admins",
         "  access: locked",
         "  changed: %{at}",
-        "  props: pulls = 1"
+        "  props: pulls = 1",
+        "  heartbeat: no",
+        "  call-outs: nothing"
       ]
       (List.filter
         (fn l -> !(String.starts_with? "  holds" l

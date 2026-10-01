@@ -114,6 +114,9 @@ let max_line = 8192
 
 let max_actions = 100
 
+-- The most call-outs one object may have waiting.
+let max_callouts = 100
+
 -- The most an object's saved state may be, as JSON. /std/login keeps every
 -- session in the middle of logging in, so it may keep more.
 let max_saved bp = if bp == "/std/login" then 1048576 else 65536
@@ -417,6 +420,11 @@ let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
   | Core.Run _ -> if _editor? ctx.self then Ok() else Error "only %{editor_bp} may run source"
   | Core.Acknowledge body -> if String.starts_with? "/realm/rules/" ctx.self && body == ctx.actor then Ok()
     else Error "only /realm/rules may say the rules were signed"
+  | Core.After _ _ -> (
+    let n = List.length (World.callouts_of ctx.self w);
+    if n >= max_callouts then Error "%{n} call-outs waiting, and the most is %{max_callouts}"
+    else Ok()
+  )
 
 -- ── Capacity and Inspiration ───────────────────────────────────────────
 
@@ -491,12 +499,19 @@ let budget payer (a: Core.Action) (w: World.World) = (
   | _ -> Ok 0
 )
 
+-- Spend `cost` of the Inspiration of `payer`.
+let _spend payer cost (tx: Tx) =
+  match payer with
+  | Some p when cost > 0 && !(_exempt? payer tx.w) ->
+    change (World.spend p cost tx.w.now) tx
+  | _ -> tx
+
 -- Spend `cost` of the Inspiration of `payer` on `what`, and log it.
 let _charge payer cost what (tx: Tx) =
   match payer with
   | Some p when cost > 0 && !(_exempt? payer tx.w) ->
     tx
-    |> change (World.spend p cost tx.w.now)
+    |> _spend payer cost
     |> _event World.Event(
       at = "",
       event = "inspiration",
@@ -690,6 +705,7 @@ and _do (ctx: Core.Context) payer (a: Core.Action) (tx: Tx) =
   | Core.Draft path source -> _answer ctx (Files.draft tx.w.lib_root path source) tx
   | Core.Run source -> eval ctx.actor source tx
   | Core.Acknowledge body -> _signed body tx
+  | Core.After wait name -> change (World.call_out ctx.self (tx.w.now + wait) name) tx
 
 -- Save, and write the list of blueprints again, so a new one loads at
 -- the next start.
@@ -734,7 +750,8 @@ and update actor path (tx: Tx) =
 
 -- Make instances again as `create` makes a new one, and apply its starting
 -- actions again. Each keeps its id, its place and who made it. A body
--- keeps its name, which is its account's.
+-- keeps its name, which is its account's. Its call-outs are dropped: the
+-- starting actions make again the ones a new instance has.
 and reset actor ids (tx: Tx) =
   List.fold_left
     (fn acc id -> match World.instance id acc.w with
@@ -752,6 +769,7 @@ and reset actor ids (tx: Tx) =
           | Ok init ->
             acc
             |> change (World.set_object id init.object tx.at)
+            |> change (World.drop_callouts id)
             |> _apply_actions (ctx_for acc.w id id) init.actions
             |> _event (World.Event(at = "", event = "reset", actor = actor, object = Some id))
             |> change (World.tell actor "Reset %{id}.")
@@ -835,14 +853,17 @@ and _apply (ctx: Core.Context) (r: Core.Reply) (tx: Tx) = (
 -- the actor is told, and the event log keeps why.
 -- An object that has faulted `fault_limit` times in a row runs no more
 -- code until /update or /reset gives it a new start.
-and run (ctx: Core.Context) body (tx: Tx) =
+and run (ctx: Core.Context) body (tx: Tx) = (let (ran, _) = run_counted ctx body tx; ran)
+
+-- `run`, with the steps the call took.
+and run_counted (ctx: Core.Context) body (tx: Tx) =
   if _broken? ctx.self tx.w then
-    change (World.tell ctx.actor "%{short_of ctx.self tx.w} is not working.") tx
+    (change (World.tell ctx.actor "%{short_of ctx.self tx.w} is not working.") tx, 0)
   else if Option.map (fn (i: World.Instance) -> i.held) (World.instance ctx.self tx.w) == Some true then
-    change (World.tell ctx.actor "That is waiting for an admin.") tx
-  else match _call body with
-    | Ok r -> tx |> change (World.worked ctx.self) |> apply ctx r
-    | Error why -> (
+    (change (World.tell ctx.actor "That is waiting for an admin.") tx, 0)
+  else match _counted body with
+    | (Ok r, steps) -> (tx |> change (World.worked ctx.self) |> apply ctx r, steps)
+    | (Error why, steps) -> (
       let faulted =
         tx
         |> change (World.tell ctx.actor "Something went wrong with %{short_of ctx.self tx.w}.")
@@ -854,7 +875,7 @@ and run (ctx: Core.Context) body (tx: Tx) =
           |> _event (World.Event(at = "", event = "broken", actor = ctx.actor, object = Some ctx.self))
           |> change (World.tell ctx.actor "%{short_of ctx.self tx.w} has stopped working. Its builder can fix it and /update it, or /reset it.")
         else faulted;
-      _fall_back ctx.self ctx.actor broken
+      (_fall_back ctx.self ctx.actor broken, steps)
     )
 
 -- An editor that faults goes back to the editor before the last /update
@@ -1125,7 +1146,9 @@ let _examine body words (w: World.World) = (
           "  props: %{_or_none props}",
           "  verbs: %{_or_none (List.flatten (List.map (fn (v: Core.Verb) -> v.names) i.object.verbs))}",
           "  exits: %{_or_none (Map.keys i.object.exits)}",
-          "  details: %{_or_none (Map.keys i.object.details)}"
+          "  details: %{_or_none (Map.keys i.object.details)}",
+          "  heartbeat: %{if Option.some? i.object.heartbeat then "yes" else "no"}",
+          "  call-outs: %{_or_none (List.map (fn (c: World.Callout) -> "%{c.verb} at %{c.due}") (World.callouts_of i.id w))}"
         ];
       World.tell body (String.join "\n" lines) w
     )
@@ -1873,6 +1896,79 @@ let step state =
       Shared.update state (fn cur -> World.dequeued 1 (commit tx cur)))
     w.inputs
 
+-- ── Time ───────────────────────────────────────────────────────────────
+
+-- Whether the owner of `id` has Inspiration left for its heartbeat and
+-- call-outs. Until it refills, they wait.
+let _owner_inspired? id (w: World.World) =
+  let owner = World.owner_of id w;
+  _exempt? owner w || Result.ok? (_inspired (Option.default "" owner) 1 w)
+
+-- Call `id` on its own, with itself as the actor, and charge its owner the
+-- steps the call took.
+let _on_its_own id body (tx: Tx) =
+  let ctx = ctx_for tx.w id id;
+  let (ran, steps) = run_counted ctx (fn () -> body ctx) tx;
+  _spend (World.owner_of id tx.w) (Inspiration.of_steps steps) ran
+
+let _beat id (tx: Tx) =
+  match World.instance id tx.w with
+  | Some i -> (
+    match i.object.heartbeat with
+    | Some h when _owner_inspired? id tx.w -> _on_its_own id (fn ctx -> h ctx) tx
+    | _ -> tx
+  )
+  | None -> tx
+
+-- Run call-out `c`, or None when it must wait for its owner's Inspiration.
+-- One whose object is gone, or has no such verb, is dropped.
+let _call_out (c: World.Callout) (tx: Tx) =
+  match World.instance c.target tx.w with
+  | None -> Some (change (World.ran c.id) tx)
+  | Some i -> (
+    if !(_owner_inspired? c.target tx.w) then None
+    else match List.find (fn (v: Core.Verb) -> List.any? (fn n -> n == c.verb) v.names) i.object.verbs with
+      | None ->
+        Some
+          (tx
+          |> change (World.ran c.id)
+          |> _event World.Event(
+            at = "",
+            event = "refused",
+            actor = c.target,
+            text = Some "call-out: no verb %{c.verb}"
+          ))
+      | Some v ->
+        Some
+          (tx
+          |> change (World.ran c.id)
+          |> _on_its_own c.target (fn ctx -> v.run ctx Core.Parsed(verb = c.verb)))
+  )
+
+-- One tick: call every object with a heartbeat, then run every call-out
+-- whose time has come, oldest first. Each is applied in its own update, as
+-- an input is. What a heartbeat or a call-out starts waits for the next
+-- tick.
+let tick state at = (
+  Shared.update state World.tick_taken;
+  let (w: World.World) = Shared.get state;
+  List.each
+    (fn id ->
+      let tx = _beat id (begin (Shared.get state) at);
+      Shared.update state (commit tx))
+    (Map.keys w.beating);
+  List.each
+    (fn (c: World.Callout) -> (
+      let tx = begin (Shared.get state) at;
+      -- A heartbeat or an earlier call-out may have removed it.
+      let ran = if World.pending_callout? c.id tx.w then _call_out c tx else None;
+      match ran with
+      | Some done -> (let _ = Shared.update state (commit done); ())
+      | None -> ()
+    ))
+    (World.due (begin w at).w.now w)
+)
+
 -- ── Snapshots ──────────────────────────────────────────────────────────
 
 -- Call `save` on every object that changed since the last snapshot, and
@@ -1924,12 +2020,16 @@ let _restored_owner (f: Snapshot.File) (s: Snapshot.Saved) =
     | None -> World.file_owner s.blueprint
 
 -- Bring back what a snapshot kept: the accounts, then every object, made
--- again by its blueprint's `create` from its saved state.
+-- again by its blueprint's `create` from its saved state, and the
+-- call-outs. One that came due while the server was down runs at the
+-- first tick.
 let restore state (f: Snapshot.File) at =
   let accounts =
     List.fold_left
       (fn t (a: World.Account) -> change (World.add_account a) t)
-      (begin (Shared.get state) at |> change (fn w -> World.World(w, flags = f.flags)))
+      (begin (Shared.get state) at
+      |> change (fn w -> World.World(w, flags = f.flags))
+      |> change (World.restore_callouts f.callouts))
       f.accounts;
   let tx =
     List.fold_left
