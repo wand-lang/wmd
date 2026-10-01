@@ -371,6 +371,7 @@ group "more driver commands" (fn () -> [
         "  in: /realm/commons/square#0",
         "  made by: /realm/commons/square#0, %{at}",
         "  owner: the admins",
+        "  access: locked",
         "  changed: %{at}",
         "  props: pulls = 1"
       ]

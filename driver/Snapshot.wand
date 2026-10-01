@@ -23,7 +23,12 @@ type Saved(
   creator: Option String = None,
   created: Option String = None,
   modified: Option String = None,
-  owner: Option String = None
+  owner: Option String = None,
+  -- None in a file from before rooms were private: a room is then public
+  -- when the admins own it.
+  public: Option Bool = None,
+  invited: List String = [],
+  locked: Bool = true
 )
 
 -- Version 1 did not keep owners. A file with no version is version 1.
@@ -47,7 +52,10 @@ let of_world (w: World.World) =
             creator = i.creator,
             created = i.created,
             modified = i.modified,
-            owner = i.owner
+            owner = i.owner,
+            public = Some i.public,
+            invited = i.invited,
+            locked = i.locked
           ))
           i.saved)
         (Map.values w.instances)

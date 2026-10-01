@@ -30,6 +30,10 @@ let Core = import ../lib/std/core
 -- against and whose Inspiration its work spends. It is None for the
 -- driver's and the admins' code in /std and /realm. `size` is how many
 -- bytes its saved state was at the last snapshot.
+--
+-- A room is `public` when anyone may enter it, and otherwise only its
+-- owner, the accounts in `invited` and the admins may. An object that is
+-- `locked` is moved only by what its owner owns.
 type Instance(
   id: String,
   blueprint: String,
@@ -41,6 +45,9 @@ type Instance(
   modified: Option String = None,
   owner: Option String = None,
   size: Int = 0,
+  public: Bool = false,
+  invited: List String = [],
+  locked: Bool = true,
   -- How many of its calls in a row have faulted. It is not saved: a
   -- restart gives every object a new start.
   faults: Int = 0
@@ -406,3 +413,35 @@ let snapshot_due? (w: World) = w.snapshot_due
 
 -- A new world that hashes passwords with `pepper`.
 let with_pepper pepper = World(empty, pepper = pepper)
+
+-- ── Access ─────────────────────────────────────────────────────────────
+
+let _put_instance id f (w: World) =
+  match instance id w with
+  | Some i -> put (f i) w
+  | None -> w
+
+let set_public id public (w: World) =
+  _put_instance id (fn i -> Instance(i, public = public)) w
+
+let invite id name (w: World) =
+  _put_instance
+    id
+    (fn i -> Instance(i, invited = List.unique (List.concat i.invited [String.lower name])))
+    w
+
+let uninvite id name (w: World) =
+  _put_instance
+    id
+    (fn i -> Instance(i, invited = List.filter (fn n -> n != String.lower name) i.invited))
+    w
+
+let set_locked id locked (w: World) =
+  _put_instance id (fn i -> Instance(i, locked = locked)) w
+
+-- Privacy and the lock, as a snapshot kept them.
+let set_access id public invited locked (w: World) =
+  _put_instance
+    id
+    (fn i -> Instance(i, public = public, invited = invited, locked = locked))
+    w

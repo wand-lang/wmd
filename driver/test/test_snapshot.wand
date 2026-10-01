@@ -171,3 +171,27 @@ test "a file without owners gets them on restore" (fn t ->
       World.owner_of "/realm/commons/square#0" w
     )
   ))
+
+let _access (w: World.World) =
+  List.sort
+    (List.map
+      (fn (i: World.Instance) -> (i.id, i.public, i.invited, i.locked))
+      (Map.values w.instances))
+
+test "brings back which rooms are private, who is invited, and which things are locked" (fn t ->
+  with FS.temp_dir "wmd_snap_" as d -> (
+    let path = Path.join d ./world.json;
+    let before =
+      with Shared.make start as state -> (
+        Engine.boot state at;
+        _play state;
+        Shared.update state (fn w ->
+          w
+          |> World.set_public "/realm/commons/square#0" false
+          |> World.invite "/realm/commons/square#0" "Bo"
+          |> World.set_locked "/realm/commons/lever#0" false);
+        Engine.snapshot! state path at;
+        Shared.get state
+      );
+    t.eq (_access before) (_access (restored! path))
+  ))

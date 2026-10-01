@@ -47,7 +47,10 @@ type World(
   -- Whether a body has a session. One without is asleep.
   awake?: ObjId -> Bool,
   -- Where a body goes home to.
-  home_of: ObjId -> ObjId
+  home_of: ObjId -> ObjId,
+  -- Whether a body may go into a room. A private room is closed to all
+  -- but its owner, whoever it invites, and the admins.
+  may_enter?: ObjId -> ObjId -> Bool
 )
 
 -- Who is asking, about what, where and when. `self` is the object the call

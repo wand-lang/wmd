@@ -176,10 +176,34 @@ let players_in room (w: World.World) = List.filter player? (World.contents room 
 let _players (w: World.World) =
   List.filter player? (List.map (fn (i: World.Instance) -> i.id) (Map.values w.instances))
 
--- Where a body goes home to: its account's home, or the arrival room.
+-- Whether `body` may go into `room`. A private room is open to its owner,
+-- the accounts it invites, and the admins. A room not made yet will be
+-- made private when a builder owns its file. Only a body is kept out:
+-- anything else may go anywhere it is moved.
+let may_enter? body room (w: World.World) =
+  let key = _key_of body w;
+  let (public, owner, invited) =
+    match World.instance room w with
+    | Some i -> (i.public || i.env != None, i.owner, i.invited)
+    | None -> (
+      let owner = World.file_owner (World.blueprint_of room);
+      (owner == None, owner, [])
+    )
+  in
+  !(player? body)
+  || public
+  || Option.some? key && (key == owner || List.any? (fn n -> Some n == key) invited)
+  || Option.some? key && _exempt? key w
+
+-- Where a body goes home to: its account's home, or the arrival room when
+-- it has none or its home has closed to it.
 let home_of body (w: World.World) =
   match World.account_of body w with
-  | Some a -> Option.default arrival a.home
+  | Some a -> (
+    match a.home with
+    | Some h when may_enter? body h w -> h
+    | _ -> arrival
+  )
   | None -> arrival
 
 -- The world as `viewer` sees it now. Each function answers from this one
@@ -204,7 +228,8 @@ let view (w: World.World) viewer =
       | Some i -> _bounded None (fn () -> Option.and_then (fn f -> Map.get key (f (_seen w viewer i.id))) i.object.props)
       | None -> None,
     awake? = fn id -> Option.some? (World.session_of id w),
-    home_of = fn id -> home_of id w
+    home_of = fn id -> home_of id w,
+    may_enter? = fn b r -> may_enter? b (World.resolve r) w
   )
 -- The context of an object being looked at by `viewer`.
 and _seen (w: World.World) viewer id =
@@ -231,9 +256,25 @@ let ctx_for (w: World.World) self actor =
 -- ── The action policy ──────────────────────────────────────────────────
 
 -- An object may move itself, the player whose command it is running, or
--- something it holds.
+-- something it holds. It may reach a thing, not a player, that the player
+-- holds or that is in its room.
 let _may_move? (ctx: Core.Context) obj (w: World.World) =
-  obj == ctx.self || obj == ctx.actor || World.env_of obj w == Some ctx.self
+  let env = World.env_of obj w;
+  obj == ctx.self
+  || obj == ctx.actor
+  || env == Some ctx.self
+  || !(player? obj) && (env == Some ctx.actor || env == Some (room_of ctx.self w))
+
+-- Whether `ctx.self` is the admins' code, or its owner owns `obj` too.
+let _same_owner? (ctx: Core.Context) obj (w: World.World) =
+  _trusted? ctx.self w
+  || Option.some? (World.owner_of ctx.self w)
+  && World.owner_of ctx.self w == World.owner_of obj w
+
+let _locked? obj (w: World.World) =
+  match World.instance obj w with
+  | Some i -> i.locked
+  | None -> false
 
 let _from_login? (ctx: Core.Context) = World.blueprint_of ctx.self == "/std/login"
 
@@ -309,6 +350,10 @@ let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
     -- or an admin owns: a room cannot carry off whoever is in it.
     else if player? o && o != ctx.actor && o != ctx.self && !(_trusted? ctx.self w || _owns? ctx.self o w) then
       Error "may not move %{o}: a player moves by their own command"
+    -- Only what its owner owns moves a locked thing.
+    else if !(player? o) && o != ctx.self && _locked? o w && !(_same_owner? ctx o w) then
+      Error "may not move %{o}: it is locked"
+    else if !(may_enter? o d w) then Error "may not move %{o} into %{d}: it is private"
     -- An editor is private to the one it was opened for.
     else if _editor? d && Option.and_then (fn (i: World.Instance) -> i.creator) (World.instance d w) != Some o then
       Error "may not move %{o} into %{d}"
@@ -329,6 +374,8 @@ let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
   | Core.Remove obj -> (
     let o = World.resolve obj;
     if !(o == ctx.self || World.env_of o w == Some ctx.self) then Error "may not remove %{o}"
+    else if o != ctx.self && !(_same_owner? ctx o w) then
+      Error "may not remove %{o}: its owner is not this object's"
     else if player? o || List.any? player? (World.contents o w) then
       Error "may not remove %{o}: a player is or is in it"
     else Ok()
@@ -467,7 +514,9 @@ let _create id bp saved dest owner (tx: Tx) =
             object = init.object,
             env = dest,
             created = Some tx.at,
-            owner = owner
+            owner = owner,
+            -- A builder's room starts private; the admins' rooms are open.
+            public = owner == None
           )))
       |> _apply_actions (ctx_for tx.w id id) init.actions
   )
@@ -546,12 +595,13 @@ and _move (ctx: Core.Context) obj dest (tx: Tx) =
   | Some t -> _hook "enter" (World.resolve t) obj ctx.actor left
   | None -> left
 
--- The first visit of a body to a room another builder owns gives its
+-- The first visit of a body to a public room another builder owns gives its
 -- account an exploring bonus, up to `Inspiration.bonuses_a_day` rooms a
 -- day.
 and _explore body room (tx: Tx) =
   match (World.account_of body tx.w, World.owner_of room tx.w) with
   | (Some a, Some o) when World.env_of room tx.w == None
+    && Option.map (fn (i: World.Instance) -> i.public) (World.instance room tx.w) == Some true
     && o != String.lower a.name
     && !(Map.has? room a.explored)
     && Inspiration.today tx.w.now a.explored < Inspiration.bonuses_a_day ->
@@ -969,6 +1019,16 @@ let _who_is body name (w: World.World) =
 
 let _or_none xs = if xs == [] then "nothing" else String.join ", " xs
 
+-- Who may enter a room, or move a thing, in words.
+let _access (i: World.Instance) =
+  if player? i.id then "its own"
+  else if i.env == None then
+    if i.public then "public"
+    else if i.invited == [] then "private"
+    else "private, and open to %{String.join ", " i.invited}"
+  else if i.locked then "locked"
+  else "unlocked"
+
 -- What the driver knows of an object: for builders, who need to see what
 -- the text of a room does not say.
 let _examine body words (w: World.World) = (
@@ -994,6 +1054,7 @@ let _examine body words (w: World.World) = (
           "  holds: %{_or_none (World.contents i.id w)}",
           "  made by: %{Option.default "the driver" i.creator}, %{Option.default "at boot" i.created}",
           "  owner: %{Option.default "the admins" i.owner}",
+          "  access: %{_access i}",
           "  changed: %{Option.default "never" i.modified}",
           "  props: %{_or_none props}",
           "  verbs: %{_or_none (List.flatten (List.map (fn (v: Core.Verb) -> v.names) i.object.verbs))}",
@@ -1159,6 +1220,119 @@ let _stat body words (tx: Tx) = (
   | Ok a -> (let text = _stat_text a tx.w; change (World.tell body text) tx)
 )
 
+-- Whether `body` may say who enters or moves `id`: its owner, or an admin.
+let _may_change? body id (w: World.World) =
+  let key = _key_of body w;
+  Option.some? key && (World.owner_of id w == key || _exempt? key w)
+
+-- /public and /private: open the room `body` is in to everyone, or close it
+-- to all but its owner, whoever it invites, and the admins.
+let _set_public body words public (tx: Tx) =
+  let room = room_of body tx.w;
+  let name = short_of room tx.w;
+  if words != "" && words != "here" then
+    change (World.tell body "It changes the room you are in: /public here.") tx
+  else if !(_may_change? body room tx.w) then
+    change (World.tell body "%{name} is not yours to open or close.") tx
+  else
+    tx
+    |> change (World.set_public room public)
+    |> _event World.Event(
+      at = "",
+      event = if public then "public" else "private",
+      actor = body,
+      room = Some room
+    )
+    |> change
+      (World.tell
+        body
+        (if public then "%{name} is public now: anyone may come in."
+        else "%{name} is private now: only you, whoever you invite, and the admins may come in."))
+
+-- /invite and /uninvite: let one account into the private room `body` is
+-- in, or no longer.
+let _invite body words yes (tx: Tx) = (
+  let room = room_of body tx.w;
+  let title = short_of room tx.w;
+  match String.words words with
+  | [name :: rest] when rest == [] || rest == ["here"] -> (
+    if !(_may_change? body room tx.w) then
+      change (World.tell body "%{title} is not yours to invite anyone into.") tx
+    else match World.account name tx.w with
+      | None -> change (World.tell body "There is no one called %{name}.") tx
+      | Some a -> if yes then
+          tx
+          |> change (World.invite room a.name)
+          |> _event World.Event(
+            at = "",
+            event = "invite",
+            actor = body,
+            name = Some a.name,
+            room = Some room
+          )
+          |> change (World.tell body "%{a.name} may come into %{title} now.")
+          |> change (World.tell a.body "%{short_of body tx.w} invites you into %{title}.")
+        else
+          tx
+          |> change (World.uninvite room a.name)
+          |> _event World.Event(
+            at = "",
+            event = "uninvite",
+            actor = body,
+            name = Some a.name,
+            room = Some room
+          )
+          |> change
+            (World.tell
+              body
+              "%{a.name} may no longer come into %{title} while it is private.")
+  )
+  | _ ->
+    change
+      (World.tell
+        body
+        (if yes then "Invite whom? /invite bo here" else "Uninvite whom? /uninvite bo here"))
+      tx
+)
+
+-- /lock and /unlock: whether only what its owner owns may move a thing,
+-- or anything that can reach it.
+let _set_locked body words locked (tx: Tx) = (
+  let verb = if locked then "lock" else "unlock";
+  let here = room_of body tx.w;
+  let found =
+    if words == "" then Parse.Missing ""
+    else Parse.resolve tx.w body here (String.words words);
+  match found with
+  | Parse.Found id -> (
+    let name = short_of id tx.w;
+    if player? id || World.env_of id tx.w == None then
+      change
+        (World.tell
+          body
+          "Only a thing can be locked: a room is /private, and a player is their own.")
+        tx
+    else if !(_may_change? body id tx.w) then
+      change (World.tell body "%{name} is not yours to %{verb}.") tx
+    else
+      tx
+      |> change (World.set_locked id locked)
+      |> _event World.Event(at = "", event = verb, actor = body, object = Some id)
+      |> change
+        (World.tell
+          body
+          (if locked then "%{name} is locked now: only what its owner owns may move it."
+          else "%{name} is unlocked now: anything that can reach it may move it."))
+  )
+  | _ ->
+    change
+      (World.tell
+        body
+        (if words == "" then "What do you want to %{verb}?"
+        else "You don't see a '%{words}' here."))
+      tx
+)
+
 -- A command line from a session that is logged in.
 let _command_line sid body at line (tx: Tx) =
   if line == "" then tx
@@ -1189,6 +1363,12 @@ let _command_line sid body at line (tx: Tx) =
     )
     | "/examine" -> change (_examine body (_after_verb full)) logged
     | "/stat" -> _stat body (_after_verb full) logged
+    | "/public" -> _set_public body (_after_verb full) true logged
+    | "/private" -> _set_public body (_after_verb full) false logged
+    | "/invite" -> _invite body (_after_verb full) true logged
+    | "/uninvite" -> _invite body (_after_verb full) false logged
+    | "/lock" -> _set_locked body (_after_verb full) true logged
+    | "/unlock" -> _set_locked body (_after_verb full) false logged
     | "/edit" -> _edit body (_after_verb full) logged
     | "/update" -> _update body (_after_verb full) logged
     | "/reset" -> _reset body (_after_verb full) logged
@@ -1360,7 +1540,13 @@ let restore state (f: Snapshot.File) at =
       (fn t (s: Snapshot.Saved) -> t
       |> _create s.id s.blueprint (Some s.state) s.env (_restored_owner f s)
       |> change (World.set_made s.id s.creator s.created s.modified)
-      |> change (World.keep_saved s.id s.state))
+      |> change (World.keep_saved s.id s.state)
+      |> change
+        (World.set_access
+          s.id
+          (Option.default (_restored_owner f s == None) s.public)
+          s.invited
+          s.locked))
       accounts
       f.instances;
   Shared.update state (commit tx)

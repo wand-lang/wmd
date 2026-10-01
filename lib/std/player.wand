@@ -104,19 +104,21 @@ let _go (s: State) (ctx: Core.Context) (p: Core.Parsed) = (
   | None -> Core.tell ctx (if dir == "" then "Go where?" else "You can't go that way.")
   | Some e -> (
     let check = Option.default (fn _ -> Ok()) e.check;
-    match check ctx with
-    | Error why -> Core.tell ctx why
-    | Ok _ -> Core.Reply(
-      actions = List.flatten [
-        List.map
-          (fn o -> Core.Tell o (Option.default "%{s.name} leaves %{dir}." e.leave))
-          (Text.others ctx),
-        List.map
-          (fn o -> Core.Tell o (Option.default (_arrival s.name dir) e.arrive))
-          (_in ctx e.to),
-        [Core.Move ctx.actor e.to]
-      ]
-    )
+    if !(ctx.world.may_enter? ctx.actor e.to) then
+      Core.tell ctx "That way is still being built."
+    else match check ctx with
+      | Error why -> Core.tell ctx why
+      | Ok _ -> Core.Reply(
+        actions = List.flatten [
+          List.map
+            (fn o -> Core.Tell o (Option.default "%{s.name} leaves %{dir}." e.leave))
+            (Text.others ctx),
+          List.map
+            (fn o -> Core.Tell o (Option.default (_arrival s.name dir) e.arrive))
+            (_in ctx e.to),
+          [Core.Move ctx.actor e.to]
+        ]
+      )
   )
 )
 
