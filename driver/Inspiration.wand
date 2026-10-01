@@ -16,9 +16,6 @@ type Inspiration(amount: Int, at: DateTime)
 -- The refill stops here. A bonus can take the amount past it.
 let full = 1000
 
--- A full amount at the epoch, which is full at any time after.
-let start = Inspiration(amount = full, at = 1970-01-01T00:00:00Z)
-
 -- One point comes back every 6 seconds, 10 a minute.
 let seconds_per_point = 6
 

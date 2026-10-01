@@ -69,8 +69,14 @@ let _start! (o: Opts) = (
   )
 )
 
--- The driver looks for input every 20ms: nothing can wait on a Shared for
--- a change.
+-- The driver sleeps until there is input or a snapshot is due, and wakes on
+-- the update that queues it.
+let _driver state path = (
+  let _ = Shared.wait state (fn (w: World.World) -> w.inputs != [] || World.snapshot_due? w);
+  _drive state path;
+  _driver state path
+)
+
 let run! (o: Opts) = (
   FS.mkdir! o.logs;
   with Shared.make (_start! o) as state ->
@@ -89,7 +95,7 @@ let run! (o: Opts) = (
     IO.println "wmd listening on %{o.port}, world in %{o.world}, logging to %{o.logs}";
     Par.all! [
       fn () -> Net.listen o.port |> Par.each_stream 256 (Session.serve state),
-      fn () -> Clock.every 20ms (fn () -> _drive state o.world),
+      fn () -> _driver state o.world,
       fn () -> Clock.every 60s (fn () -> Shared.update state World.snapshot_due),
       fn () -> Clock.every 1s (fn () -> Log.flush! state o.logs)
     ]

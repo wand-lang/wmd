@@ -27,7 +27,7 @@ When you have read them, type: sign rules`,
       Core.Verb(names = ["read"], run = fn ctx _ -> Core.tell ctx (_rules ctx)),
       Core.Verb(
         names = ["sign"],
-        run = fn ctx (p: Core.Parsed) -> if p.rest != "rules" then Core.tell ctx "Type: sign rules"
+        run = fn ctx p -> if p.rest != "rules" then Core.tell ctx "Type: sign rules"
           else Core.Reply(
             actions = [
               Core.Tell ctx.actor "You sign the rules. Thank you, and welcome.",

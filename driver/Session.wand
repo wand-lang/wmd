@@ -31,17 +31,21 @@ let _drained? state sid conn =
   if lines == [] then true
   else Result.ok? (Net.write (String.join "" (List.map (fn l -> "%{l}\r\n") lines)) conn)
 
--- The writer looks at the outbox every 50ms, because a fiber cannot wait on
--- a Shared for a change.
+-- The writer sleeps until its outbox has lines or its session is closing,
+-- and wakes on the update that makes it so.
 let _writer state sid conn =
+  let _ =
+    Shared.wait state (fn (w: World.World) ->
+      World.outbox sid w != [] || World.closing? sid w);
   if !(_drained? state sid conn) then ()
   else if World.closing? sid (Shared.get state) then ()
-  else (Clock.sleep 50ms; _writer state sid conn)
+  else _writer state sid conn
 
 -- Wait until the driver has finished with every line this session sent,
 -- so a client that sends a command and then closes still gets the answer.
 let _settle state sid =
-  if World.pending? sid (Shared.get state) then (Clock.sleep 20ms; _settle state sid)
+  let _ = Shared.wait state (fn (w: World.World) -> !(World.pending? sid w));
+  ()
 
 -- Lines go to the driver, which runs them in the order they came.
 let _reader state sid conn =

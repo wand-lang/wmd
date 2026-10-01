@@ -63,9 +63,9 @@ type Session(id: String, body: Option String = None, closing: Bool = false)
 -- An account: its name as written, its body, its password as
 -- "./password" keeps one, and its role, "builder" or "admin". `home` is
 -- the room its body goes home to, when not the arrival room, and
--- `last_seen` when its session last ended. `inspiration` is None until it
--- first spends or earns any, which is the same as full. `explored` is
--- every room that has given it an exploring bonus, and when. `rules` is
+-- `last_seen` when its session last ended. `inspiration` starts full: the
+-- full amount at the epoch is full at any time after. `explored` is every
+-- room that has given it an exploring bonus, and when. `rules` is
 -- the version of the rules it signed and when. `notices` wait for its next
 -- login. A `paused` account may not log in.
 type Account(
@@ -75,7 +75,7 @@ type Account(
   role: String = "builder",
   home: Option String = None,
   last_seen: Option String = None,
-  inspiration: Option Inspiration.Inspiration = None,
+  inspiration: Inspiration.Inspiration = Inspiration.Inspiration(amount = 1000, at = 1970-01-01T00:00:00Z),
   explored: Map DateTime = {},
   rules: Option Signed = None,
   notices: List String = [],
@@ -298,13 +298,10 @@ let _put_named name f (w: World) =
   | Some a -> add_account (f a) w
   | None -> w
 
--- An account's Inspiration, full when it has never spent any.
-let inspiration_of (a: Account) = Option.default Inspiration.start a.inspiration
-
 let spend name cost now (w: World) =
   _put_named
     name
-    (fn a -> Account(a, inspiration = Some (Inspiration.spend now cost (inspiration_of a))))
+    (fn a -> Account(a, inspiration = Inspiration.spend now cost a.inspiration))
     w
 
 -- An exploring bonus, for the first visit to `room`.
@@ -313,7 +310,7 @@ let inspire name room now (w: World) =
     name
     (fn a -> Account(
       a,
-      inspiration = Some (Inspiration.earn now Inspiration.bonus (inspiration_of a)),
+      inspiration = Inspiration.earn now Inspiration.bonus a.inspiration,
       explored = Map.set room now a.explored
     ))
     w
@@ -508,10 +505,7 @@ let said_cap = 20
 -- Keep a line a body said, for a report.
 let said_by body text (w: World) =
   let lines = List.concat (Option.default [] (Map.get body w.said)) [text];
-  World(
-    w,
-    said = Map.set body (List.drop (Int.max 0 (List.length lines - said_cap)) lines) w.said
-  )
+  World(w, said = Map.set body (List.drop (List.length lines - said_cap) lines) w.said)
 
 let add_flag (f: Flag) (w: World) = World(w, flags = List.concat w.flags [f])
 

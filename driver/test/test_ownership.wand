@@ -76,7 +76,7 @@ let ann_has n (w: World.World) =
   match World.account "ann" w with
   | Some a ->
     World.add_account
-      World.Account(a, inspiration = Some Inspiration.Inspiration(amount = n, at = noon))
+      World.Account(a, inspiration = Inspiration.Inspiration(amount = n, at = noon))
       w
   | None -> w
 
@@ -87,7 +87,7 @@ let ann_admin (w: World.World) =
 
 let inspiration name (w: World.World) =
   match World.account name w with
-  | Some a -> Inspiration.amount noon (World.inspiration_of a)
+  | Some a -> Inspiration.amount noon a.inspiration
   | None -> 0
 
 let spawn_lever = line ann `/eval [Core.Spawn "/realm/commons/lever" ctx.here]`

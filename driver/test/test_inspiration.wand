@@ -1,6 +1,7 @@
 -- Inspiration as an amount and a time: the refill, spending and waiting.
 
 import ../Inspiration
+import ../World
 import Duration
 
 import Map
@@ -13,6 +14,9 @@ let later seconds = noon + Duration.seconds seconds
 
 let half = Inspiration.Inspiration(amount = 500, at = noon)
 
+-- What a new account starts with.
+let start = World.Account(name = "Ann", body = "/std/player#0", password = "x").inspiration
+
 group "the refill" (fn () -> [
   test "one point comes back every 6 seconds" (fn t ->
     t.eq (500, 510, 600) (
@@ -22,7 +26,7 @@ group "the refill" (fn () -> [
     )),
   test "it stops at full" (fn t -> t.eq 1000 (Inspiration.amount (later 86400) half)),
   test "an account that never spent any is full" (fn t ->
-    t.eq 1000 (Inspiration.amount noon Inspiration.start)),
+    t.eq 1000 (Inspiration.amount noon start)),
   test "a refill not yet a whole point is kept" (fn t ->
     -- 4 seconds is no point yet; 4 more is the first, with 2 over.
     let spent = Inspiration.spend (later 4) 0 half;
@@ -39,7 +43,7 @@ group "spending and earning" (fn () -> [
   test "a run that cost more than was left leaves less than none" (fn t ->
     t.eq (-20) (Inspiration.amount noon (Inspiration.spend noon 520 half))),
   test "a bonus may go past full, and the refill does not take it back" (fn t ->
-    let rich = Inspiration.earn noon 20 Inspiration.start;
+    let rich = Inspiration.earn noon 20 start;
     t.eq (1020, 1020) (Inspiration.amount noon rich, Inspiration.amount (later 600) rich))
 ])
 

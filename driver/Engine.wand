@@ -471,7 +471,7 @@ let _inspired owner cost (w: World.World) =
   match World.account owner w with
   | None -> Error "There is no account %{owner} to pay for that."
   | Some acct -> (
-    let i = World.inspiration_of acct;
+    let i = acct.inspiration;
     let have = Inspiration.amount w.now i;
     if have >= cost then Ok()
     else
@@ -1256,7 +1256,7 @@ let _reset body words (tx: Tx) =
 -- An account's Capacity and Inspiration, as /stat shows them.
 let _stat_text (a: World.Account) (w: World.World) =
   let key = String.lower a.name;
-  let i = World.inspiration_of a;
+  let i = a.inspiration;
   let lines =
     [
       "%{a.name}, %{a.role}.",
