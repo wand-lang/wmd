@@ -33,21 +33,21 @@ let _ask = "What is your name?"
 
 -- What a new connection sees first: a wall of doors, each a different
 -- kind, and the last one open on the stars.
-let _banner = String.join "\n" [
-  "  .=======================================================================.",
-  "  ||  _______     ___________      .-'''-.      __________      ______   ||",
-  "  || |#######|   |  _______  |    /  _ _  \\    | |      | |    /      \\  ||",
-  "  || |#|   |#|   | |       | |   |  | | |  |   |=|======|=|   / .  *   \\ ||",
-  "  || |#|   |#|   | |  (@)  | |   |  | | |  |   | |      | |  | *   .   | ||",
-  "  || |#| o |#|   | |       | |   |  | | | o|   | |   o  | |  |o   *  . | ||",
-  "  || |#|   |#|   | |_______| |   |  | | |  |   |=|======|=|  |  .   *  | ||",
-  "  || |#|   |#|   |          o|   |  |_|_|  |   | |      | |  | *  .    | ||",
-  "  ||_|#######|___|___________|___|_________|___|_|______|_|__|_________|_||",
-  "  '======================================================================='",
-  "",
-  "        W  O  R  L  D     O  F     M  A  N  Y     D  O  O  R  S",
-  ""
-]
+let _banner = `
+  .=======================================================================.
+  ||  _______     ___________      .-'''-.      __________      ______   ||
+  || |#######|   |  _______  |    /  _ _  \    | |      | |    /      \  ||
+  || |#|   |#|   | |       | |   |  | | |  |   |=|======|=|   / .  *   \ ||
+  || |#|   |#|   | |  (@)  | |   |  | | |  |   | |      | |  | *   .   | ||
+  || |#| o |#|   | |       | |   |  | | | o|   | |   o  | |  |o   *  . | ||
+  || |#|   |#|   | |_______| |   |  | | |  |   |=|======|=|  |  .   *  | ||
+  || |#|   |#|   |          o|   |  |_|_|  |   | |      | |  | *  .    | ||
+  ||_|#######|___|___________|___|_________|___|_|______|_|__|_________|_||
+  '======================================================================='
+
+        W  O  R  L  D     O  F     M  A  N  Y     D  O  O  R  S
+
+`
 
 -- 2 to 16 letters, so a name is easy to type and cannot look like an id.
 let _valid? name = Regex.match? r/^[A-Za-z]{2,16}$/ name
@@ -128,7 +128,7 @@ let make (stages: Map Stage) = (
   -- The driver runs `connect` when a session connects, and `done` when it
   -- logs in or goes away, so no stage outlives its session.
   let connect (ctx: core.Context) _ =
-    tell ctx "%{_banner}\n%{_ask}" (at ctx AskName);
+    tell ctx "%{_banner}%{_ask}" (at ctx AskName);
   let done (ctx: core.Context) _ = core.Reply(next = Some (make (Map.delete ctx.actor stages)));
   core.Object(
     names = [],

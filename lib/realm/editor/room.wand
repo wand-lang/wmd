@@ -33,22 +33,21 @@ type State(
   eval: Bool = false
 )
 
-let _help = String.join "\n" [
-  "Lines are numbered from 1. A range is n, n,m, . (the current line), $ (the last), or , (all).",
-  "  [range]p      print lines",
-  "  [range]n      print lines with their numbers",
-  "  n             go to line n and print it",
-  "  [n]a          add lines after line n; end with a line that is only .",
-  "  [n]i          add lines before line n; end with .",
-  "  [range]c      change lines: replace them with the lines you type; end with .",
-  "  [range]d      delete lines",
-  "  [range]s/old/new/[g]   replace text: the first on each line, or all with g",
-  "  t             check the file: errors, with line numbers, and its effects",
-  "  w             check, save, and load the new code, as /update does",
-  "  w!            save without a check, to keep unfinished work",
-  "  q             leave; refused while there are unsaved changes",
-  "  Q             leave, and lose unsaved changes"
-]
+let _help = `
+Lines are numbered from 1. A range is n, n,m, . (the current line), $ (the last), or , (all).
+  [range]p      print lines
+  [range]n      print lines with their numbers
+  n             go to line n and print it
+  [n]a          add lines after line n; end with a line that is only .
+  [n]i          add lines before line n; end with .
+  [range]c      change lines: replace them with the lines you type; end with .
+  [range]d      delete lines
+  [range]s/old/new/[g]   replace text: the first on each line, or all with g
+  t             check the file: errors, with line numbers, and its effects
+  w             check, save, and load the new code, as /update does
+  w!            save without a check, to keep unfinished work
+  q             leave; refused while there are unsaved changes
+  Q             leave, and lose unsaved changes`
 
 let _source (s: State) = "%{String.join "\n" s.lines}\n"
 
