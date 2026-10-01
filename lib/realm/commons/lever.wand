@@ -9,24 +9,24 @@ uses {Random}
 import JSON
 import Result
 
-let core = import ../../std/core
-let text = import ../../std/text
+let Core = import ../../std/core
+let Text = import ../../std/text
 
 type State(pulls: Int = 0)
 
 let make (s: State) =
-  core.Object(
+  Core.Object(
     names = ["lever", "brass lever"],
     short = fn _ -> "brass lever",
     long = fn _ -> "It has been pulled %{s.pulls} times.",
     props = Some (fn _ -> {pulls = JSON.of_int s.pulls}),
     verbs = [
-      core.Verb(
+      Core.Verb(
         names = ["pull", "yank"],
-        dobj = core.This,
-        run = fn ctx _ -> core.Reply(
+        dobj = Core.This,
+        run = fn ctx _ -> Core.Reply(
           actions =
-            text.act ctx "You pull the lever. Clunk." "Someone pulls the lever. Clunk.",
+            Text.act ctx "You pull the lever. Clunk." "Someone pulls the lever. Clunk.",
           next = Some (make State(s, pulls = s.pulls + 1))
         )
       )
@@ -34,7 +34,7 @@ let make (s: State) =
     save = fn () -> State.encoder s
   )
 
-implement core.Blueprint =
+implement Core.Blueprint =
   let create _ saved = match saved with
-  | None -> core.Init(object = make State())
-  | Some j -> core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+  | None -> Core.Init(object = make State())
+  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))

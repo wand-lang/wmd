@@ -13,10 +13,9 @@ import Regex
 import Shared
 import String
 
-let engine = import ./engine
-let mudlib = import ./mudlib
-let snapshot = import ./snapshot
-let world = import ./world
+import ./Engine
+import ./Mudlib
+import ./World
 
 -- The flags of `wmd init`. `--password` is for tests and throwaway worlds
 -- that cannot answer a prompt.
@@ -86,15 +85,15 @@ let run! (o: InitOpts) =
       else (
         let at = "%{Clock.now ()}";
         let start =
-          world.World(
-            world.with_pepper (_pepper ()),
+          World.World(
+            World.with_pepper (_pepper ()),
             lib_root = o.lib,
-            lib = (mudlib.load_all! o.lib).lib
+            lib = (Mudlib.load_all! o.lib).lib
           );
         with Shared.make start as state -> (
-          engine.boot state at;
-          engine.make_account state name typed "admin" at;
-          engine.snapshot! state o.world at;
+          Engine.boot state at;
+          Engine.make_account state name typed "admin" at;
+          Engine.snapshot! state o.world at;
           IO.println "Made %{o.world}, with %{name} as admin.";
           Ok()
         )

@@ -12,7 +12,7 @@ import Option
 import Result
 import String
 
-let core = import ../lib/std/core
+let Core = import ../lib/std/core
 
 -- One object in the world. `object` is what the blueprint's `create`
 -- built, or the `next` of its last reply. `saved` is what its `save` gave
@@ -25,7 +25,7 @@ let core = import ../lib/std/core
 type Instance(
   id: String,
   blueprint: String,
-  object: core.Object,
+  object: Core.Object,
   env: Option String = None,
   saved: Option JSON = None,
   creator: Option String = None,
@@ -93,10 +93,10 @@ type World(
   lib_root: Path = ./lib,
   -- Every blueprint the driver can spawn, by path, such as /std/player:
   -- each file's module, as loaded at start or by /update since.
-  lib: Map core.Blueprint = {},
+  lib: Map Core.Blueprint = {},
   -- The editor as it was before the last /update of it, for an editor that
   -- faults on its new code to go back to.
-  editor_before: Option core.Blueprint = None
+  editor_before: Option Core.Blueprint = None
 )
 
 let empty =
@@ -137,7 +137,7 @@ let contents id (w: World) =
     (fn (i: Instance) -> i.id)
     (List.filter (fn (i: Instance) -> i.env == Some (resolve id)) (Map.values w.instances))
 
-let set_object id (o: core.Object) at (w: World) =
+let set_object id (o: Core.Object) at (w: World) =
   match instance id w with
   | Some i -> put Instance(i, object = o, saved = None, modified = Some at, faults = 0) w
   | None -> w
@@ -166,7 +166,7 @@ let instances_of bp (w: World) =
     (List.filter (fn (i: Instance) -> i.blueprint == bp) (Map.values w.instances))
 
 -- Use `b` for blueprint `path` from now on.
-let set_blueprint path (b: core.Blueprint) (w: World) = World(w, lib = Map.set path b w.lib)
+let set_blueprint path (b: Core.Blueprint) (w: World) = World(w, lib = Map.set path b w.lib)
 
 -- Take an object out of the world.
 let remove id (w: World) = World(w, instances = Map.delete (resolve id) w.instances)

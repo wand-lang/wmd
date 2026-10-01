@@ -12,24 +12,24 @@ import Shared
 import String
 
 let {test, group} = import Test
-let mudlib = import ../mudlib
-let engine = import ../engine
-let snapshot = import ../snapshot
-let world = import ../world
+import ../Mudlib
+import ../Engine
+import ../Snapshot
+import ../World
 
 -- A new world, with the mudlib in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = world.World(world.with_pepper "test pepper", lib = (mudlib.load_all! ./lib).lib)
+let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
 
 let at = "2026-09-30T12:00:00Z"
 
-let ann = world.session_id 0
+let ann = World.session_id 0
 
-let line text = world.queue (world.Line ann at text)
+let line text = World.queue (World.Line ann at text)
 
 -- Ann signs up and pulls the lever twice.
 let _changes = [
-  world.open_next at,
+  World.open_next at,
   line "ann",
   line "2000-05-01",
   line "ann-password",
@@ -38,31 +38,31 @@ let _changes = [
   line "pull lever"
 ]
 
-let _play state = List.each (fn f -> (Shared.update state f; engine.step state)) _changes
+let _play state = List.each (fn f -> (Shared.update state f; Engine.step state)) _changes
 
 -- Play, save to `path`, and give back the world as it was saved.
 let saved! path =
   with Shared.make start as state -> (
-    engine.boot state at;
+    Engine.boot state at;
     _play state;
-    engine.snapshot! state path at;
+    Engine.snapshot! state path at;
     Shared.get state
   )
 
 -- A new world made from the file at `path`.
 let restored! path =
   with Shared.make start as state ->
-  match snapshot.read! path with
-  | Some f -> (engine.restore state f at; engine.boot state at)
+  match Snapshot.read! path with
+  | Some f -> (Engine.restore state f at; Engine.boot state at)
   | None -> Shared.get state
 
-let _where (w: world.World) =
-  List.sort (List.map (fn (i: world.Instance) -> (i.id, i.env)) (Map.values w.instances))
+let _where (w: World.World) =
+  List.sort (List.map (fn (i: World.Instance) -> (i.id, i.env)) (Map.values w.instances))
 
-let _lever (w: world.World) =
+let _lever (w: World.World) =
   Option.and_then
-    (fn (i: world.Instance) -> i.saved)
-    (world.instance "/realm/commons/lever#0" w)
+    (fn (i: World.Instance) -> i.saved)
+    (World.instance "/realm/commons/lever#0" w)
 
 group "a snapshot" (fn () -> [
   test "brings back the accounts, the objects and where each one is" (fn t ->
@@ -92,19 +92,19 @@ group "a snapshot" (fn () -> [
     with FS.temp_dir "wmd_snap_" as d -> (
       let path = Path.join d ./world.json;
       with Shared.make start as state -> (
-        engine.boot state at;
+        Engine.boot state at;
         _play state;
-        engine.snapshot! state path at;
+        Engine.snapshot! state path at;
         Shared.update state (line "pull lever");
-        engine.step state;
-        let (w: world.World) = Shared.get state;
+        Engine.step state;
+        let (w: World.World) = Shared.get state;
         t.eq ([], []) (
           List.filter
-            (fn (i: world.Instance) -> Option.none? i.saved
+            (fn (i: World.Instance) -> Option.none? i.saved
             && i.id != "/realm/commons/lever#0")
             (Map.values w.instances),
           List.filter
-            (fn (i: world.Instance) -> Option.some? i.saved
+            (fn (i: World.Instance) -> Option.some? i.saved
             && i.id == "/realm/commons/lever#0")
             (Map.values w.instances)
         )
@@ -117,10 +117,10 @@ test "brings back who made each object and when, and each account's home" (fn t 
     let path = Path.join d ./world.json;
     let before = saved! path;
     let after = restored! path;
-    let made (w: world.World) =
+    let made (w: World.World) =
       Option.map
-        (fn (i: world.Instance) -> (i.creator, i.created, i.modified))
-        (world.instance "/realm/commons/lever#0" w);
+        (fn (i: World.Instance) -> (i.creator, i.created, i.modified))
+        (World.instance "/realm/commons/lever#0" w);
     t.eq (made before, Map.values before.accounts) (made after, Map.values after.accounts)
   ))
 
@@ -135,9 +135,9 @@ test "a file without the newer fields still reads" (fn t ->
     t.eq
       (Some (None, None))
       (Option.map
-        (fn (f: snapshot.File) -> (
-          Option.and_then (fn (a: world.Account) -> a.home) (List.head f.accounts),
-          Option.and_then (fn (s: snapshot.Saved) -> s.created) (List.head f.instances)
+        (fn (f: Snapshot.File) -> (
+          Option.and_then (fn (a: World.Account) -> a.home) (List.head f.accounts),
+          Option.and_then (fn (s: Snapshot.Saved) -> s.created) (List.head f.instances)
         ))
-        (snapshot.read! path))
+        (Snapshot.read! path))
   ))

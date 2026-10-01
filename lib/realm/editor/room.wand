@@ -17,7 +17,7 @@ import Regex
 import Result
 import String
 
-let core = import ../../std/core
+let Core = import ../../std/core
 
 -- The file, the buffer and the current line. `adding` is the number of
 -- lines above where typed text goes while the editor takes text, and None
@@ -121,16 +121,16 @@ let _in_buffer (s: State) (from, to) =
 -- ── Commands ───────────────────────────────────────────────────────────
 
 -- What a command does: the next state, when there is one, and actions.
-type Step(state: Option State = None, actions: List core.Action = [])
+type Step(state: Option State = None, actions: List Core.Action = [])
 
-let _tell (ctx: core.Context) text = Step(actions = [core.Tell ctx.actor text])
+let _tell (ctx: Core.Context) text = Step(actions = [Core.Tell ctx.actor text])
 
-let _to (s: State) (ctx: core.Context) text =
-  Step(state = Some s, actions = [core.Tell ctx.actor text])
+let _to (s: State) (ctx: Core.Context) text =
+  Step(state = Some s, actions = [Core.Tell ctx.actor text])
 
 let _nothing = Step()
 
-let _print (s: State) (ctx: core.Context) here numbered =
+let _print (s: State) (ctx: Core.Context) here numbered =
   match _in_buffer s here with
   | Error why -> _tell ctx why
   | Ok(from, to) -> (
@@ -141,7 +141,7 @@ let _print (s: State) (ctx: core.Context) here numbered =
       (String.join "\n" (if numbered then _numbered from lines else lines))
   )
 
-let _substitute (s: State) (ctx: core.Context) here cmd =
+let _substitute (s: State) (ctx: Core.Context) here cmd =
   match (_in_buffer s here, Regex.capture r/^s\/([^\/]+)\/([^\/]*)\/(g?)$/ cmd) with
   | (Error why, _) -> _tell ctx why
   | (_, [_, old, new, g]) -> (
@@ -167,26 +167,26 @@ let _substitute (s: State) (ctx: core.Context) here cmd =
 
 -- Back to where the editor was opened from. The driver sends the body home
 -- when that room is gone.
-let _quit (s: State) (ctx: core.Context) =
+let _quit (s: State) (ctx: Core.Context) =
   let name = ctx.world.short_of ctx.actor;
   Step(
     actions = List.flatten [
-      [core.Tell ctx.actor "You leave the editor."],
+      [Core.Tell ctx.actor "You leave the editor."],
       List.map
-        (fn p -> core.Tell p "%{name} comes back from the editor.")
+        (fn p -> Core.Tell p "%{name} comes back from the editor.")
         (List.filter ctx.world.player? (ctx.world.contents s.origin)),
-      [core.Move ctx.actor s.origin, core.Remove ctx.self]
+      [Core.Move ctx.actor s.origin, Core.Remove ctx.self]
     ]
   )
 
 -- The driver's answer to t, w or w!.
-let _result (s: State) (ctx: core.Context) (p: core.Parsed) =
-  match JSON.decode core.Outcome.decoder (Result.default JSON.null (JSON.parse p.rest)) with
+let _result (s: State) (ctx: Core.Context) (p: Core.Parsed) =
+  match JSON.decode Core.Outcome.decoder (Result.default JSON.null (JSON.parse p.rest)) with
   | Error why -> _tell ctx "The driver's answer did not read: %{why}"
   | Ok o -> (
     let found =
       List.map
-        (fn (x: core.Problem) -> "%{if x.severity == "error" then "" else "warning: "}%{x.line}:%{x.col}: %{x.message}")
+        (fn (x: Core.Problem) -> "%{if x.severity == "error" then "" else "warning: "}%{x.line}:%{x.col}: %{x.message}")
         o.problems;
     let effects = if o.effects == [] then "none" else String.join ", " o.effects;
     match (o.action, o.ok, o.text) with
@@ -217,7 +217,7 @@ let _result (s: State) (ctx: core.Context) (p: core.Parsed) =
 
 -- /edit spawns the editor with its state: the file's path and lines, and
 -- the room to go back to.
-let _run (s: State) (ctx: core.Context) r cmd = (
+let _run (s: State) (ctx: Core.Context) r cmd = (
   let here = Option.default (s.cur, s.cur) r;
   let (from, to) = here;
   match cmd with
@@ -265,11 +265,11 @@ let _run (s: State) (ctx: core.Context) r cmd = (
     )
   )
   | "t" -> if s.eval then _tell ctx "An /eval buffer is checked when w runs it."
-    else Step(actions = [core.Check s.path (_source s)])
-  | "w" -> if s.eval then Step(actions = [core.Run(String.join "\n" s.lines)])
-    else Step(actions = [core.Save s.path (_source s)])
+    else Step(actions = [Core.Check s.path (_source s)])
+  | "w" -> if s.eval then Step(actions = [Core.Run(String.join "\n" s.lines)])
+    else Step(actions = [Core.Save s.path (_source s)])
   | "w!" -> if s.eval then _tell ctx "An /eval buffer has no file. w runs it."
-    else Step(actions = [core.Draft s.path (_source s)])
+    else Step(actions = [Core.Draft s.path (_source s)])
   | "q" -> if s.dirty && !s.eval then
       _tell
         ctx
@@ -282,7 +282,7 @@ let _run (s: State) (ctx: core.Context) r cmd = (
     else _tell ctx "'%{cmd}' is not a command. Type h for help."
 )
 
-let _input (s: State) (ctx: core.Context) line =
+let _input (s: State) (ctx: Core.Context) line =
   match s.adding with
   | Some n -> if line == "." then _to State(s, adding = None, cur = n) ctx "%{n}"
     else Step(
@@ -306,7 +306,7 @@ let _input (s: State) (ctx: core.Context) line =
 -- /edit from inside the editor: the same editor on another file. The
 -- driver sends the new file's state as JSON in `rest`; the room to go back
 -- to stays the one the editor was first opened from.
-let _open (s: State) (ctx: core.Context) (p: core.Parsed) =
+let _open (s: State) (ctx: Core.Context) (p: Core.Parsed) =
   if s.dirty then
     _tell
       ctx
@@ -322,16 +322,16 @@ let _open (s: State) (ctx: core.Context) (p: core.Parsed) =
 -- ── The object ─────────────────────────────────────────────────────────
 
 let make (s: State) =
-  let reply (st: Step) = core.Reply(actions = st.actions, next = Option.map make st.state);
-  core.Object(
+  let reply (st: Step) = Core.Reply(actions = st.actions, next = Option.map make st.state);
+  Core.Object(
     names = [],
     short = fn _ -> "The editor",
     long = fn _ -> if s.eval then
         "An /eval buffer: %{List.length s.lines} lines. w runs it; type h for help."
       else "Editing %{s.path}: %{List.length s.lines} lines, at line %{s.cur}. Type h for help.",
     verbs = [
-      core.Verb(names = ["result"], run = fn ctx p -> reply (_result s ctx p)),
-      core.Verb(names = ["open"], run = fn ctx p -> reply (_open s ctx p))
+      Core.Verb(names = ["result"], run = fn ctx p -> reply (_result s ctx p)),
+      Core.Verb(names = ["open"], run = fn ctx p -> reply (_open s ctx p))
     ],
     props = Some (fn _ -> {
       path = JSON.of_string s.path,
@@ -343,7 +343,7 @@ let make (s: State) =
     save = fn () -> State.encoder s
   )
 
-implement core.Blueprint =
+implement Core.Blueprint =
   let create _ saved = match saved with
-  | None -> core.Init(object = make State())
-  | Some j -> core.Init(object = make (Result.get! (JSON.decode State.decoder j)))
+  | None -> Core.Init(object = make State())
+  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))

@@ -13,12 +13,12 @@ import Par
 import Resource
 import Shared
 
-let engine = import ./engine
-let log = import ./log
-let mudlib = import ./mudlib
-let session = import ./session
-let snapshot = import ./snapshot
-let world = import ./world
+import ./Engine
+import ./Log
+import ./Mudlib
+import ./Session
+import ./Snapshot
+import ./World
 
 -- The flags of `wmd`. Each field is a flag: --port 4000 --logs ./logs.
 type Opts(
@@ -43,13 +43,13 @@ let problem (o: Opts) =
 -- says one is due. A snapshot that cannot be written is reported, and the
 -- server goes on.
 let _snapshot state path =
-  match try engine.snapshot! state path (_now ()) with
+  match try Engine.snapshot! state path (_now ()) with
   | Ok _ -> ()
   | Error why -> IO.println_err "wmd: snapshot to %{path} failed: %{why}"
 
 let _drive state path = (
-  engine.step state;
-  if world.snapshot_due? (Shared.get state) then _snapshot state path
+  Engine.step state;
+  if World.snapshot_due? (Shared.get state) then _snapshot state path
 )
 
 -- The world before anything is restored: the pepper, the mudlib and where
@@ -57,11 +57,11 @@ let _drive state path = (
 -- rest of the world starts: a builder's broken file does not stop the
 -- server.
 let _start! (o: Opts) = (
-  let loaded = mudlib.load_all! o.lib;
+  let loaded = Mudlib.load_all! o.lib;
   List.each
     (fn (path, why) -> IO.println_err "wmd: %{path} did not load: %{why}")
     loaded.failed;
-  world.World(world.with_pepper (Env.get! "WMD_PEPPER"), lib_root = o.lib, lib = loaded.lib)
+  World.World(World.with_pepper (Env.get! "WMD_PEPPER"), lib_root = o.lib, lib = loaded.lib)
 )
 
 -- The driver looks for input every 20ms: nothing can wait on a Shared for
@@ -74,19 +74,19 @@ let run! (o: Opts) = (
   -- closed, and after the driver loop has stopped.
   with Resource.make
     (fn () -> ())
-    (fn () -> (_snapshot state o.world; log.flush! state o.logs)) as _ -> (
+    (fn () -> (_snapshot state o.world; Log.flush! state o.logs)) as _ -> (
     (
-      match snapshot.read! o.world with
-      | Some f -> (let _ = engine.restore state f (_now ()); ())
+      match Snapshot.read! o.world with
+      | Some f -> (let _ = Engine.restore state f (_now ()); ())
       | None -> ()
     );
-    engine.boot state (_now ());
+    Engine.boot state (_now ());
     IO.println "wmd listening on %{o.port}, world in %{o.world}, logging to %{o.logs}";
     Par.all! [
-      fn () -> Net.listen o.port |> Par.each_stream 256 (session.serve state),
+      fn () -> Net.listen o.port |> Par.each_stream 256 (Session.serve state),
       fn () -> Clock.every 20ms (fn () -> _drive state o.world),
-      fn () -> Clock.every 60s (fn () -> Shared.update state world.snapshot_due),
-      fn () -> Clock.every 1s (fn () -> log.flush! state o.logs)
+      fn () -> Clock.every 60s (fn () -> Shared.update state World.snapshot_due),
+      fn () -> Clock.every 1s (fn () -> Log.flush! state o.logs)
     ]
   )
 )

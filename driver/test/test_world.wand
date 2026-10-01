@@ -2,26 +2,27 @@
 -- and the events. Commands are tested through the engine, in
 -- test_engine.wand.
 
+import ../World
 import List
+
 import Map
 
 let {test, group} = import Test
-let world = import ../world
 
 let at = "2026-09-30T12:00:00Z"
 
-let events (w: world.World) = List.map (fn (e: world.Event) -> e.event) w.events
+let events (w: World.World) = List.map (fn (e: World.Event) -> e.event) w.events
 
 group "sessions" (fn () -> [
   test "are numbered in the order they open" (fn t ->
-    let w = world.empty |> world.open_next at |> world.open_next at;
+    let w = World.empty |> World.open_next at |> World.open_next at;
     t.eq ["session:0", "session:1"] (List.sort (Map.keys w.sessions))),
   test "a new one waits for the driver to greet it" (fn t ->
-    t.eq true (world.pending? "session:0" (world.open_next at world.empty))),
+    t.eq true (World.pending? "session:0" (World.open_next at World.empty))),
   test "closing one queues its Gone and forgets its outbox" (fn t ->
-    let w = world.empty |> world.open_next at |> world.close "session:0" at;
+    let w = World.empty |> World.open_next at |> World.close "session:0" at;
     t.eq (None, None, ["connect", "disconnect"]) (
-      world.session "session:0" w,
+      World.session "session:0" w,
       Map.get "session:0" w.outboxes,
       events w
     ))
@@ -31,27 +32,27 @@ group "outboxes" (fn () -> [
   test "a line told to a session is waiting in its outbox" (fn t ->
     t.eq
       ["hi", "there"]
-      (world.empty
-      |> world.open_next at
-      |> world.tell "session:0" "hi\nthere"
-      |> world.outbox "session:0")),
+      (World.empty
+      |> World.open_next at
+      |> World.tell "session:0" "hi\nthere"
+      |> World.outbox "session:0")),
   test "emptied leaves nothing, and a closed session closed" (fn t ->
-    let w = world.empty |> world.open_next at |> world.tell "session:0" "hi";
+    let w = World.empty |> World.open_next at |> World.tell "session:0" "hi";
     t.eq ([], None) (
-      world.outbox "session:0" (world.emptied "session:0" w),
-      Map.get "session:1" (world.emptied "session:1" w).outboxes
+      World.outbox "session:0" (World.emptied "session:0" w),
+      Map.get "session:1" (World.emptied "session:1" w).outboxes
     )),
   test "a full outbox closes the session" (fn t ->
     let full =
       List.fold_left
-        (fn w _ -> world.tell "session:0" "x" w)
-        (world.open_next at world.empty)
-        (List.range 1 world.outbox_cap);
+        (fn w _ -> World.tell "session:0" "x" w)
+        (World.open_next at World.empty)
+        (List.range 1 World.outbox_cap);
     t.eq (false, true) (
-      world.closing? "session:0" full,
-      world.closing? "session:0" (world.tell "session:0" "one more" full)
+      World.closing? "session:0" full,
+      World.closing? "session:0" (World.tell "session:0" "one more" full)
     ))
 ])
 
 test "all_logged takes every event out" (fn t ->
-  t.eq [] (world.all_logged (world.open_next at world.empty)).events)
+  t.eq [] (World.all_logged (World.open_next at World.empty)).events)

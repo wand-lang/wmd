@@ -17,7 +17,7 @@ let path_in lib (file: Path) =
   let inside = String.slice (String.length l) (String.length f) f;
   String.slice 0 (String.length inside - 5) inside
 
--- Every file under `lib` with a line that starts `implement core.Blueprint`,
+-- Every file under `lib` with a line that starts `implement Core.Blueprint`,
 -- sorted by path.
 -- Helpers such as std/room.wand implement nothing, and tests are not part
 -- of the world.
@@ -29,7 +29,7 @@ let blueprints! lib =
         let name = Path.to_string (Path.basename f);
         if String.starts_with? "test_" name then None
         else if List.any?
-          (String.starts_with? "implement core.Blueprint")
+          (String.starts_with? "implement Core.Blueprint")
           (String.lines (FS.read_file! f)) then
           Some Blueprint(path = path_in lib f, file = f)
         else None)

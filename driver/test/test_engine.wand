@@ -11,49 +11,49 @@ import Shared
 import String
 
 let {test, group} = import Test
-let mudlib = import ../mudlib
-let core = import ../../lib/std/core
-let engine = import ../engine
-let world = import ../world
+import ../Mudlib
+let Core = import ../../lib/std/core
+import ../Engine
+import ../World
 
 -- A new world, with the mudlib in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = world.World(world.with_pepper "test pepper", lib = (mudlib.load_all! ./lib).lib)
+let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
 
 let at = "2026-09-30T12:00:00Z"
 
-let ann = world.session_id 0
+let ann = World.session_id 0
 
-let bo = world.session_id 1
+let bo = World.session_id 1
 
-let line sid text = world.queue (world.Line sid at text)
+let line sid text = World.queue (World.Line sid at text)
 
 -- Boot a world whose passwords are hashed with a test pepper, then apply
 -- each change and let the driver take it.
 let played changes =
   with Shared.make start as state -> (
-    engine.boot state at;
-    List.each (fn f -> (Shared.update state f; engine.step state)) changes;
+    Engine.boot state at;
+    List.each (fn f -> (Shared.update state f; Engine.step state)) changes;
     Shared.get state
   )
 
 -- What a session was sent, without the telnet bytes that turn the
 -- client's echo off and on around a password.
-let heard sid (w: world.World) =
+let heard sid (w: World.World) =
   List.filter
     (fn l -> l != "")
     (List.map
       (fn l -> String.replace "\xff\xfc\x01" "" (String.replace "\xff\xfb\x01" "" l))
-      (world.outbox sid w))
+      (World.outbox sid w))
 
-let heard? sid text (w: world.World) = List.any? (fn l -> l == text) (heard sid w)
+let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid w)
 
-let events (w: world.World) = List.map (fn (e: world.Event) -> e.event) w.events
+let events (w: World.World) = List.map (fn (e: World.Event) -> e.event) w.events
 
 -- A new account for `name`, born long enough ago, from a session that just
 -- connected.
 let signed_up sid name = [
-  world.open_next at,
+  World.open_next at,
   line sid name,
   line sid "2000-05-01",
   line sid "%{name}-password",
@@ -61,15 +61,15 @@ let signed_up sid name = [
 ]
 
 -- Ann logged in, and everything she was told so far forgotten.
-let ann_in = List.concat (signed_up ann "ann") [world.emptied ann]
+let ann_in = List.concat (signed_up ann "ann") [World.emptied ann]
 
 -- Ann and Bo both logged in, with nothing heard yet.
 let both_in =
-  List.concat ann_in (List.concat (signed_up bo "bo") [world.emptied ann, world.emptied bo])
+  List.concat ann_in (List.concat (signed_up bo "bo") [World.emptied ann, World.emptied bo])
 
 group "login" (fn () -> [
   test "a new connection sees the doors, then is asked for a name" (fn t ->
-    let lines = heard ann (played [world.open_next at]);
+    let lines = heard ann (played [World.open_next at]);
     t.eq (
       12,
       Some "  .=======================================================================.",
@@ -81,17 +81,17 @@ group "login" (fn () -> [
   test "a name that is not 2 to 16 letters is refused" (fn t ->
     t.eq
       ["A name is 2 to 16 letters. What is your name?"]
-      (heard ann (played [world.open_next at, world.emptied ann, line ann "x1"]))),
+      (heard ann (played [World.open_next at, World.emptied ann, line ann "x1"]))),
   test "a new name is asked for a date of birth" (fn t ->
     t.eq
       ["Welcome, Ann. What is your date of birth? Write it as YYYY-MM-DD."]
-      (heard ann (played [world.open_next at, world.emptied ann, line ann "ann"]))),
+      (heard ann (played [World.open_next at, World.emptied ann, line ann "ann"]))),
   test "a date that is not YYYY-MM-DD is asked again" (fn t ->
     t.ok
       (heard?
         ann
         "Write it as YYYY-MM-DD, as 2010-04-30."
-        (played [world.open_next at, line ann "ann", line ann "May 1"]))),
+        (played [World.open_next at, line ann "ann", line ann "May 1"]))),
   -- The test's time is 2026-09-30: a thirteenth birthday that day is in,
   -- and one a day later is out.
   test "someone 13 today may sign up" (fn t ->
@@ -99,13 +99,13 @@ group "login" (fn () -> [
       (heard?
         ann
         "Choose a password."
-        (played [world.open_next at, line ann "ann", line ann "2013-09-30"]))),
+        (played [World.open_next at, line ann "ann", line ann "2013-09-30"]))),
   test "someone 13 tomorrow is refused, and the session ends" (fn t ->
-    let w = played [world.open_next at, line ann "kid", line ann "2013-10-01"];
+    let w = played [World.open_next at, line ann "kid", line ann "2013-10-01"];
     t.eq (true, true, false) (
       heard? ann "Sorry, WMD is for people 13 and older. Goodbye." w,
-      world.closing? ann w,
-      Option.some? (world.account "kid" w)
+      World.closing? ann w,
+      Option.some? (World.account "kid" w)
     )),
   test "two passwords that differ are asked again" (fn t ->
     t.ok
@@ -113,7 +113,7 @@ group "login" (fn () -> [
         ann
         "They did not match. Choose a password."
         (played [
-          world.open_next at,
+          World.open_next at,
           line ann "ann",
           line ann "2000-05-01",
           line ann "ann-password",
@@ -130,16 +130,16 @@ group "login" (fn () -> [
     t.eq
       (Some true)
       (Option.map
-        (fn (a: world.Account) -> String.starts_with? "hmac-sha256$" a.password
+        (fn (a: World.Account) -> String.starts_with? "hmac-sha256$" a.password
         && !(String.contains? "ann-password" a.password))
-        (world.account "ann" (played (signed_up ann "ann"))))),
+        (World.account "ann" (played (signed_up ann "ann"))))),
   test "the right password logs in again" (fn t ->
     let w =
       played
         (List.concat ann_in [
           line ann "/quit",
-          world.close ann at,
-          world.open_next at,
+          World.close ann at,
+          World.open_next at,
           line bo "ann",
           line bo "ann-password"
         ]);
@@ -149,8 +149,8 @@ group "login" (fn () -> [
       played
         (List.concat ann_in [
           line ann "/quit",
-          world.close ann at,
-          world.open_next at,
+          World.close ann at,
+          World.open_next at,
           line bo "ann",
           line bo "nope"
         ]);
@@ -165,14 +165,14 @@ group "login" (fn () -> [
         bo
         "Ann is here already. What is your name?"
         (played
-          (List.concat ann_in [world.open_next at, line bo "ann", line bo "ann-password"])))),
+          (List.concat ann_in [World.open_next at, line bo "ann", line bo "ann-password"])))),
   test "others see the arrival" (fn t ->
     t.ok (heard? ann "Bo arrives." (played (List.concat ann_in (signed_up bo "bo"))))),
   test "the login is logged, at the time it arrived" (fn t ->
     t.eq
       [at]
       (List.filter_map
-        (fn (e: world.Event) -> if e.event == "login" then Some e.at else None)
+        (fn (e: World.Event) -> if e.event == "login" then Some e.at else None)
         (played ann_in).events))
 ])
 
@@ -236,15 +236,15 @@ group "driver commands" (fn () -> [
       (heard ann (played (List.concat both_in [line ann "/who"])))),
   test "/quit says goodbye and closes" (fn t ->
     let w = played (List.concat ann_in [line ann "/quit"]);
-    t.eq (["Goodbye."], true) (heard ann w, world.closing? ann w)),
+    t.eq (["Goodbye."], true) (heard ann w, World.closing? ann w)),
   test "a body whose session ends falls asleep, and wakes at the next login" (fn t ->
     let w =
       played
         (List.concat both_in [
-          world.close ann at,
-          world.open_next at,
-          line (world.session_id 2) "ann",
-          line (world.session_id 2) "ann-password"
+          World.close ann at,
+          World.open_next at,
+          line (World.session_id 2) "ann",
+          line (World.session_id 2) "ann-password"
         ]);
     t.eq (true, true) (heard? bo "Ann falls asleep." w, heard? bo "Ann wakes up." w))
 ])
@@ -252,7 +252,7 @@ group "driver commands" (fn () -> [
 -- All mudlib calls share one generator, so a seed in one would fix every
 -- die in the world. The driver answers a seed with nothing.
 test "a Random.seed inside a mudlib call does not change the driver's next draw" (fn t ->
-  let draw () = engine.guarded (fn () -> (Random.seed 1; Random.int 1 1000000000));
+  let draw () = Engine.guarded (fn () -> (Random.seed 1; Random.int 1 1000000000));
   let seeded = (Random.seed 1; Random.int 1 1000000000);
   t.ok (List.any? (fn d -> d != seeded) [draw (), draw (), draw ()]))
 
@@ -276,7 +276,7 @@ group "looking" (fn () -> [
       (heard?
         bo
         "Ann is here, asleep."
-        (played (List.concat both_in [world.close ann at, line bo "look"]))))
+        (played (List.concat both_in [World.close ann at, line bo "look"]))))
 ])
 
 group "hooks" (fn () -> [
@@ -291,7 +291,7 @@ group "hooks" (fn () -> [
       (heard?
         bo
         "A robin looks up at you from the path."
-        (played (List.concat both_in [line bo "north", world.emptied bo, line ann "north"]))))
+        (played (List.concat both_in [line bo "north", World.emptied bo, line ann "north"]))))
 ])
 
 group "socials" (fn () -> [
@@ -310,7 +310,7 @@ group "socials" (fn () -> [
 group "home" (fn () -> [
   test "home goes to the arrival room by default" (fn t ->
     let w = played (List.concat ann_in [line ann "north", line ann "home"]);
-    t.eq (Some "/realm/commons/square#0") (world.env_of "/std/player#0" w)),
+    t.eq (Some "/realm/commons/square#0") (World.env_of "/std/player#0" w)),
   test "/sethome makes this room home" (fn t ->
     let w =
       played
@@ -321,29 +321,29 @@ group "home" (fn () -> [
           line ann "home"
         ]);
     t.eq (Some "/realm/commons/garden#0", true) (
-      world.env_of "/std/player#0" w,
+      World.env_of "/std/player#0" w,
       heard? ann "The Garden is your home now." w
     ))
 ])
 
 group "the action policy" (fn () -> [
   test "no one but /std/login may tell a session" (fn t ->
-    let ctx = engine.ctx_for (played []) "/realm/commons/lever#0" "/realm/commons/lever#0";
+    let ctx = Engine.ctx_for (played []) "/realm/commons/lever#0" "/realm/commons/lever#0";
     t.eq
       (Error "only /std/login may tell a session")
-      (engine.allowed ctx (core.Tell ann "hi") (played []))),
+      (Engine.allowed ctx (Core.Tell ann "hi") (played []))),
   test "no object may spawn a body" (fn t ->
     let w = played [];
-    let ctx = engine.ctx_for w "/realm/commons/lever#0" "/realm/commons/lever#0";
+    let ctx = Engine.ctx_for w "/realm/commons/lever#0" "/realm/commons/lever#0";
     t.eq
       (Error "may not spawn /std/player")
-      (engine.allowed ctx (core.Spawn "/std/player" "/realm/commons/square") w)),
+      (Engine.allowed ctx (Core.Spawn "/std/player" "/realm/commons/square") w)),
   test "an object may not move what it does not hold" (fn t ->
     let w = played [];
-    let ctx = engine.ctx_for w "/realm/commons/garden#0" "/realm/commons/garden#0";
+    let ctx = Engine.ctx_for w "/realm/commons/garden#0" "/realm/commons/garden#0";
     t.eq
       (Error "may not move /realm/commons/lever#0")
-      (engine.allowed ctx (core.Move "/realm/commons/lever" "/realm/commons/garden") w))
+      (Engine.allowed ctx (Core.Move "/realm/commons/lever" "/realm/commons/garden") w))
 ])
 
 group "more driver commands" (fn () -> [
@@ -352,7 +352,7 @@ group "more driver commands" (fn () -> [
       (heard?
         bo
         "Ann was last seen %{at}."
-        (played (List.concat both_in [world.close ann at, line bo "/who ann"])))),
+        (played (List.concat both_in [World.close ann at, line bo "/who ann"])))),
   test "/who with a name that is awake" (fn t ->
     t.ok (heard? bo "Ann is awake." (played (List.concat both_in [line bo "/who ann"])))),
   test "/examine shows the driver's own record of an object" (fn t ->
@@ -362,7 +362,7 @@ group "more driver commands" (fn () -> [
         (played
           (List.concat ann_in [
             line ann "pull lever",
-            world.emptied ann,
+            World.emptied ann,
             line ann "/examine lever"
           ]));
     t.eq

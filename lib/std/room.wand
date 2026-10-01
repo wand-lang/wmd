@@ -1,19 +1,19 @@
 -- Rooms. A room file starts from `room` and changes what it needs with
 -- record update:
 --
---   core.Object(room.room "The Garden" "A small walled garden.",
---     exits = {south = room.exit "/realm/commons/square"})
+--   Core.Object(Room.room "The Garden" "A small walled garden.",
+--     exits = {south = Room.exit "/realm/commons/square"})
 
 import JSON
 
-let core = import ./core
+let Core = import ./core
 
 -- A description that never changes.
-let text s = fn (_: core.Context) -> s
+let text s = fn (_: Core.Context) -> s
 
 -- An exit with the default messages and no check.
-let exit to = core.Exit(to = to)
+let exit to = Core.Exit(to = to)
 
 -- A room with no exits and nothing to save.
 let room short long =
-  core.Object(names = [], short = text short, long = text long, save = fn () -> JSON.null)
+  Core.Object(names = [], short = text short, long = text long, save = fn () -> JSON.null)

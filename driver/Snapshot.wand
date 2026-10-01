@@ -12,7 +12,7 @@ import Map
 import Option
 import Result
 
-let world = import ./world
+import ./World
 
 -- One object as the file keeps it.
 type Saved(
@@ -25,17 +25,17 @@ type Saved(
   modified: Option String = None
 )
 
-type File(version: Int = 1, accounts: List world.Account, instances: List Saved)
+type File(version: Int = 1, accounts: List World.Account, instances: List Saved)
 
 -- The file for a world whose every instance has its saved state. An
 -- instance with none -- its `save` faulted -- is left out, rather than
 -- written as something it never said.
-let of_world (w: world.World) =
+let of_world (w: World.World) =
   File(
     accounts = Map.values w.accounts,
     instances =
       List.filter_map
-        (fn (i: world.Instance) -> Option.map
+        (fn (i: World.Instance) -> Option.map
           (fn s -> Saved(
             id = i.id,
             blueprint = i.blueprint,

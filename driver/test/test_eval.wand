@@ -3,44 +3,45 @@ uses {FS.Read, FS.Write, Random, Shared}
 -- /eval through the driver: an expression, checked, gated and run under
 -- the limits, as a mudlib file is.
 
+import ../Engine
+import ../Mudlib
+import ../World
 import List
+
 import Option
 import Shared
 import String
 
 let {test, group} = import Test
-let engine = import ../engine
-let mudlib = import ../mudlib
-let world = import ../world
 
 let at = "2026-09-30T12:00:00Z"
 
-let ann = world.session_id 0
+let ann = World.session_id 0
 
-let line text = world.queue (world.Line ann at text)
+let line text = World.queue (World.Line ann at text)
 
-let start = world.World(world.with_pepper "test pepper", lib = (mudlib.load_all! ./lib).lib)
+let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
 
 -- Ann logged in, with nothing heard yet, then `lines` typed.
 let played lines =
   with Shared.make start as state -> (
-    engine.boot state at;
+    Engine.boot state at;
     List.each
-      (fn f -> (Shared.update state f; engine.step state))
+      (fn f -> (Shared.update state f; Engine.step state))
       (List.concat
         [
-          world.open_next at,
+          World.open_next at,
           line "ann",
           line "2000-05-01",
           line "ann-password",
           line "ann-password",
-          world.emptied ann
+          World.emptied ann
         ]
         (List.map line lines));
     Shared.get state
   )
 
-let heard (w: world.World) = List.filter (fn l -> l != "") (world.outbox ann w)
+let heard (w: World.World) = List.filter (fn l -> l != "") (World.outbox ann w)
 
 group "/eval" (fn () -> [
   test "a value is shown with its type" (fn t ->
@@ -52,10 +53,10 @@ group "/eval" (fn () -> [
   test "the standard modules and Random can be used" (fn t ->
     t.eq ["=> true : Bool"] (heard (played ["/eval Random.int 1 6 <= 6"]))),
   test "a list of actions is applied as the player's" (fn t ->
-    let w = played [`/eval [core.Spawn "/realm/commons/lever" ctx.here]`];
+    let w = played [`/eval [Core.Spawn "/realm/commons/lever" ctx.here]`];
     t.eq (["=> 1 actions"], 2) (
       heard w,
-      List.length (world.instances_of "/realm/commons/lever" w)
+      List.length (World.instances_of "/realm/commons/lever" w)
     )),
   test "an expression that does not check says why" (fn t ->
     t.ok
@@ -71,7 +72,7 @@ group "/eval" (fn () -> [
   test "each one is logged, with the steps it took" (fn t ->
     t.ok
       (List.any?
-        (fn (e: world.Event) -> e.event == "eval"
+        (fn (e: World.Event) -> e.event == "eval"
         && String.starts_with? "1 + 3 (" (Option.default "" e.text))
         (played ["/eval 1 + 3"]).events)),
   test "an /eval buffer says what w and q do" (fn t ->

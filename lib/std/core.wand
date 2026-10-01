@@ -170,7 +170,7 @@ type Reply(actions: List Action = [], next: Option Object = None)
 -- spawn its contents again.
 type Init(object: Object, actions: List Action = [])
 
--- What every mudlib file implements, as `implement core.Blueprint`.
+-- What every mudlib file implements, as `implement Core.Blueprint`.
 -- `create self saved` builds the instance `self`, from its saved state or,
 -- when `saved` is None, new.
 interface Blueprint(create: ObjId -> Option JSON -> Init ! {Random, Raise})

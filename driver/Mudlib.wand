@@ -1,7 +1,7 @@
 uses {FS.Read}
 
 -- Loading the mudlib: every file under the mudlib directory that claims
--- core.Blueprint, as its module. Each file is checked and gated as it
+-- Core.Blueprint, as its module. Each file is checked and gated as it
 -- loads, so a file that fails is left out and says why, and the rest of
 -- the world still starts.
 
@@ -9,17 +9,17 @@ import List
 import Map
 import Wand
 
-let core = import ../lib/std/core
-let scan = import ./scan
+let Core = import ../lib/std/core
+import ./Scan
 
 -- The blueprints that loaded, by path, and each one that did not, with why.
-type Loaded(lib: Map core.Blueprint = {}, failed: List (String, String) = [])
+type Loaded(lib: Map Core.Blueprint = {}, failed: List (String, String) = [])
 
 let load_all! root =
   List.fold_left
-    (fn (l: Loaded) (b: scan.Blueprint) -> match Wand.load core.Blueprint.loader b.file with
+    (fn (l: Loaded) (b: Scan.Blueprint) -> match Wand.load Core.Blueprint.loader b.file with
       | Ok bp -> Loaded(l, lib = Map.set b.path bp l.lib)
       | Error why -> Loaded(l, failed = List.concat l.failed [(b.path, why)])
     )
     Loaded()
-    (scan.blueprints! root)
+    (Scan.blueprints! root)

@@ -1,21 +1,21 @@
 uses {Random}
 
-let core = import ../../std/core
-let room = import ../../std/room
+let Core = import ../../std/core
+let Room = import ../../std/room
 
 let garden =
-  core.Object(
-    room.room "The Garden" "A small walled garden. A path leads back south to the Commons.",
-    exits = {south = room.exit "/realm/commons/square"},
+  Core.Object(
+    Room.room "The Garden" "A small walled garden. A path leads back south to the Commons.",
+    exits = {south = Room.exit "/realm/commons/square"},
     details = {
-      wall = room.text "Old brick, warm from the sun, with moss in the joints.",
-      path = room.text "Gravel, raked smooth."
+      wall = Room.text "Old brick, warm from the sun, with moss in the joints.",
+      path = Room.text "Gravel, raked smooth."
     },
     -- A robin looks up at whoever comes in.
-    on_enter = Some (fn (ctx: core.Context) who ->
-      if ctx.world.player? who then core.Reply(actions = [core.Tell who "A robin looks up at you from the path."])
-      else core.nothing)
+    on_enter = Some (fn (ctx: Core.Context) who ->
+      if ctx.world.player? who then Core.Reply(actions = [Core.Tell who "A robin looks up at you from the path."])
+      else Core.nothing)
   )
 
-implement core.Blueprint =
-  let create _ _ = core.Init(object = garden)
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = garden)

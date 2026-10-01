@@ -15,7 +15,7 @@ import Result
 import String
 import Wand
 
-let core = import ../lib/std/core
+let Core = import ../lib/std/core
 
 -- Lower-case words of letters, digits and _ between slashes, as
 -- /home/ann/lamp. There is no `..`, so a path cannot leave the mudlib.
@@ -34,11 +34,11 @@ let file_of (lib: Path) path = Path.join lib (Path.of_string ".%{path}.wand")
 let allowed_effects = ["Random"]
 
 let _problem message =
-  core.Problem(severity = "error", line = 1, col = 1, message = message)
+  Core.Problem(severity = "error", line = 1, col = 1, message = message)
 
 let _problems (c: Wand.Checked) =
   List.map
-    (fn (d: Wand.Diagnostic) -> core.Problem(
+    (fn (d: Wand.Diagnostic) -> Core.Problem(
       severity = d.severity,
       line = d.line,
       col = d.col,
@@ -46,14 +46,14 @@ let _problems (c: Wand.Checked) =
     ))
     c.diagnostics
 
-let _errors? problems = List.any? (fn (p: core.Problem) -> p.severity == "error") problems
+let _errors? problems = List.any? (fn (p: Core.Problem) -> p.severity == "error") problems
 
 -- Check `source` as the file of `path` in `lib`, then gate it: a file that
 -- performs any effect but Random is refused, whatever its `uses` line
 -- says.
 let check (lib: Path) path source =
   match Wand.check_at (file_of lib path) source with
-  | Error why -> core.Outcome(
+  | Error why -> Core.Outcome(
     action = "check",
     path = path,
     ok = false,
@@ -68,7 +68,7 @@ let check (lib: Path) path source =
         (List.map
           (fn e -> _problem "the file performs %{e}; mudlib code may perform only Random")
           refused);
-    core.Outcome(
+    Core.Outcome(
       action = "check",
       path = path,
       ok = !(_errors? problems),
@@ -84,14 +84,14 @@ let _write (lib: Path) path text =
 
 -- Check, gate, format and save. Nothing is written unless all pass.
 let save (lib: Path) path source = (
-  let checked = core.Outcome(check lib path source, action = "save");
+  let checked = Core.Outcome(check lib path source, action = "save");
   if !checked.ok then checked
   else match Wand.format source with
-    | Error why -> core.Outcome(checked, ok = false, problems = [_problem why])
+    | Error why -> Core.Outcome(checked, ok = false, problems = [_problem why])
     | Ok text -> (
       match _write lib path text with
-      | Error why -> core.Outcome(checked, ok = false, problems = [_problem why])
-      | Ok _ -> core.Outcome(checked, text = Some text)
+      | Error why -> Core.Outcome(checked, ok = false, problems = [_problem why])
+      | Ok _ -> Core.Outcome(checked, text = Some text)
     )
 )
 
@@ -99,13 +99,13 @@ let save (lib: Path) path source = (
 let draft (lib: Path) path source = (
   let text = Result.default source (Wand.format source);
   match _write lib path text with
-  | Error why -> core.Outcome(
+  | Error why -> Core.Outcome(
     action = "draft",
     path = path,
     ok = false,
     problems = [_problem why]
   )
-  | Ok _ -> core.Outcome(action = "draft", path = path, ok = true, text = Some text)
+  | Ok _ -> Core.Outcome(action = "draft", path = path, ok = true, text = Some text)
 )
 
 -- The source of the file of `path`, or None when there is no such file.

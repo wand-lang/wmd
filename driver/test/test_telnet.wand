@@ -1,11 +1,12 @@
+import ../Telnet
+
 let {test, group} = import Test
-let telnet = import ../telnet
 
 group "clean" (fn () -> [
-  test "keeps plain text" (fn t -> t.eq "say hello" (telnet.clean "say hello")),
-  test "drops the CR that ends a line" (fn t -> t.eq "look" (telnet.clean "look\r")),
+  test "keeps plain text" (fn t -> t.eq "say hello" (Telnet.clean "say hello")),
+  test "drops the CR that ends a line" (fn t -> t.eq "look" (Telnet.clean "look\r")),
   test "drops options, subnegotiation and commands" (fn t ->
-    t.eq "hello" (telnet.clean "\xff\xfb\x01he\xff\xfa\x18\x01\xff\xf0llo\xff\xf1\r")),
+    t.eq "hello" (Telnet.clean "\xff\xfb\x01he\xff\xfa\x18\x01\xff\xf0llo\xff\xf1\r")),
   test "a line of only IAC sequences is empty" (fn t ->
-    t.eq "" (telnet.clean "\xff\xfd\x03\xff\xfb\x18"))
+    t.eq "" (Telnet.clean "\xff\xfd\x03\xff\xfb\x18"))
 ])

@@ -7,24 +7,25 @@ uses {FS.Read, FS.Write, Random, Shared}
 -- runs mudlib code or changes an object, so the world it reads cannot
 -- change under it before it writes.
 
+import ./Evaluate
+import ./Files
+import ./Parse
+import ./Password
+import ./Snapshot
+import ./World
 import JSON
 import List
+
 import Map
+
 import Option
 import Random
 import Result
 import Shared
 import String
-
 import Wand
 
-let core = import ../lib/std/core
-let parse = import ./parse
-let password = import ./password
-let snapshot = import ./snapshot
-let evaluate = import ./evaluate
-let files = import ./files
-let world = import ./world
+let Core = import ../lib/std/core
 
 let login_id = "/std/login#0"
 
@@ -42,27 +43,27 @@ let arrival = "/realm/commons/square#0"
 -- `hooks` is false while a hook runs, so the moves it makes call no more
 -- hooks.
 type Tx(
-  w: world.World,
-  changes: List (world.World -> world.World ! {}),
+  w: World.World,
+  changes: List (World.World -> World.World ! {}),
   at: String,
   hooks: Bool = true
 )
 
 -- Work that starts at `at`, the time its input arrived. The working copy
 -- carries that time, for `ctx.time`.
-let begin (w: world.World) at =
+let begin (w: World.World) at =
   Tx(
-    w = world.World(w, now = Result.default 1970-01-01T00:00:00Z (String.to_datetime at)),
+    w = World.World(w, now = Result.default 1970-01-01T00:00:00Z (String.to_datetime at)),
     changes = [],
     at = at
   )
 
 let change f (tx: Tx) = Tx(tx, w = f tx.w, changes = f :: tx.changes)
 
-let commit (tx: Tx) (w: world.World) = List.fold_right (fn f acc -> f acc) tx.changes w
+let commit (tx: Tx) (w: World.World) = List.fold_right (fn f acc -> f acc) tx.changes w
 
 -- Every event of one input carries the time the input arrived.
-let _event (ev: world.Event) (tx: Tx) = change (world.emit world.Event(ev, at = tx.at)) tx
+let _event (ev: World.Event) (tx: Tx) = change (World.emit World.Event(ev, at = tx.at)) tx
 
 -- ── Running mudlib code ────────────────────────────────────────────────
 
@@ -119,65 +120,65 @@ let fault_limit = 5
 
 -- The room an object is in, climbing out of whatever holds it. A room is
 -- in nothing, so a room is its own.
-let room_of id (w: world.World) =
-  match world.env_of id w with
+let room_of id (w: World.World) =
+  match World.env_of id w with
   | Some e -> room_of e w
-  | None -> world.resolve id
+  | None -> World.resolve id
 
-let player? id = world.blueprint_of id == player_bp
+let player? id = World.blueprint_of id == player_bp
 
-let players_in room (w: world.World) = List.filter player? (world.contents room w)
+let players_in room (w: World.World) = List.filter player? (World.contents room w)
 
 -- Every body in the world, asleep or not.
-let _players (w: world.World) =
-  List.filter player? (List.map (fn (i: world.Instance) -> i.id) (Map.values w.instances))
+let _players (w: World.World) =
+  List.filter player? (List.map (fn (i: World.Instance) -> i.id) (Map.values w.instances))
 
 -- Where a body goes home to: its account's home, or the arrival room.
-let home_of body (w: world.World) =
-  match world.account_of body w with
+let home_of body (w: World.World) =
+  match World.account_of body w with
   | Some a -> Option.default arrival a.home
   | None -> arrival
 
 -- The world as `viewer` sees it now. Each function answers from this one
 -- moment.
-let view (w: world.World) viewer =
-  core.World(
-    contents = fn id -> world.contents id w,
-    env_of = fn id -> world.env_of id w,
+let view (w: World.World) viewer =
+  Core.World(
+    contents = fn id -> World.contents id w,
+    env_of = fn id -> World.env_of id w,
     short_of = fn id -> _text w viewer id true,
     long_of = fn id -> _text w viewer id false,
-    exits_of = fn id -> match world.instance id w with
+    exits_of = fn id -> match World.instance id w with
       | Some i -> i.object.exits
       | None -> Map.empty,
     player? = player?,
     players = fn () -> _players w,
-    account? = fn name -> Option.some? (world.account name w),
-    detail_of = fn id name -> match world.instance id w with
+    account? = fn name -> Option.some? (World.account name w),
+    detail_of = fn id name -> match World.instance id w with
       | Some i ->
         _bounded None (fn () -> Option.map (fn f -> f (_seen w viewer i.id)) (Map.get (String.lower name) i.object.details))
       | None -> None,
-    prop = fn id key -> match world.instance id w with
+    prop = fn id key -> match World.instance id w with
       | Some i -> _bounded None (fn () -> Option.and_then (fn f -> Map.get key (f (_seen w viewer i.id))) i.object.props)
       | None -> None,
-    awake? = fn id -> Option.some? (world.session_of id w),
+    awake? = fn id -> Option.some? (World.session_of id w),
     home_of = fn id -> home_of id w
   )
 -- The context of an object being looked at by `viewer`.
-and _seen (w: world.World) viewer id =
-  core.Context(self = id, actor = viewer, here = room_of id w, world = view w viewer, time = w.now)
-and _text (w: world.World) viewer id short =
-  match world.instance id w with
+and _seen (w: World.World) viewer id =
+  Core.Context(self = id, actor = viewer, here = room_of id w, world = view w viewer, time = w.now)
+and _text (w: World.World) viewer id short =
+  match World.instance id w with
   | None -> "nothing"
   | Some i ->
     _bounded
       "something that is not working"
       (fn () -> if short then i.object.short (_seen w viewer i.id) else i.object.long (_seen w viewer i.id))
 
-let short_of id (w: world.World) = _text w id id true
+let short_of id (w: World.World) = _text w id id true
 
-let ctx_for (w: world.World) self actor =
-  core.Context(
-    self = world.resolve self,
+let ctx_for (w: World.World) self actor =
+  Core.Context(
+    self = World.resolve self,
     actor = actor,
     here = room_of actor w,
     world = view w actor,
@@ -188,22 +189,22 @@ let ctx_for (w: world.World) self actor =
 
 -- An object may move itself, the player whose command it is running, or
 -- something it holds.
-let _may_move? (ctx: core.Context) obj (w: world.World) =
-  obj == ctx.self || obj == ctx.actor || world.env_of obj w == Some ctx.self
+let _may_move? (ctx: Core.Context) obj (w: World.World) =
+  obj == ctx.self || obj == ctx.actor || World.env_of obj w == Some ctx.self
 
-let _from_login? (ctx: core.Context) = world.blueprint_of ctx.self == "/std/login"
+let _from_login? (ctx: Core.Context) = World.blueprint_of ctx.self == "/std/login"
 
 let editor_bp = "/realm/editor/room"
 
--- Whether a source claims core.Blueprint, as the files the driver loads do.
+-- Whether a source claims Core.Blueprint, as the files the driver loads do.
 -- A helper, such as std/text.wand, is saved and not loaded.
 let _blueprint? source =
-  List.any? (String.starts_with? "implement core.Blueprint") (String.lines source)
+  List.any? (String.starts_with? "implement Core.Blueprint") (String.lines source)
 
-let _editor? id = world.blueprint_of id == editor_bp
+let _editor? id = World.blueprint_of id == editor_bp
 
-let _broken? id (w: world.World) =
-  match world.instance id w with
+let _broken? id (w: World.World) =
+  match World.instance id w with
   | Some i -> i.faults >= fault_limit
   | None -> false
 
@@ -214,54 +215,54 @@ let _too_long text =
   else Ok()
 
 -- Whether the player `body` may edit the file of blueprint path `path`.
-let may_edit? body path (w: world.World) =
-  match world.account_of body w with
-  | Some a -> files.may_edit? a.role a.name path
+let may_edit? body path (w: World.World) =
+  match World.account_of body w with
+  | Some a -> Files.may_edit? a.role a.name path
   | None -> false
 
 -- Only the editor may check or save a file, and only one its actor may
 -- edit.
-let _may_file (ctx: core.Context) path (w: world.World) =
+let _may_file (ctx: Core.Context) path (w: World.World) =
   if !(_editor? ctx.self) then Error "only %{editor_bp} may check or save a file"
   else if !(may_edit? ctx.actor path w) then Error "%{ctx.actor} may not edit %{path}"
   else Ok()
 
 -- Whether `ctx.self` may ask for action `a`, and why not. Every rule on
 -- what mudlib code may do is here, in one place.
-let allowed (ctx: core.Context) (a: core.Action) (w: world.World) =
+let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
   match a with
-  | core.Say text -> _too_long text
-  | core.Tell target text -> if world.session? target && !(_from_login? ctx) then
+  | Core.Say text -> _too_long text
+  | Core.Tell target text -> if World.session? target && !(_from_login? ctx) then
       Error "only /std/login may tell a session"
     else _too_long text
-  | core.Move obj dest -> (
-    let o = world.resolve obj;
-    let d = world.resolve dest;
-    if world.session? dest then Error "may not move %{o} into a session"
+  | Core.Move obj dest -> (
+    let o = World.resolve obj;
+    let d = World.resolve dest;
+    if World.session? dest then Error "may not move %{o} into a session"
     else if !(_may_move? ctx o w) then Error "may not move %{o}"
     -- An editor is private to the one it was opened for.
-    else if _editor? d && Option.and_then (fn (i: world.Instance) -> i.creator) (world.instance d w) != Some o then
+    else if _editor? d && Option.and_then (fn (i: World.Instance) -> i.creator) (World.instance d w) != Some o then
       Error "may not move %{o} into %{d}"
     else Ok()
   )
-  | core.Spawn bp _ -> if bp == player_bp || bp == "/std/login" then Error "may not spawn %{bp}"
+  | Core.Spawn bp _ -> if bp == player_bp || bp == "/std/login" then Error "may not spawn %{bp}"
     else Ok()
-  | core.Login _ _ _ -> if _from_login? ctx then Ok()
+  | Core.Login _ _ _ -> if _from_login? ctx then Ok()
     else Error "only /std/login may log in"
-  | core.Register _ _ _ -> if _from_login? ctx then Ok()
+  | Core.Register _ _ _ -> if _from_login? ctx then Ok()
     else Error "only /std/login may register"
-  | core.Hangup _ -> if _from_login? ctx then Ok() else Error "only /std/login may hang up"
-  | core.Remove obj -> (
-    let o = world.resolve obj;
-    if !(o == ctx.self || world.env_of o w == Some ctx.self) then Error "may not remove %{o}"
-    else if player? o || List.any? player? (world.contents o w) then
+  | Core.Hangup _ -> if _from_login? ctx then Ok() else Error "only /std/login may hang up"
+  | Core.Remove obj -> (
+    let o = World.resolve obj;
+    if !(o == ctx.self || World.env_of o w == Some ctx.self) then Error "may not remove %{o}"
+    else if player? o || List.any? player? (World.contents o w) then
       Error "may not remove %{o}: a player is or is in it"
     else Ok()
   )
-  | core.Check path _ -> _may_file ctx path w
-  | core.Save path _ -> _may_file ctx path w
-  | core.Draft path _ -> _may_file ctx path w
-  | core.Run _ -> if _editor? ctx.self then Ok() else Error "only %{editor_bp} may run source"
+  | Core.Check path _ -> _may_file ctx path w
+  | Core.Save path _ -> _may_file ctx path w
+  | Core.Draft path _ -> _may_file ctx path w
+  | Core.Run _ -> if _editor? ctx.self then Ok() else Error "only %{editor_bp} may run source"
 
 -- ── Spawning ───────────────────────────────────────────────────────────
 
@@ -270,33 +271,33 @@ let allowed (ctx: core.Context) (a: core.Action) (w: world.World) =
 -- the lib, or a create that raises; the event log says which.
 let _create id bp saved dest (tx: Tx) =
   match Map.get bp tx.w.lib with
-  | None -> _event (world.Event(at = "", event = "refused", actor = id, text = Some "no blueprint %{bp}")) tx
+  | None -> _event (World.Event(at = "", event = "refused", actor = id, text = Some "no blueprint %{bp}")) tx
   | Some b -> (
     match _call (fn () -> b.create id saved) with
-    | Error why -> _event (world.Event(at = "", event = "fault", actor = id, text = Some why)) tx
+    | Error why -> _event (World.Event(at = "", event = "fault", actor = id, text = Some why)) tx
     | Ok init ->
       tx
       |> change
-        (world.put
-          (world.Instance(id = id, blueprint = bp, object = init.object, env = dest, created = Some tx.at)))
+        (World.put
+          (World.Instance(id = id, blueprint = bp, object = init.object, env = dest, created = Some tx.at)))
       |> _apply_actions (ctx_for tx.w id id) init.actions
   )
 
 -- Make sure `id` exists: a room named by an exit is spawned the first time
 -- someone goes there.
 and _ensure id (tx: Tx) =
-  let full = world.resolve id;
-  if Option.some? (world.instance full tx.w) then tx
-  else _create full (world.blueprint_of full) None None tx
+  let full = World.resolve id;
+  if Option.some? (World.instance full tx.w) then tx
+  else _create full (World.blueprint_of full) None None tx
 
 -- A new instance of `bp` in `dest`, made by `actor`'s command.
 and spawn bp dest actor (tx: Tx) =
-  let id = "%{bp}#%{world.next_number bp tx.w}";
+  let id = "%{bp}#%{World.next_number bp tx.w}";
   tx
   |> _ensure dest
-  |> _create id bp None (Some (world.resolve dest))
-  |> change (fn w -> world.set_made id (Some actor) (Some tx.at) None w)
-  |> _event (world.Event(at = "", event = "spawn", actor = actor, object = Some id))
+  |> _create id bp None (Some (World.resolve dest))
+  |> change (fn w -> World.set_made id (Some actor) (Some tx.at) None w)
+  |> _event (World.Event(at = "", event = "spawn", actor = actor, object = Some id))
   |> _hook "enter" dest id actor
 
 -- ── Hooks ──────────────────────────────────────────────────────────────
@@ -304,7 +305,7 @@ and spawn bp dest actor (tx: Tx) =
 -- Call `container`'s on_enter or on_leave for `mover`. The hook's own
 -- moves call no hooks.
 and _hook which container mover actor (tx: Tx) =
-  match (tx.hooks, world.instance container tx.w) with
+  match (tx.hooks, World.instance container tx.w) with
   | (true, Some i) -> (
     let f = if which == "enter" then i.object.on_enter else i.object.on_leave;
     match f with
@@ -318,29 +319,29 @@ and _hook which container mover actor (tx: Tx) =
 
 -- ── Actions ────────────────────────────────────────────────────────────
 
-and _refuse (ctx: core.Context) why (tx: Tx) =
-  _event (world.Event(at = "", event = "refused", actor = ctx.self, text = Some why)) tx
+and _refuse (ctx: Core.Context) why (tx: Tx) =
+  _event (World.Event(at = "", event = "refused", actor = ctx.self, text = Some why)) tx
 
-and _say (ctx: core.Context) text (tx: Tx) =
+and _say (ctx: Core.Context) text (tx: Tx) =
   List.fold_left
-    (fn acc p -> change (world.tell p text) acc)
+    (fn acc p -> change (World.tell p text) acc)
     tx
     (players_in (room_of ctx.self tx.w) tx.w)
 
 -- Move `obj` into `dest`. A player who moves looks around, and then the
 -- place left and the place entered hear of it.
-and _move (ctx: core.Context) obj dest (tx: Tx) =
-  let from = world.env_of obj tx.w;
+and _move (ctx: Core.Context) obj dest (tx: Tx) =
+  let from = World.env_of obj tx.w;
   let ensured = _ensure dest tx;
   -- A room that is gone, or cannot be made, is no place to go: a body goes
   -- home instead, and anything else stays where it is.
   let target =
-    if Option.some? (world.instance dest ensured.w) then Some dest
+    if Option.some? (World.instance dest ensured.w) then Some dest
     else if player? obj then Some (home_of obj ensured.w)
     else None;
   let moved =
     match target with
-    | Some t -> ensured |> _ensure t |> change (world.move obj t)
+    | Some t -> ensured |> _ensure t |> change (World.move obj t)
     | None -> ensured;
   let looked = if player? obj then look obj moved else moved;
   let left =
@@ -348,36 +349,36 @@ and _move (ctx: core.Context) obj dest (tx: Tx) =
     | Some f -> _hook "leave" f obj ctx.actor looked
     | None -> looked;
   match target with
-  | Some t -> _hook "enter" (world.resolve t) obj ctx.actor left
+  | Some t -> _hook "enter" (World.resolve t) obj ctx.actor left
   | None -> left
 
-and _act (ctx: core.Context) (a: core.Action) (tx: Tx) =
+and _act (ctx: Core.Context) (a: Core.Action) (tx: Tx) =
   match allowed ctx a tx.w with
   | Error why -> _refuse ctx why tx
   | Ok _ -> (
     match a with
-    | core.Say text -> _say ctx text tx
-    | core.Tell target text -> change (world.tell target text) tx
-    | core.Move obj dest -> _move ctx (world.resolve obj) dest tx
-    | core.Spawn bp dest -> spawn bp dest ctx.actor tx
-    | core.Login sid name typed -> login sid name typed tx
-    | core.Register sid name typed -> register sid name typed tx
-    | core.Hangup sid -> change (world.close_soon sid) tx
-    | core.Remove obj ->
+    | Core.Say text -> _say ctx text tx
+    | Core.Tell target text -> change (World.tell target text) tx
+    | Core.Move obj dest -> _move ctx (World.resolve obj) dest tx
+    | Core.Spawn bp dest -> spawn bp dest ctx.actor tx
+    | Core.Login sid name typed -> login sid name typed tx
+    | Core.Register sid name typed -> register sid name typed tx
+    | Core.Hangup sid -> change (World.close_soon sid) tx
+    | Core.Remove obj ->
       tx
-      |> change (world.remove obj)
-      |> _event (world.Event(at = "", event = "remove", actor = ctx.actor, object = Some (world.resolve obj)))
-    | core.Check path source -> _answer ctx (files.check tx.w.lib_root path source) tx
-    | core.Save path source -> _save ctx path source tx
-    | core.Draft path source -> _answer ctx (files.draft tx.w.lib_root path source) tx
-    | core.Run source -> eval ctx.actor source tx
+      |> change (World.remove obj)
+      |> _event (World.Event(at = "", event = "remove", actor = ctx.actor, object = Some (World.resolve obj)))
+    | Core.Check path source -> _answer ctx (Files.check tx.w.lib_root path source) tx
+    | Core.Save path source -> _save ctx path source tx
+    | Core.Draft path source -> _answer ctx (Files.draft tx.w.lib_root path source) tx
+    | Core.Run source -> eval ctx.actor source tx
   )
 
 -- Save, and write the list of blueprints again, so a new one loads at
 -- the next start.
 -- A save that passes loads the new code at once, as /update does.
-and _save (ctx: core.Context) path source (tx: Tx) =
-  let o = files.save tx.w.lib_root path source;
+and _save (ctx: Core.Context) path source (tx: Tx) =
+  let o = Files.save tx.w.lib_root path source;
   let answered = _answer ctx o tx;
   if o.ok && _blueprint? source then update ctx.actor path answered else answered
 
@@ -386,32 +387,32 @@ and _save (ctx: core.Context) path source (tx: Tx) =
 -- takes it. An instance whose state the new code cannot read stays on the
 -- old code and is named. A file that does not load changes nothing.
 and update actor path (tx: Tx) =
-  match Wand.load core.Blueprint.loader (files.file_of tx.w.lib_root path) with
+  match Wand.load Core.Blueprint.loader (Files.file_of tx.w.lib_root path) with
   | Error why ->
     tx
-    |> _event (world.Event(at = "", event = "update_refused", actor = actor, object = Some path, text = Some why))
-    |> change (world.tell actor "%{path} was not updated: %{why}")
+    |> _event (World.Event(at = "", event = "update_refused", actor = actor, object = Some path, text = Some why))
+    |> change (World.tell actor "%{path} was not updated: %{why}")
   | Ok b -> (
     let before = if path == editor_bp then Map.get path tx.w.lib else tx.w.editor_before;
-    let tx = change (fn w -> world.World(w, editor_before = before)) tx;
+    let tx = change (fn w -> World.World(w, editor_before = before)) tx;
     let (moved, kept) =
       List.fold_left
-        (fn (acc, kept) id -> match world.instance id acc.w with
+        (fn (acc, kept) id -> match World.instance id acc.w with
           | None -> (acc, kept)
           | Some i -> (
             match _call (fn () -> b.create id (Some (i.object.save ()))) with
-            | Ok init -> (change (world.set_object id init.object tx.at) acc, kept)
+            | Ok init -> (change (World.set_object id init.object tx.at) acc, kept)
             | Error _ -> (acc, List.concat kept [id])
           ))
-        (change (world.set_blueprint path b) tx, [])
-        (world.instances_of path tx.w);
-    let n = List.length (world.instances_of path tx.w) - List.length kept;
+        (change (World.set_blueprint path b) tx, [])
+        (World.instances_of path tx.w);
+    let n = List.length (World.instances_of path tx.w) - List.length kept;
     let told =
       if kept == [] then "Updated %{path}: %{n} instances on the new code."
       else "Updated %{path}: %{n} instances on the new code. Kept on the old code, because the new code cannot read their saved state: %{String.join ", " kept}. Fix the file and /update it again, or /reset them.";
     moved
-    |> _event (world.Event(at = "", event = "update", actor = actor, object = Some path, text = Some "%{n} moved, %{List.length kept} kept"))
-    |> change (world.tell actor told)
+    |> _event (World.Event(at = "", event = "update", actor = actor, object = Some path, text = Some "%{n} moved, %{List.length kept} kept"))
+    |> change (World.tell actor told)
   )
 
 -- Make instances again as `create` makes a new one, and apply its starting
@@ -419,24 +420,24 @@ and update actor path (tx: Tx) =
 -- keeps its name, which is its account's.
 and reset actor ids (tx: Tx) =
   List.fold_left
-    (fn acc id -> match world.instance id acc.w with
+    (fn acc id -> match World.instance id acc.w with
       | None -> acc
       | Some i -> (
         match Map.get i.blueprint acc.w.lib with
-        | None -> change (world.tell actor "%{id} has no blueprint loaded.") acc
+        | None -> change (World.tell actor "%{id} has no blueprint loaded.") acc
         | Some b -> (
           let saved =
-            match world.account_of id acc.w with
+            match World.account_of id acc.w with
             | Some a -> Some (JSON.of_map (Map.from_list [("name", JSON.of_string a.name)]))
             | None -> None;
           match _call (fn () -> b.create id saved) with
-          | Error why -> change (world.tell actor "%{id} was not reset: %{why}") acc
+          | Error why -> change (World.tell actor "%{id} was not reset: %{why}") acc
           | Ok init ->
             acc
-            |> change (world.set_object id init.object tx.at)
+            |> change (World.set_object id init.object tx.at)
             |> _apply_actions (ctx_for acc.w id id) init.actions
-            |> _event (world.Event(at = "", event = "reset", actor = actor, object = Some id))
-            |> change (world.tell actor "Reset %{id}.")
+            |> _event (World.Event(at = "", event = "reset", actor = actor, object = Some id))
+            |> change (World.tell actor "Reset %{id}.")
         )
       ))
     tx
@@ -446,60 +447,60 @@ and reset actor ids (tx: Tx) =
 -- under the limits. A list of actions is checked and applied as the
 -- body's own; any other value is shown with its type.
 and eval body expr (tx: Tx) =
-  match evaluate.load tx.w.lib_root expr with
+  match Evaluate.load tx.w.lib_root expr with
   | Error errors ->
     tx
-    |> _event (world.Event(at = "", event = "eval_refused", actor = body, text = Some expr))
-    |> change (world.tell body (String.join "\n" errors))
+    |> _event (World.Event(at = "", event = "eval_refused", actor = body, text = Some expr))
+    |> change (World.tell body (String.join "\n" errors))
   | Ok m -> (
     let ctx = ctx_for tx.w body body;
     let (r, steps) = _counted (fn () -> m.evaluate ctx);
     let logged =
-      _event (world.Event(at = "", event = "eval", actor = body, text = Some "%{expr} (%{steps} steps)")) tx;
+      _event (World.Event(at = "", event = "eval", actor = body, text = Some "%{expr} (%{steps} steps)")) tx;
     match r with
-    | Error why -> change (world.tell body "Something went wrong: %{why}") logged
-    | Ok (core.Shown text) -> change (world.tell body "=> %{text}") logged
-    | Ok (core.Acts actions) ->
+    | Error why -> change (World.tell body "Something went wrong: %{why}") logged
+    | Ok (Core.Shown text) -> change (World.tell body "=> %{text}") logged
+    | Ok (Core.Acts actions) ->
       logged
-      |> apply ctx (core.Reply(actions = actions))
-      |> change (world.tell body "=> %{List.length actions} actions")
+      |> apply ctx (Core.Reply(actions = actions))
+      |> change (World.tell body "=> %{List.length actions} actions")
   )
 
 -- Log the driver's answer to a check or a save, with the errors or the
 -- effects, and give it to the editor through its `result` verb.
-and _answer (ctx: core.Context) (o: core.Outcome) (tx: Tx) =
+and _answer (ctx: Core.Context) (o: Core.Outcome) (tx: Tx) =
   let errors =
     List.map
-      (fn (p: core.Problem) -> "%{p.line}:%{p.col}: %{p.message}")
-      (List.filter (fn (p: core.Problem) -> p.severity == "error") o.problems);
+      (fn (p: Core.Problem) -> "%{p.line}:%{p.col}: %{p.message}")
+      (List.filter (fn (p: Core.Problem) -> p.severity == "error") o.problems);
   let found =
     if o.ok then "effects: %{if o.effects == [] then "none" else String.join ", " o.effects}"
     else String.join "; " errors;
   tx
   |> _event
-    (world.Event(
+    (World.Event(
       at = "",
       event = if o.ok then o.action else "%{o.action}_refused",
       actor = ctx.actor,
       object = Some o.path,
       text = Some found
     ))
-  |> verb_with ctx.self ctx.actor (core.Parsed(verb = "result", rest = JSON.stringify (core.Outcome.encoder o)))
+  |> verb_with ctx.self ctx.actor (Core.Parsed(verb = "result", rest = JSON.stringify (Core.Outcome.encoder o)))
 
-and _apply_actions (ctx: core.Context) actions (tx: Tx) =
+and _apply_actions (ctx: Core.Context) actions (tx: Tx) =
   List.fold_left (fn acc a -> _act ctx a acc) tx actions
 
 -- Apply what a call on `ctx.self` gave back. A reply with more actions
 -- than `max_actions` is refused whole: its object keeps its old version.
-and apply (ctx: core.Context) (r: core.Reply) (tx: Tx) =
+and apply (ctx: Core.Context) (r: Core.Reply) (tx: Tx) =
   if List.length r.actions > max_actions then
     _refuse ctx "%{List.length r.actions} actions in one reply, and the most is %{max_actions}" tx
   else _apply ctx r tx
 
-and _apply (ctx: core.Context) (r: core.Reply) (tx: Tx) = (
+and _apply (ctx: Core.Context) (r: Core.Reply) (tx: Tx) = (
   let kept =
     match r.next with
-    | Some o -> change (world.set_object ctx.self o tx.at) tx
+    | Some o -> change (World.set_object ctx.self o tx.at) tx
     | None -> tx;
   _apply_actions ctx r.actions kept
 )
@@ -508,22 +509,22 @@ and _apply (ctx: core.Context) (r: core.Reply) (tx: Tx) = (
 -- the actor is told, and the event log keeps why.
 -- An object that has faulted `fault_limit` times in a row runs no more
 -- code until /update or /reset gives it a new start.
-and run (ctx: core.Context) body (tx: Tx) =
+and run (ctx: Core.Context) body (tx: Tx) =
   if _broken? ctx.self tx.w then
-    change (world.tell ctx.actor "%{short_of ctx.self tx.w} is not working.") tx
+    change (World.tell ctx.actor "%{short_of ctx.self tx.w} is not working.") tx
   else match _call body with
-    | Ok r -> tx |> change (world.worked ctx.self) |> apply ctx r
+    | Ok r -> tx |> change (World.worked ctx.self) |> apply ctx r
     | Error why -> (
       let faulted =
         tx
-        |> change (world.tell ctx.actor "Something went wrong with %{short_of ctx.self tx.w}.")
-        |> _event (world.Event(at = "", event = "fault", actor = ctx.actor, object = Some ctx.self, text = Some why))
-        |> change (world.faulted ctx.self);
+        |> change (World.tell ctx.actor "Something went wrong with %{short_of ctx.self tx.w}.")
+        |> _event (World.Event(at = "", event = "fault", actor = ctx.actor, object = Some ctx.self, text = Some why))
+        |> change (World.faulted ctx.self);
       let broken =
         if _broken? ctx.self faulted.w then
           faulted
-          |> _event (world.Event(at = "", event = "broken", actor = ctx.actor, object = Some ctx.self))
-          |> change (world.tell ctx.actor "%{short_of ctx.self tx.w} has stopped working. Its builder can fix it and /update it, or /reset it.")
+          |> _event (World.Event(at = "", event = "broken", actor = ctx.actor, object = Some ctx.self))
+          |> change (World.tell ctx.actor "%{short_of ctx.self tx.w} has stopped working. Its builder can fix it and /update it, or /reset it.")
         else faulted;
       _fall_back ctx.self ctx.actor broken
     )
@@ -531,27 +532,27 @@ and run (ctx: core.Context) body (tx: Tx) =
 -- An editor that faults goes back to the editor before the last /update
 -- of it, so a bad update of the editor can be fixed with the editor.
 and _fall_back self actor (tx: Tx) =
-  match (_editor? self, tx.w.editor_before, world.instance self tx.w) with
+  match (_editor? self, tx.w.editor_before, World.instance self tx.w) with
   | (true, Some b, Some i) -> (
     match _call (fn () -> b.create i.id (Some (i.object.save ()))) with
     | Ok init ->
       tx
-      |> change (world.set_blueprint editor_bp b)
-      |> change (world.set_object i.id init.object tx.at)
-      |> change (world.tell actor "The editor is back on its version from before the last /update of it.")
+      |> change (World.set_blueprint editor_bp b)
+      |> change (World.set_object i.id init.object tx.at)
+      |> change (World.tell actor "The editor is back on its version from before the last /update of it.")
     | Error _ -> tx
   )
   | _ -> tx
 
 -- Run the verb named `name` on `self`, with no arguments.
-and verb self actor name (tx: Tx) = verb_with self actor (core.Parsed(verb = name)) tx
+and verb self actor name (tx: Tx) = verb_with self actor (Core.Parsed(verb = name)) tx
 
 -- Run the verb `p.verb` on `self`, with `p` as its command.
-and verb_with self actor (p: core.Parsed) (tx: Tx) =
-  match world.instance self tx.w with
+and verb_with self actor (p: Core.Parsed) (tx: Tx) =
+  match World.instance self tx.w with
   | None -> tx
   | Some i -> (
-    match List.find (fn (v: core.Verb) -> List.any? (fn n -> n == p.verb) v.names) i.object.verbs with
+    match List.find (fn (v: Core.Verb) -> List.any? (fn n -> n == p.verb) v.names) i.object.verbs with
     | None -> tx
     | Some v -> (
       let ctx = ctx_for tx.w i.id actor;
@@ -568,46 +569,46 @@ and look body (tx: Tx) = verb body body "look" tx
 -- Log a session in, when the password is the account's. A wrong one is
 -- logged, with the name tried and never the password.
 and login sid name typed (tx: Tx) =
-  match world.account name tx.w with
-  | Some acct when password.matches? tx.w.pepper acct.password typed ->
-    if Option.some? (world.session_of acct.body tx.w) then
-      change (world.tell sid "%{acct.name} is here already. What is your name?") tx
+  match World.account name tx.w with
+  | Some acct when Password.matches? tx.w.pepper acct.password typed ->
+    if Option.some? (World.session_of acct.body tx.w) then
+      change (World.tell sid "%{acct.name} is here already. What is your name?") tx
     else _wake sid acct.name acct.body "%{acct.name} wakes up." tx
   | _ ->
     tx
-    |> _event (world.Event(at = "", event = "login_failed", actor = sid, name = Some name))
-    |> change (world.tell sid "That name and password do not match. What is your name?")
+    |> _event (World.Event(at = "", event = "login_failed", actor = sid, name = Some name))
+    |> change (World.tell sid "That name and password do not match. What is your name?")
 
 -- Make an account and its body. The password is kept only as its hash,
 -- with a salt made for it and the server's pepper.
 and register sid name typed (tx: Tx) =
-  if Option.some? (world.account name tx.w) then
-    change (world.tell sid "%{name} was taken just now. What is your name?") tx
+  if Option.some? (World.account name tx.w) then
+    change (World.tell sid "%{name} was taken just now. What is your name?") tx
   else (
-    let body = "%{player_bp}#%{world.next_number player_bp tx.w}";
+    let body = "%{player_bp}#%{World.next_number player_bp tx.w}";
     let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
-    let hashed = password.hash tx.w.pepper (Random.hex 32) typed;
+    let hashed = Password.hash tx.w.pepper (Random.hex 32) typed;
     tx
     |> _ensure arrival
     |> _create body player_bp (Some saved) (Some arrival)
-    |> change (world.add_account (world.Account(name = name, body = body, password = hashed)))
+    |> change (World.add_account (World.Account(name = name, body = body, password = hashed)))
     |> _hook "enter" arrival body body
-    |> _event (world.Event(at = "", event = "signup", actor = sid, name = Some name, object = Some body))
+    |> _event (World.Event(at = "", event = "signup", actor = sid, name = Some name, object = Some body))
     |> _wake sid name body "%{name} arrives."
   )
 
 and _wake sid name body news (tx: Tx) =
   tx
-  |> change (world.attach sid body)
+  |> change (World.attach sid body)
   |> verb login_id sid "done"
-  |> _event (world.Event(at = "", event = "login", actor = sid, name = Some name, object = Some body))
-  |> change (world.tell body "Hello, %{name}.")
+  |> _event (World.Event(at = "", event = "login", actor = sid, name = Some name, object = Some body))
+  |> change (World.tell body "Hello, %{name}.")
   |> _tell_room (room_of body tx.w) body news
   |> look body
 
 and _tell_room room except text (tx: Tx) =
   List.fold_left
-    (fn acc p -> if p == except then acc else change (world.tell p text) acc)
+    (fn acc p -> if p == except then acc else change (World.tell p text) acc)
     tx
     (players_in room tx.w)
 
@@ -623,24 +624,24 @@ let _expand line =
   else if String.starts_with? ";" line then "semipose %{rest}"
   else line
 
-let _fits? (arg: core.Arg) (f: parse.Found) holder =
+let _fits? (arg: Core.Arg) (f: Parse.Found) holder =
   match arg with
-  | core.NoArg -> true
-  | core.This -> parse.found? holder f
-  | core.AnyObj -> Option.some? (parse.found_id f)
+  | Core.NoArg -> true
+  | Core.This -> Parse.found? holder f
+  | Core.AnyObj -> Option.some? (Parse.found_id f)
 
 -- The first verb that answers: on the player, then the room, then the
 -- direct object, then the indirect one.
-let _find (w: world.World) holders verb dobj iobj =
+let _find (w: World.World) holders verb dobj iobj =
   List.head
     (List.filter_map
-      (fn h -> match world.instance h w with
+      (fn h -> match World.instance h w with
         | None -> None
         | Some i ->
           Option.map
             (fn v -> (h, v))
             (List.find
-              (fn (v: core.Verb) -> List.any? (fn n -> n == verb) v.names
+              (fn (v: Core.Verb) -> List.any? (fn n -> n == verb) v.names
               && _fits? v.dobj dobj h
               && _fits? v.iobj iobj h)
               i.object.verbs)
@@ -648,10 +649,10 @@ let _find (w: world.World) holders verb dobj iobj =
       holders)
 
 -- Why nothing answered, in words the player can act on.
-let _unmatched (w: world.World) verb (dobj: parse.Found) =
+let _unmatched (w: World.World) verb (dobj: Parse.Found) =
   match dobj with
-  | parse.Missing words -> "You don't see a '%{words}' here."
-  | parse.Ambiguous words ids ->
+  | Parse.Missing words -> "You don't see a '%{words}' here."
+  | Parse.Ambiguous words ids ->
     String.join
       "\n"
       ("Which %{words}?" :: List.map (fn (n, id) -> "  %{n + 1}. %{short_of id w}") (List.indexed ids))
@@ -667,41 +668,41 @@ let command body line (tx: Tx) = (
   let here = room_of body tx.w;
   let verb = String.lower (Option.default "" (String.word 0 line));
   let rest = String.trim (String.slice (String.length verb) (String.length line) line);
-  let words = parse.split (String.words rest);
-  let dobj = parse.resolve tx.w body here words.dobj;
-  let iobj = parse.resolve tx.w body here words.iobj;
+  let words = Parse.split (String.words rest);
+  let dobj = Parse.resolve tx.w body here words.dobj;
+  let iobj = Parse.resolve tx.w body here words.iobj;
   let holders =
     List.unique
-      (List.flatten [[body, here], _list (parse.found_id dobj), _list (parse.found_id iobj)]);
+      (List.flatten [[body, here], _list (Parse.found_id dobj), _list (Parse.found_id iobj)]);
   match _find tx.w holders verb dobj iobj with
   | Some(h, v) -> (
     let ctx = ctx_for tx.w h body;
     let parsed =
-      core.Parsed(
+      Core.Parsed(
         verb = verb,
-        dobj = parse.found_id dobj,
+        dobj = Parse.found_id dobj,
         prep = words.prep,
-        iobj = parse.found_id iobj,
+        iobj = Parse.found_id iobj,
         rest = rest
       );
     run ctx (fn () -> v.run ctx parsed) tx
   )
   | None -> (
-    match world.instance here tx.w with
+    match World.instance here tx.w with
     | Some r when Map.has? verb r.object.exits -> command body "go %{verb}" tx
-    | _ -> change (world.tell body (_unmatched tx.w verb dobj)) tx
+    | _ -> change (World.tell body (_unmatched tx.w verb dobj)) tx
   )
 )
 
 -- ── Input ──────────────────────────────────────────────────────────────
 
-let _who body (w: world.World) =
+let _who body (w: World.World) =
   let names =
     List.sort
       (List.filter_map
-        (fn (s: world.Session) -> Option.map (fn b -> short_of b w) s.body)
+        (fn (s: World.Session) -> Option.map (fn b -> short_of b w) s.body)
         (Map.values w.sessions));
-  world.tell body "%{List.length names} connected: %{String.join ", " names}." w
+  World.tell body "%{List.length names} connected: %{String.join ", " names}." w
 
 let _after_verb line =
   String.trim
@@ -712,30 +713,30 @@ let _after_verb line =
 
 -- One player, by account name: awake or when last seen, and what they
 -- look like.
-let _who_is body name (w: world.World) =
-  match world.account name w with
-  | None -> world.tell body "There is no one called %{name}." w
+let _who_is body name (w: World.World) =
+  match World.account name w with
+  | None -> World.tell body "There is no one called %{name}." w
   | Some a -> (
     let seen =
-      (if Option.some? (world.session_of a.body w) then "%{a.name} is awake."
+      (if Option.some? (World.session_of a.body w) then "%{a.name} is awake."
        else match a.last_seen with
          | Some at -> "%{a.name} was last seen %{at}."
          | None -> "%{a.name} has not been seen yet.");
-    world.tell body "%{seen}\n%{_text w body a.body false}" w
+    World.tell body "%{seen}\n%{_text w body a.body false}" w
   )
 
 let _or_none xs = if xs == [] then "nothing" else String.join ", " xs
 
 -- What the driver knows of an object: for builders, who need to see what
 -- the text of a room does not say.
-let _examine body words (w: world.World) = (
+let _examine body words (w: World.World) = (
   let here = room_of body w;
   let found =
-    if words == "" then parse.Found here else parse.resolve w body here (String.words words);
+    if words == "" then Parse.Found here else Parse.resolve w body here (String.words words);
   match found with
-  | parse.Found id -> (
-    match world.instance id w with
-    | None -> world.tell body "There is no %{id}." w
+  | Parse.Found id -> (
+    match World.instance id w with
+    | None -> World.tell body "There is no %{id}." w
     | Some i -> (
       let props =
         (match i.object.props with
@@ -748,31 +749,31 @@ let _examine body words (w: world.World) = (
         [
           "%{i.id}: %{short_of i.id w}",
           "  in: %{Option.default "nothing" i.env}",
-          "  holds: %{_or_none (world.contents i.id w)}",
+          "  holds: %{_or_none (World.contents i.id w)}",
           "  made by: %{Option.default "the driver" i.creator}, %{Option.default "at boot" i.created}",
           "  changed: %{Option.default "never" i.modified}",
           "  props: %{_or_none props}",
-          "  verbs: %{_or_none (List.flatten (List.map (fn (v: core.Verb) -> v.names) i.object.verbs))}",
+          "  verbs: %{_or_none (List.flatten (List.map (fn (v: Core.Verb) -> v.names) i.object.verbs))}",
           "  exits: %{_or_none (Map.keys i.object.exits)}",
           "  details: %{_or_none (Map.keys i.object.details)}"
         ];
-      world.tell body (String.join "\n" lines) w
+      World.tell body (String.join "\n" lines) w
     )
   )
-  | _ -> world.tell body "You don't see a '%{words}' here." w
+  | _ -> World.tell body "You don't see a '%{words}' here." w
 )
 
 -- The blueprint path `/edit` names: the room's, an object's by name, or
 -- one written out, as /home/ann/lamp.
-let _edit_target body words (w: world.World) = (
+let _edit_target body words (w: World.World) = (
   let here = room_of body w;
-  if words == "" || words == "here" then Ok (world.blueprint_of here)
+  if words == "" || words == "here" then Ok (World.blueprint_of here)
   else if String.starts_with? "/" words then
     Ok
       (if String.ends_with? ".wand" words then String.slice 0 (String.length words - 5) words
       else words)
-  else match parse.resolve w body here (String.words words) with
-    | parse.Found id -> Ok (world.blueprint_of id)
+  else match Parse.resolve w body here (String.words words) with
+    | Parse.Found id -> Ok (World.blueprint_of id)
     | _ -> Error "You don't see a '%{words}' here."
 )
 
@@ -791,15 +792,15 @@ let _editor_state path lines here evaluating =
 let _open_editor body state opened (tx: Tx) =
   let here = room_of body tx.w;
   if _editor? here then
-    verb_with here body core.Parsed(verb = "open", rest = JSON.stringify state) tx
+    verb_with here body Core.Parsed(verb = "open", rest = JSON.stringify state) tx
   else (
-    let id = "%{editor_bp}#%{world.next_number editor_bp tx.w}";
+    let id = "%{editor_bp}#%{World.next_number editor_bp tx.w}";
     tx
     |> _create id editor_bp (Some state) None
-    |> change (world.set_made id (Some body) (Some tx.at) None)
-    |> _event world.Event(at = "", event = "spawn", actor = body, object = Some id)
+    |> change (World.set_made id (Some body) (Some tx.at) None)
+    |> _event World.Event(at = "", event = "spawn", actor = body, object = Some id)
     |> _tell_room here body "%{short_of body tx.w} leaves for the editor."
-    |> change (world.tell body opened)
+    |> change (World.tell body opened)
     |> _move (ctx_for tx.w body body) body id
   )
 
@@ -815,19 +816,19 @@ let _eval_buffer body (tx: Tx) =
 -- own, or, from inside one, the same editor on another file.
 let _edit body words (tx: Tx) =
   match _edit_target body words tx.w with
-  | Error why -> change (world.tell body why) tx
-  | Ok path -> if !(files.valid? path) then
+  | Error why -> change (World.tell body why) tx
+  | Ok path -> if !(Files.valid? path) then
       change
-        (world.tell body "'%{path}' is not a mudlib path. One looks like /home/ann/lamp.")
+        (World.tell body "'%{path}' is not a mudlib path. One looks like /home/ann/lamp.")
         tx
     else if !(may_edit? body path tx.w) then
       change
-        (world.tell
+        (World.tell
           body
           "You may not edit %{path}. A builder edits the files in /home/<name>/.")
         tx
     else (
-      let text = files.read tx.w.lib_root path;
+      let text = Files.read tx.w.lib_root path;
       let lines =
         (match text with
          | Some t -> String.lines t
@@ -842,27 +843,27 @@ let _edit body words (tx: Tx) =
 -- /update: load a file's new code, for a blueprint the player may edit.
 let _update body words (tx: Tx) =
   match _edit_target body words tx.w with
-  | Error why -> change (world.tell body why) tx
-  | Ok path -> if !(files.valid? path) then
-      change (world.tell body "'%{path}' is not a mudlib path.") tx
+  | Error why -> change (World.tell body why) tx
+  | Ok path -> if !(Files.valid? path) then
+      change (World.tell body "'%{path}' is not a mudlib path.") tx
     else if !(may_edit? body path tx.w) then
-      change (world.tell body "You may not update %{path}.") tx
+      change (World.tell body "You may not update %{path}.") tx
     else update body path tx
 
 -- The instances /reset names: here, me, an object by name, an instance id,
 -- or a blueprint path for every instance of it.
-let _reset_targets body words (w: world.World) = (
+let _reset_targets body words (w: World.World) = (
   let here = room_of body w;
   if words == "" then Error "Reset what? Name an object, here, me, or a path."
   else if words == "here" then Ok [here]
   else if words == "me" then Ok [body]
   else if String.starts_with? "/" words then
     if String.contains? "#" words then
-      if Option.some? (world.instance words w) then Ok [words]
+      if Option.some? (World.instance words w) then Ok [words]
       else Error "There is no %{words}."
-    else Ok (world.instances_of words w)
-  else match parse.resolve w body here (String.words words) with
-    | parse.Found id -> Ok [id]
+    else Ok (World.instances_of words w)
+  else match Parse.resolve w body here (String.words words) with
+    | Parse.Found id -> Ok [id]
     | _ -> Error "You don't see a '%{words}' here."
 )
 
@@ -870,15 +871,15 @@ let _reset_targets body words (w: world.World) = (
 -- body.
 let _reset body words (tx: Tx) =
   match _reset_targets body words tx.w with
-  | Error why -> change (world.tell body why) tx
-  | Ok [] -> change (world.tell body "There is nothing to reset.") tx
+  | Error why -> change (World.tell body why) tx
+  | Ok [] -> change (World.tell body "There is nothing to reset.") tx
   | Ok ids -> (
     let refused =
       List.filter
-        (fn id -> id != body && !(may_edit? body (world.blueprint_of id) tx.w))
+        (fn id -> id != body && !(may_edit? body (World.blueprint_of id) tx.w))
         ids;
     if refused != [] then
-      change (world.tell body "You may not reset %{String.join ", " refused}.") tx
+      change (World.tell body "You may not reset %{String.join ", " refused}.") tx
     else reset body ids tx
   )
 
@@ -890,7 +891,7 @@ let _command_line sid body at line (tx: Tx) =
     let verb = String.lower (Option.default "" (String.word 0 full));
     let logged =
       _event
-        world.Event(
+        World.Event(
           at = at,
           event = "command",
           actor = body,
@@ -904,7 +905,7 @@ let _command_line sid body at line (tx: Tx) =
         tx;
     match verb with
     | "/quit" ->
-      logged |> change (world.tell body "Goodbye.") |> change (world.close_soon sid)
+      logged |> change (World.tell body "Goodbye.") |> change (World.close_soon sid)
     | "/who" -> (
       match String.word 1 full with
       | Some name -> change (_who_is body name) logged
@@ -922,8 +923,8 @@ let _command_line sid body at line (tx: Tx) =
     | "/sethome" -> (
       let room = room_of body tx.w;
       logged
-      |> change (world.set_home body room)
-      |> change (world.tell body "%{short_of room tx.w} is your home now.")
+      |> change (World.set_home body room)
+      |> change (World.tell body "%{short_of room tx.w} is your home now.")
     )
     | _ -> command body full logged
   )
@@ -931,8 +932,8 @@ let _command_line sid body at line (tx: Tx) =
 -- The input hook of the room `body` is in, when it takes `line`: every
 -- line while the room takes raw text, as the editor does after `a`, and
 -- otherwise every line but a driver command.
-let _input_of body line (w: world.World) =
-  match world.instance (room_of body w) w with
+let _input_of body line (w: World.World) =
+  match World.instance (room_of body w) w with
   | None -> None
   | Some i -> (
     match i.object.input with
@@ -959,14 +960,14 @@ let _play sid body at line (tx: Tx) =
 
 -- A line from a session that has not logged in goes to /std/login, whole.
 let _to_login sid line (tx: Tx) =
-  match world.instance login_id tx.w with
+  match World.instance login_id tx.w with
   | None -> tx
   | Some i -> (
     match i.object.input with
     | None -> tx
     | Some f -> (
       let ctx =
-        core.Context(
+        Core.Context(
           self = login_id,
           actor = sid,
           here = login_id,
@@ -977,11 +978,11 @@ let _to_login sid line (tx: Tx) =
     )
   )
 
-let run_input (i: world.Input) (tx: Tx) =
+let run_input (i: World.Input) (tx: Tx) =
   match i with
-  | world.Connect sid _ -> verb login_id sid "connect" tx
-  | world.Line sid at line -> (
-    match world.session sid tx.w with
+  | World.Connect sid _ -> verb login_id sid "connect" tx
+  | World.Line sid at line -> (
+    match World.session sid tx.w with
     | None -> tx
     -- A session that is closing, after /quit say, runs nothing more: the
     -- reader may have queued lines the client sent after it.
@@ -992,12 +993,12 @@ let run_input (i: world.Input) (tx: Tx) =
       | Some body -> _play sid body at line tx
     )
   )
-  | world.Gone sid _ body -> (
+  | World.Gone sid _ body -> (
     match body with
     | Some b ->
       tx
       |> _tell_room (room_of b tx.w) b "%{short_of b tx.w} falls asleep."
-      |> change (world.seen b tx.at)
+      |> change (World.seen b tx.at)
     | None -> verb login_id sid "done" tx
   )
 
@@ -1012,11 +1013,11 @@ let boot state at =
 -- and taken off the queue in the same update, so a session can see when
 -- the driver has finished with everything it sent.
 let step state =
-  let (w: world.World) = Shared.get state;
+  let (w: World.World) = Shared.get state;
   List.each
     (fn i ->
-      let tx = run_input i (begin (Shared.get state) (world.at_of i));
-      Shared.update state (fn cur -> world.dequeued 1 (commit tx cur)))
+      let tx = run_input i (begin (Shared.get state) (World.at_of i));
+      Shared.update state (fn cur -> World.dequeued 1 (commit tx cur)))
     w.inputs
 
 -- ── Snapshots ──────────────────────────────────────────────────────────
@@ -1027,10 +1028,10 @@ let step state =
 -- through a change. A `save` that faults is logged, and that object is
 -- left out of the file.
 let snapshot! state path at = (
-  let (w: world.World) = Shared.get state;
+  let (w: World.World) = Shared.get state;
   let results =
     List.filter_map
-      (fn (i: world.Instance) -> match i.saved with
+      (fn (i: World.Instance) -> match i.saved with
         | Some _ -> None
         | None -> Some (
           i.id,
@@ -1045,35 +1046,35 @@ let snapshot! state path at = (
         )
       )
       (Map.values w.instances);
-  let kept (cur: world.World) =
+  let kept (cur: World.World) =
     List.fold_left
       (fn acc (id, r) -> match r with
-        | Ok j -> world.keep_saved id j acc
+        | Ok j -> World.keep_saved id j acc
         | Error why ->
-          world.emit
-            world.Event(at = at, event = "fault", actor = id, text = Some "save: %{why}")
+          World.emit
+            World.Event(at = at, event = "fault", actor = id, text = Some "save: %{why}")
             acc
       )
       cur
       results;
-  Shared.update state (fn cur -> world.snapshot_taken (kept cur));
-  snapshot.write! path (snapshot.of_world (Shared.get state))
+  Shared.update state (fn cur -> World.snapshot_taken (kept cur));
+  Snapshot.write! path (Snapshot.of_world (Shared.get state))
 )
 
 -- Bring back what a snapshot kept: the accounts, then every object, made
 -- again by its blueprint's `create` from its saved state.
-let restore state (f: snapshot.File) at =
+let restore state (f: Snapshot.File) at =
   let accounts =
     List.fold_left
-      (fn t (a: world.Account) -> change (world.add_account a) t)
+      (fn t (a: World.Account) -> change (World.add_account a) t)
       (begin (Shared.get state) at)
       f.accounts;
   let tx =
     List.fold_left
-      (fn t (s: snapshot.Saved) -> t
+      (fn t (s: Snapshot.Saved) -> t
       |> _create s.id s.blueprint (Some s.state) s.env
-      |> change (world.set_made s.id s.creator s.created s.modified)
-      |> change (world.keep_saved s.id s.state))
+      |> change (World.set_made s.id s.creator s.created s.modified)
+      |> change (World.keep_saved s.id s.state))
       accounts
       f.instances;
   Shared.update state (commit tx)
@@ -1082,15 +1083,15 @@ let restore state (f: snapshot.File) at =
 -- `wmd init` makes the first admin.
 let make_account state name typed role at =
   let t = begin (Shared.get state) at;
-  let body = "%{player_bp}#%{world.next_number player_bp t.w}";
+  let body = "%{player_bp}#%{World.next_number player_bp t.w}";
   let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
-  let hashed = password.hash t.w.pepper (Random.hex 32) typed;
+  let hashed = Password.hash t.w.pepper (Random.hex 32) typed;
   let tx =
     t
     |> _ensure arrival
     |> _create body player_bp (Some saved) (Some arrival)
     |> change
-      (world.add_account world.Account(
+      (World.add_account World.Account(
         name = name,
         body = body,
         password = hashed,

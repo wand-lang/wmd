@@ -10,20 +10,20 @@ import Path
 import Shared
 import String
 
-let world = import ./world
+import ./World
 
 -- One event as one line of JSON. A field that is None is left out.
-let line (e: world.Event) = "%{JSON.stringify (world.Event.encoder e)}\n"
+let line (e: World.Event) = "%{JSON.stringify (World.Event.encoder e)}\n"
 
 -- The file for the day of the event, such as logs/2026-10-02.jsonl.
-let file dir (e: world.Event) =
+let file dir (e: World.Event) =
   Path.join dir (Path.of_string "%{String.slice 0 10 e.at}.jsonl")
 
 -- One append is one write, so lines from two events never interleave.
-let append! dir (e: world.Event) = FS.append! (file dir e) (line e)
+let append! dir (e: World.Event) = FS.append! (file dir e) (line e)
 
 -- Write the events not yet logged. They are taken out in one step: the
 -- update answers the world before it emptied them.
 let flush! state dir =
-  let (before: world.World) = Shared.update state world.all_logged;
+  let (before: World.World) = Shared.update state World.all_logged;
   List.each (fn e -> append! dir e) before.events

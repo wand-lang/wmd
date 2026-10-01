@@ -3,7 +3,7 @@ uses {FS.Read, FS.Write}
 -- /eval: an expression, run as mudlib code runs.
 --
 -- The expression becomes the body of `run ctx`, in a module written for it
--- that implements core.Evaluation. The module is checked first, which
+-- that implements Core.Evaluation. The module is checked first, which
 -- gives the expression's type, and then loaded as a mudlib file is: held
 -- to the effects `evaluate` allows. A list of actions comes back as
 -- actions; anything else comes back as text, with its type.
@@ -16,7 +16,7 @@ import Result
 import String
 import Wand
 
-let core = import ../lib/std/core
+let Core = import ../lib/std/core
 
 -- The lines before the expression, which it is indented under: the pure
 -- standard modules, Random, which mudlib code may use, and the contract.
@@ -29,9 +29,9 @@ let _head core_path = [
   "import Random",
   "import Result",
   "import String",
-  "let core = import %{core_path}",
+  "let Core = import %{core_path}",
   "",
-  "let run (ctx: core.Context) = ("
+  "let run (ctx: Core.Context) = ("
 ]
 
 let _indent expr = String.join "\n" (List.map (fn l -> "  %{l}") (String.lines expr))
@@ -57,9 +57,9 @@ let _quoted s = String.replace `"` `\"` (String.replace `\` `\\` s)
 -- The module for `expr`, whose result has type `t`.
 let source core_path expr t =
   let evaluate =
-    if t == "List Action" then "core.Acts (run ctx)"
-    else "core.Shown \"\%{run ctx} : %{_quoted t}\"";
-  "%{_body core_path expr}\nimplement core.Evaluation =\n  let evaluate ctx = %{evaluate}\n"
+    if t == "List Action" then "Core.Acts (run ctx)"
+    else "Core.Shown \"\%{run ctx} : %{_quoted t}\"";
+  "%{_body core_path expr}\nimplement Core.Evaluation =\n  let evaluate ctx = %{evaluate}\n"
 
 -- What the check found wrong with the expression, each error at its line
 -- in the expression rather than in the module written for it. An error
@@ -95,7 +95,7 @@ let load (lib: Path) expr = (
           match FS.write_file file (source core_path expr (result_type t)) with
           | Error why -> Error [why]
           | Ok _ ->
-            Result.map_error (fn why -> [why]) (Wand.load core.Evaluation.loader file)
+            Result.map_error (fn why -> [why]) (Wand.load Core.Evaluation.loader file)
         )
         | ([], None) -> Error ["the expression has no type"]
         | (errors, _) -> Error errors

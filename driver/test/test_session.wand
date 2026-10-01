@@ -15,28 +15,28 @@ import Shared
 import String
 
 let {test, group} = import Test
-let mudlib = import ../mudlib
-let engine = import ../engine
-let session = import ../session
-let world = import ../world
+import ../Mudlib
+import ../Engine
+import ../Session
+import ../World
 
 -- A new world, with the mudlib in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = world.World(world.with_pepper "test pepper", lib = (mudlib.load_all! ./lib).lib)
+let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
 
 let at = "2026-09-30T12:00:00Z"
 
 -- What each connection was sent, as lines, and the world after every
 -- session has ended.
-type Run(sent: Map (List String), after: world.World)
+type Run(sent: Map (List String), after: World.World)
 
 let _lines text = List.filter (fn l -> l != "") (String.split "\r\n" text)
 
 -- The listener and the driver loop, side by side. The loop stops when every
 -- connection has ended.
 let _serve! state = Par.all! [
-  fn () -> Net.listen :4000 |> Par.each_stream 8 (session.serve state),
-  fn () -> Clock.every 10ms (fn () -> engine.step state)
+  fn () -> Net.listen :4000 |> Par.each_stream 8 (Session.serve state),
+  fn () -> Clock.every 10ms (fn () -> Engine.step state)
 ]
 
 -- Serve one fake connection per script. `write_ok` false makes every write
@@ -45,7 +45,7 @@ let run! scripts write_ok =
   with Shared.make start as state ->
   with Shared.make scripts as input ->
   with Shared.make Map.empty as sent -> (
-    engine.boot state at;
+    Engine.boot state at;
     handle _serve! state with
     | Net!listen _ k -> k (Map.keys scripts)
     | Net!read_line conn k -> (
@@ -95,7 +95,7 @@ group "one session" (fn () -> [
   test "every step is logged" (fn t ->
     t.eq
       ["spawn", "connect", "signup", "login", "command", "disconnect"]
-      (List.map (fn (e: world.Event) -> e.event) (one! ["look"]).after.events))
+      (List.map (fn (e: World.Event) -> e.event) (one! ["look"]).after.events))
 ])
 
 group "two sessions" (fn () -> [
@@ -112,7 +112,7 @@ group "two sessions" (fn () -> [
 -- session, this would never finish, so a deadline guards it.
 let dropped! () =
   with Shared.make start as state -> (
-    engine.boot state at;
+    Engine.boot state at;
     let _ =
       Par.timeout 5s (fn () ->
         handle _serve! state with
