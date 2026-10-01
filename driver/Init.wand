@@ -88,7 +88,8 @@ let run! (o: InitOpts) =
           World.World(
             World.with_pepper (_pepper ()),
             lib_root = o.lib,
-            lib = (Mudlib.load_all! o.lib).lib
+            lib = (Mudlib.load_all! o.lib).lib,
+            help = Mudlib.help! o.lib
           );
         with Shared.make start as state -> (
           Engine.boot state at;

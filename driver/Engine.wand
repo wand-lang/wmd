@@ -21,6 +21,7 @@ import Map
 
 import Option
 import Random
+import Regex
 import Result
 import Shared
 import Size
@@ -32,6 +33,9 @@ let Core = import ../lib/std/core
 let login_id = "/std/login#0"
 
 let player_bp = "/std/player"
+
+-- Where a body wakes until its account has signed the current rules.
+let rules_hall = "/realm/rules/hall#0"
 
 -- Where every new body first stands.
 let arrival = "/realm/commons/square#0"
@@ -195,6 +199,30 @@ let may_enter? body room (w: World.World) =
   || Option.some? key && (key == owner || List.any? (fn n -> Some n == key) invited)
   || Option.some? key && _exempt? key w
 
+-- The version of the rules: the number after "version" on the first line
+-- of the rules help topic, as 3 in "The rules of WMD, version 3.", and 1
+-- when there is none.
+let rules_version (w: World.World) = (
+  let first =
+    Option.default
+      ""
+      (Option.and_then (fn t -> List.head (String.lines t)) (Map.get "rules" w.help));
+  match Regex.capture r/version (\d+)/ first with
+  | [_, n] -> Result.default 1 (String.to_int n)
+  | _ -> 1
+)
+
+-- Whether the account of `body` has signed the current rules. What the
+-- driver made, with no account, has nothing to sign.
+let signed? body (w: World.World) =
+  match World.account_of body w with
+  | Some a -> (
+    match a.rules with
+    | Some s -> s.version >= rules_version w
+    | None -> false
+  )
+  | None -> true
+
 -- Where a body goes home to: its account's home, or the arrival room when
 -- it has none or its home has closed to it.
 let home_of body (w: World.World) =
@@ -221,6 +249,7 @@ let view (w: World.World) viewer =
     players = fn () -> _players w,
     account? = fn name -> Option.some? (World.account name w),
     detail_of = fn id name -> match World.instance id w with
+      | Some i when i.held -> None
       | Some i ->
         _bounded None (fn () -> Option.map (fn f -> f (_seen w viewer i.id)) (Map.get (String.lower name) i.object.details))
       | None -> None,
@@ -229,7 +258,8 @@ let view (w: World.World) viewer =
       | None -> None,
     awake? = fn id -> Option.some? (World.session_of id w),
     home_of = fn id -> home_of id w,
-    may_enter? = fn b r -> may_enter? b (World.resolve r) w
+    may_enter? = fn b r -> may_enter? b (World.resolve r) w,
+    help_of = fn topic -> Map.get topic w.help
   )
 -- The context of an object being looked at by `viewer`.
 and _seen (w: World.World) viewer id =
@@ -237,6 +267,7 @@ and _seen (w: World.World) viewer id =
 and _text (w: World.World) viewer id short =
   match World.instance id w with
   | None -> "nothing"
+  | Some i when i.held -> "something waiting for an admin"
   | Some i ->
     _bounded
       "something that is not working"
@@ -384,6 +415,8 @@ let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
   | Core.Save path _ -> _may_file ctx path w
   | Core.Draft path _ -> _may_file ctx path w
   | Core.Run _ -> if _editor? ctx.self then Ok() else Error "only %{editor_bp} may run source"
+  | Core.Acknowledge body -> if String.starts_with? "/realm/rules/" ctx.self && body == ctx.actor then Ok()
+    else Error "only /realm/rules may say the rules were signed"
 
 -- ── Capacity and Inspiration ───────────────────────────────────────────
 
@@ -656,6 +689,7 @@ and _do (ctx: Core.Context) payer (a: Core.Action) (tx: Tx) =
   | Core.Save path source -> _save ctx path source tx
   | Core.Draft path source -> _answer ctx (Files.draft tx.w.lib_root path source) tx
   | Core.Run source -> eval ctx.actor source tx
+  | Core.Acknowledge body -> _signed body tx
 
 -- Save, and write the list of blueprints again, so a new one loads at
 -- the next start.
@@ -804,6 +838,8 @@ and _apply (ctx: Core.Context) (r: Core.Reply) (tx: Tx) = (
 and run (ctx: Core.Context) body (tx: Tx) =
   if _broken? ctx.self tx.w then
     change (World.tell ctx.actor "%{short_of ctx.self tx.w} is not working.") tx
+  else if Option.map (fn (i: World.Instance) -> i.held) (World.instance ctx.self tx.w) == Some true then
+    change (World.tell ctx.actor "That is waiting for an admin.") tx
   else match _call body with
     | Ok r -> tx |> change (World.worked ctx.self) |> apply ctx r
     | Error why -> (
@@ -863,7 +899,11 @@ and look body (tx: Tx) = verb body body "look" tx
 and login sid name typed (tx: Tx) =
   match World.account name tx.w with
   | Some acct when Password.matches? tx.w.pepper acct.password typed ->
-    if Option.some? (World.session_of acct.body tx.w) then
+    if acct.paused then
+      tx
+      |> _event (World.Event(at = "", event = "login_paused", actor = sid, name = Some acct.name))
+      |> change (World.tell sid "An admin has paused %{acct.name}. What is your name?")
+    else if Option.some? (World.session_of acct.body tx.w) then
       change (World.tell sid "%{acct.name} is here already. What is your name?") tx
     else _wake sid acct.name acct.body "%{acct.name} wakes up." tx
   | _ ->
@@ -881,22 +921,48 @@ and register sid name typed (tx: Tx) =
     let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
     let hashed = Password.hash tx.w.pepper (Random.hex 32) typed;
     tx
-    |> _ensure arrival
-    |> _create body player_bp (Some saved) (Some arrival) (Some (String.lower name))
+    |> _ensure rules_hall
+    |> _create body player_bp (Some saved) (Some rules_hall) (Some (String.lower name))
     |> change (World.add_account (World.Account(name = name, body = body, password = hashed)))
-    |> _hook "enter" arrival body body
+    |> _hook "enter" rules_hall body body
     |> _event (World.Event(at = "", event = "signup", actor = sid, name = Some name, object = Some body))
     |> _wake sid name body "%{name} arrives."
   )
 
+-- Attach a session to its body. A body whose account has not signed the
+-- current rules wakes in the Rules Hall, and notices kept while it slept
+-- are told.
 and _wake sid name body news (tx: Tx) =
-  tx
-  |> change (World.attach sid body)
-  |> verb login_id sid "done"
-  |> _event (World.Event(at = "", event = "login", actor = sid, name = Some name, object = Some body))
-  |> change (World.tell body "Hello, %{name}.")
-  |> _tell_room (room_of body tx.w) body news
-  |> look body
+  let (woke: Tx) =
+    tx
+    |> change (World.attach sid body)
+    |> verb login_id sid "done"
+    |> _event (World.Event(at = "", event = "login", actor = sid, name = Some name, object = Some body))
+    |> change (World.tell body "Hello, %{name}.")
+    |> _to_hall body;
+  woke |> _tell_room (room_of body woke.w) body news |> _tell_notices body |> look body
+
+and _to_hall body (tx: Tx) =
+  if signed? body tx.w || room_of body tx.w == rules_hall then tx
+  else tx |> _ensure rules_hall |> change (World.move body rules_hall)
+
+and _tell_notices body (tx: Tx) =
+  match World.account_of body tx.w with
+  | Some a when a.notices != [] ->
+    tx |> change (World.tell body (String.join "\n" a.notices)) |> change (World.noticed a.name)
+  | _ -> tx
+
+-- A body signed the current rules: keep that on its account, and take the
+-- body to the Commons, which hears it arrive.
+and _signed body (tx: Tx) =
+  match World.account_of body tx.w with
+  | None -> tx
+  | Some a ->
+    tx
+    |> change (World.sign a.name (rules_version tx.w) tx.w.now)
+    |> _event World.Event(at = "", event = "signed", actor = body, text = Some "version %{rules_version tx.w}")
+    |> _tell_room arrival body "%{short_of body tx.w} arrives."
+    |> _move (ctx_for tx.w body body) body arrival
 
 and _tell_room room except text (tx: Tx) =
   List.fold_left
@@ -1333,13 +1399,328 @@ let _set_locked body words locked (tx: Tx) = (
       tx
 )
 
+-- ── Flags ──────────────────────────────────────────────────────────────
+
+-- How many different people flag a room or a thing before it is taken
+-- out of view to wait for an admin.
+let flags_to_hold = 3
+
+let _admin? body (w: World.World) =
+  match World.account_of body w with
+  | Some a -> a.role == "admin"
+  | None -> false
+
+-- What a room or a thing was when it was flagged: its text, and its file.
+-- Its own text, even when it is held, so an admin sees what was there.
+let _evidence id (w: World.World) =
+  match World.instance id w with
+  | None -> "(it is gone)"
+  | Some i -> (
+    let ctx = _seen w id id;
+    let bp = i.blueprint;
+    let source = Option.default "(there is no file)" (Files.read w.lib_root bp);
+    `%{_bounded "(its short text faults)" (fn () -> i.object.short ctx)}
+%{_bounded "(its long text faults)" (fn () -> i.object.long ctx)}
+
+--- %{bp}.wand ---
+%{source}`
+  )
+
+-- What a flag is about, in words.
+let _about (f: World.Flag) =
+  if f.kind == "person" then f.target else "%{f.kind} %{f.target}"
+
+-- Take a room or a thing out of view once enough different people have
+-- flagged it: a room is made private, and a thing is held.
+let _hold_if_flagged (f: World.Flag) (tx: Tx) = (
+  let by =
+    List.unique (List.map (fn (g: World.Flag) -> g.by) (World.open_flags f.target tx.w));
+  let held =
+    (if List.length by < flags_to_hold then None
+     else match World.instance f.target tx.w with
+       | Some i when f.kind == "room" && i.public -> Some (
+         World.set_public f.target false,
+         "is private until an admin has looked at it"
+       )
+       | Some i when f.kind == "object" && !i.held -> Some (
+         World.set_held f.target true,
+         "is out of view until an admin has looked at it"
+       )
+       | _ -> None);
+  match held with
+  | None -> tx
+  | Some(hold, why) -> (
+    let told =
+      (match f.owner with
+       | Some o -> change (World.notice o "Your %{f.kind} %{f.target} %{why}.") tx
+       | None -> tx);
+    told
+    |> change hold
+    |> _event World.Event(
+      at = "",
+      event = "held",
+      actor = f.target,
+      text = Some "%{List.length by} flags"
+    )
+  )
+)
+
+-- Keep a flag. The flagger is thanked; a builder is told what was flagged
+-- and why, and never who flagged it.
+let _file_flag body kind target owner reason evidence (tx: Tx) =
+  match _key_of body tx.w with
+  | None -> tx
+  | Some by -> (
+    let f =
+      World.Flag(
+        id = List.length tx.w.flags + 1,
+        by = by,
+        kind = kind,
+        target = target,
+        owner = owner,
+        reason = reason,
+        at = tx.w.now,
+        evidence = evidence
+      );
+    let filed =
+      tx
+      |> change (World.add_flag f)
+      |> _event World.Event(
+        at = "",
+        event = "flag",
+        actor = body,
+        object = Some target,
+        text = Some "#%{f.id} %{kind}: %{reason}"
+      )
+      |> change (World.tell body "Thank you. An admin will look at it.");
+    let told =
+      (match owner with
+       | Some o when kind != "person" ->
+         change
+           (World.notice
+             o
+             "Your %{kind} %{target} was flagged: %{reason}. An admin will look at it.")
+           filed
+       | _ -> filed);
+    _hold_if_flagged f told
+  )
+
+-- What follows the first word of `words`.
+let _rest_of words =
+  String.trim
+    (String.slice
+      (String.length (Option.default "" (String.word 0 words)))
+      (String.length words)
+      words)
+
+-- /flag here <why>, and /flag <thing> <why>.
+let _flag body words (tx: Tx) = (
+  let here = room_of body tx.w;
+  let reason = _rest_of words;
+  match String.word 0 words with
+  | None ->
+    change
+      (World.tell body "Flag what, and why? /flag here <why>, or /flag <thing> <why>.")
+      tx
+  | Some first -> (
+    let found =
+      if first == "here" then Parse.Found here else Parse.resolve tx.w body here [first];
+    match found with
+    | Parse.Found id -> if player? id then
+        change (World.tell body "To tell the admins about a person, /report them.") tx
+      else if reason == "" then change (World.tell body "Say why: /flag %{first} <why>.") tx
+      else (
+        let kind = if World.env_of id tx.w == None then "room" else "object";
+        let evidence = _evidence id tx.w;
+        _file_flag body kind id (World.owner_of id tx.w) reason evidence tx
+      )
+    | _ -> change (World.tell body "You don't see a '%{first}' here.") tx
+  )
+)
+
+-- /report <name> <why>: a person's behavior, with the last lines they said.
+let _report body words (tx: Tx) = (
+  let reason = _rest_of words;
+  match String.word 0 words with
+  | Some name when reason != "" -> (
+    match World.account name tx.w with
+    | None -> change (World.tell body "There is no one called %{name}.") tx
+    | Some a -> (
+      let lines = Option.default [] (Map.get a.body tx.w.said);
+      let evidence = if lines == [] then "(nothing said lately)" else String.join "\n" lines;
+      let key = String.lower a.name;
+      _file_flag body "person" key (Some key) reason evidence tx
+    )
+  )
+  | _ -> change (World.tell body "Report whom, and why? /report <name> <why>.") tx
+)
+
+-- /flags: the open flags, or one flag whole.
+let _flags body words (w: World.World) =
+  if !(_admin? body w) then World.tell body "Only an admin reviews flags." w
+  else if words == "" then (
+    let open = List.filter (fn (f: World.Flag) -> f.open) w.flags;
+    if open == [] then World.tell body "No flags are open." w
+    else
+      World.tell
+        body
+        (String.join
+          "\n"
+          (List.map
+            (fn (f: World.Flag) -> "#%{f.id} %{_about f}, by %{f.by} at %{f.at}: %{f.reason}")
+            open))
+        w
+  )
+  else match Option.and_then (fn n -> World.flag n w) (Result.to_option (String.to_int words)) with
+    | None -> World.tell body "There is no flag #%{words}." w
+    | Some f ->
+      (World.tell
+        body
+        `#%{f.id} %{_about f}, owned by %{Option.default "the admins" f.owner}
+Flagged by %{f.by} at %{f.at}: %{f.reason}
+%{Option.default "Open." (Option.map (fn r -> "Resolved: %{r}") f.resolution)}
+
+%{f.evidence}`
+        w)
+
+-- Close a flag, and let a held thing back into view when no flag on it is
+-- open any more.
+let _close body (f: World.Flag) resolution told (tx: Tx) =
+  let closed =
+    tx
+    |> change (World.resolve_flag f.id resolution)
+    |> _event World.Event(
+      at = "",
+      event = "resolve",
+      actor = body,
+      object = Some f.target,
+      text = Some "#%{f.id} %{resolution}"
+    )
+    |> change (World.tell body told);
+  if f.kind == "object" && World.open_flags f.target closed.w == [] then
+    change (World.set_held f.target false) closed
+  else closed
+
+-- Pause an account: it may not log in, and its session ends.
+let _pause name why (tx: Tx) =
+  match World.account name tx.w with
+  | None -> tx
+  | Some a -> (
+    let paused = change (World.set_paused a.name true) tx;
+    match World.session_of a.body tx.w with
+    | Some s ->
+      paused
+      |> change (World.tell a.body "An admin has paused your account: %{why}")
+      |> change (World.close_soon s.id)
+    | None -> paused
+  )
+
+-- /resolve <n> <how> [note].
+let _resolve body words (tx: Tx) = (
+  let usage = "Resolve how? /resolve <number> dismiss, private, remove, warn or pause, and a note if you like.";
+  if !(_admin? body tx.w) then change (World.tell body "Only an admin resolves flags.") tx
+  else match String.words words with
+    | n :: how :: rest -> (
+      let note = String.join " " rest;
+      let said = if note == "" then how else "%{how}: %{note}";
+      let why = if note == "" then "" else " %{note}";
+      match Option.and_then (fn k -> World.flag k tx.w) (Result.to_option (String.to_int n)) with
+      | None -> change (World.tell body "There is no flag #%{n}.") tx
+      | Some f when !f.open ->
+        change (World.tell body "Flag #%{f.id} is resolved already: %{Option.default "" f.resolution}.") tx
+      | Some f -> (
+        -- A flag's owner is the person reported, or the owner of the work.
+        match (how, f.owner) with
+        | ("dismiss", _) -> _close body f said "Flag #%{f.id} dismissed." tx
+        | ("private", _) -> if f.kind != "room" then
+            change (World.tell body "Only a room is made private.") tx
+          else
+            tx
+            |> change (World.set_public f.target false)
+            |> (match f.owner with
+              | Some o -> change (World.notice o "An admin made your room %{f.target} private: %{f.reason}.%{why}")
+              | None -> fn t -> t)
+            |> _close body f said "%{f.target} is private now."
+        | ("remove", _) -> if f.kind != "object" then
+            change (World.tell body "Only a thing is removed. A room is made private.") tx
+          else if List.any? player? (World.contents f.target tx.w) then
+            change (World.tell body "A player is in %{f.target}; it stays.") tx
+          else (
+            let removed =
+              tx
+              |> change (World.remove f.target)
+              |> (match f.owner with
+                | Some o -> change (World.notice o "An admin removed your object %{f.target}: %{f.reason}.%{why}")
+                | None -> fn t -> t);
+            List.fold_left
+              (fn acc (g: World.Flag) -> _close body g said "Flag #%{g.id} resolved." acc)
+              removed
+              (World.open_flags f.target removed.w)
+          )
+        | ("warn", Some o) ->
+          tx
+          |> change (World.notice o "An admin warns you about %{_about f}: %{f.reason}.%{why}")
+          |> _close body f said "%{o} is warned."
+        | ("pause", Some o) ->
+          tx
+          |> _pause o "%{f.reason}.%{why}"
+          |> _event World.Event(at = "", event = "pause", actor = body, name = Some o)
+          |> _close body f said "%{o} is paused. /unpause %{o} lets them back."
+        | ("warn", None) -> change (World.tell body "The admins own %{f.target}; there is no one to warn.") tx
+        | ("pause", None) -> change (World.tell body "The admins own %{f.target}; there is no one to pause.") tx
+        | _ -> change (World.tell body usage) tx
+      )
+    )
+    | _ -> change (World.tell body usage) tx
+)
+
+-- /pause <name> and /unpause <name>, for an admin.
+let _set_paused body words paused (tx: Tx) =
+  if !(_admin? body tx.w) then
+    change (World.tell body "Only an admin pauses an account.") tx
+  else match World.account words tx.w with
+    | None -> change (World.tell body "There is no one called %{words}.") tx
+    | Some a -> (
+      let changed =
+        if paused then _pause a.name "an admin will tell you why." tx
+        else change (World.set_paused a.name false) tx;
+      changed
+      |> _event World.Event(
+        at = "",
+        event = if paused then "pause" else "unpause",
+        actor = body,
+        name = Some a.name
+      )
+      |> change
+        (World.tell
+          body
+          (if paused then "%{a.name} is paused." else "%{a.name} may log in again."))
+    )
+
+-- The verbs whose lines a report can show.
+let _speech = ["say", "pose", "semipose"]
+
+-- What a body may do before it has signed the rules: read them, sign
+-- them, or leave.
+let _before_signing = ["look", "l", "read", "sign", "/help", "/quit"]
+
+-- /help: the topics, or one of them.
+let _help body words (w: World.World) = (
+  let topics =
+    "Help topics: %{String.join ", " (List.sort (Map.keys w.help))}. Type /help and a topic.";
+  if words == "" then World.tell body topics w
+  else match Map.get (String.lower words) w.help with
+    | Some text -> World.tell body (String.trim text) w
+    | None -> World.tell body "There is no help on '%{words}'. %{topics}" w
+)
+
 -- A command line from a session that is logged in.
 let _command_line sid body at line (tx: Tx) =
   if line == "" then tx
   else (
     let full = _expand line;
     let verb = String.lower (Option.default "" (String.word 0 full));
-    let logged =
+    let noted =
       _event
         World.Event(
           at = at,
@@ -1353,37 +1734,52 @@ let _command_line sid body at line (tx: Tx) =
             else None
         )
         tx;
-    match verb with
-    | "/quit" ->
-      logged |> change (World.tell body "Goodbye.") |> change (World.close_soon sid)
-    | "/who" -> (
-      match String.word 1 full with
-      | Some name -> change (_who_is body name) logged
-      | None -> change (_who body) logged
-    )
-    | "/examine" -> change (_examine body (_after_verb full)) logged
-    | "/stat" -> _stat body (_after_verb full) logged
-    | "/public" -> _set_public body (_after_verb full) true logged
-    | "/private" -> _set_public body (_after_verb full) false logged
-    | "/invite" -> _invite body (_after_verb full) true logged
-    | "/uninvite" -> _invite body (_after_verb full) false logged
-    | "/lock" -> _set_locked body (_after_verb full) true logged
-    | "/unlock" -> _set_locked body (_after_verb full) false logged
-    | "/edit" -> _edit body (_after_verb full) logged
-    | "/update" -> _update body (_after_verb full) logged
-    | "/reset" -> _reset body (_after_verb full) logged
-    | "/eval" -> (
-      match _after_verb full with
-      | "" -> _eval_buffer body logged
-      | expr -> eval body expr logged
-    )
-    | "/sethome" -> (
-      let room = room_of body tx.w;
-      logged
-      |> change (World.set_home body room)
-      |> change (World.tell body "%{short_of room tx.w} is your home now.")
-    )
-    | _ -> command body full logged
+    -- What a body says is kept for a while, in case someone reports it.
+    let logged =
+      if List.any? (fn v -> v == verb) _speech then change (World.said_by body full) noted
+      else noted;
+    if !(signed? body tx.w) && !(List.any? (fn v -> v == verb) _before_signing) then
+      change
+        (World.tell body "First read the rules on the wall, then sign them: sign rules.")
+        logged
+    else match verb with
+      | "/quit" ->
+        logged |> change (World.tell body "Goodbye.") |> change (World.close_soon sid)
+      | "/who" -> (
+        match String.word 1 full with
+        | Some name -> change (_who_is body name) logged
+        | None -> change (_who body) logged
+      )
+      | "/examine" -> change (_examine body (_after_verb full)) logged
+      | "/stat" -> _stat body (_after_verb full) logged
+      | "/help" -> change (_help body (_after_verb full)) logged
+      | "/flag" -> _flag body (_after_verb full) logged
+      | "/report" -> _report body (_after_verb full) logged
+      | "/flags" -> change (_flags body (_after_verb full)) logged
+      | "/resolve" -> _resolve body (_after_verb full) logged
+      | "/pause" -> _set_paused body (_after_verb full) true logged
+      | "/unpause" -> _set_paused body (_after_verb full) false logged
+      | "/public" -> _set_public body (_after_verb full) true logged
+      | "/private" -> _set_public body (_after_verb full) false logged
+      | "/invite" -> _invite body (_after_verb full) true logged
+      | "/uninvite" -> _invite body (_after_verb full) false logged
+      | "/lock" -> _set_locked body (_after_verb full) true logged
+      | "/unlock" -> _set_locked body (_after_verb full) false logged
+      | "/edit" -> _edit body (_after_verb full) logged
+      | "/update" -> _update body (_after_verb full) logged
+      | "/reset" -> _reset body (_after_verb full) logged
+      | "/eval" -> (
+        match _after_verb full with
+        | "" -> _eval_buffer body logged
+        | expr -> eval body expr logged
+      )
+      | "/sethome" -> (
+        let room = room_of body tx.w;
+        logged
+        |> change (World.set_home body room)
+        |> change (World.tell body "%{short_of room tx.w} is your home now.")
+      )
+      | _ -> command body full logged
   )
 
 -- The input hook of the room `body` is in, when it takes `line`: every
@@ -1533,7 +1929,7 @@ let restore state (f: Snapshot.File) at =
   let accounts =
     List.fold_left
       (fn t (a: World.Account) -> change (World.add_account a) t)
-      (begin (Shared.get state) at)
+      (begin (Shared.get state) at |> change (fn w -> World.World(w, flags = f.flags)))
       f.accounts;
   let tx =
     List.fold_left
@@ -1546,7 +1942,8 @@ let restore state (f: Snapshot.File) at =
           s.id
           (Option.default (_restored_owner f s == None) s.public)
           s.invited
-          s.locked))
+          s.locked)
+      |> change (World.set_held s.id s.held))
       accounts
       f.instances;
   Shared.update state (commit tx)

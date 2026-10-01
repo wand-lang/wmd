@@ -34,6 +34,7 @@ let _changes = [
   line "2000-05-01",
   line "ann-password",
   line "ann-password",
+  line "sign rules",
   line "pull lever",
   line "pull lever"
 ]
@@ -194,4 +195,40 @@ test "brings back which rooms are private, who is invited, and which things are 
         Shared.get state
       );
     t.eq (_access before) (_access (restored! path))
+  ))
+
+test "brings back flags, held things, signings, notices and pauses" (fn t ->
+  with FS.temp_dir "wmd_snap_" as d -> (
+    let path = Path.join d ./world.json;
+    let before =
+      with Shared.make start as state -> (
+        Engine.boot state at;
+        _play state;
+        Shared.update state (fn w ->
+          w
+          |> World.add_flag World.Flag(
+            id = 1,
+            by = "ann",
+            kind = "object",
+            target = "/realm/commons/lever#0",
+            reason = "rude",
+            at = 2026-09-30T12:00:00Z,
+            evidence = "brass lever"
+          )
+          |> World.set_held "/realm/commons/lever#0" true
+          |> World.set_paused "ann" true
+          |> World.notice "ann" "Your lever was flagged.");
+        Engine.snapshot! state path at;
+        Shared.get state
+      );
+    let after = restored! path;
+    let held (w: World.World) =
+      Option.map
+        (fn (i: World.Instance) -> i.held)
+        (World.instance "/realm/commons/lever#0" w);
+    t.eq (before.flags, held before, Map.values before.accounts) (
+      after.flags,
+      held after,
+      Map.values after.accounts
+    )
   ))

@@ -41,7 +41,8 @@ let signed_up sid name = [
   line sid name,
   line sid "2000-05-01",
   line sid "%{name}-password",
-  line sid "%{name}-password"
+  line sid "%{name}-password",
+  line sid "sign rules"
 ]
 
 let ann_in = List.concat (signed_up ann "ann") [World.emptied ann]

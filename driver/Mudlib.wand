@@ -5,7 +5,10 @@ uses {FS.Read}
 -- loads, so a file that fails is left out and says why, and the rest of
 -- the world still starts.
 
+import FS
 import List
+import Path
+import String
 import Map
 import Wand
 
@@ -23,3 +26,16 @@ let load_all! root =
     )
     Loaded()
     (Scan.blueprints! root)
+
+-- The help topics: each text file in the mudlib's help/, by its name, as
+-- rules for help/rules.txt. No help/ is no topics.
+let help! root =
+  let dir = Path.join root ./help;
+  if !(FS.dir? dir) then Map.empty
+  else
+    Map.from_list
+      (List.map
+        (fn f ->
+          let name = Path.to_string (Path.basename f);
+          (String.slice 0 (String.length name - 4) name, FS.read_file! f))
+        (FS.glob_in *.txt dir))

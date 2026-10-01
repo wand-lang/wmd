@@ -28,11 +28,17 @@ type Saved(
   -- when the admins own it.
   public: Option Bool = None,
   invited: List String = [],
-  locked: Bool = true
+  locked: Bool = true,
+  held: Bool = false
 )
 
 -- Version 1 did not keep owners. A file with no version is version 1.
-type File(version: Int = 1, accounts: List World.Account, instances: List Saved)
+type File(
+  version: Int = 1,
+  accounts: List World.Account,
+  instances: List Saved,
+  flags: List World.Flag = []
+)
 
 -- The file for a world whose every instance has its saved state. An
 -- instance with none -- its `save` faulted -- is left out, rather than
@@ -41,6 +47,7 @@ let of_world (w: World.World) =
   File(
     version = 2,
     accounts = Map.values w.accounts,
+    flags = w.flags,
     instances =
       List.filter_map
         (fn (i: World.Instance) -> Option.map
@@ -55,7 +62,8 @@ let of_world (w: World.World) =
             owner = i.owner,
             public = Some i.public,
             invited = i.invited,
-            locked = i.locked
+            locked = i.locked,
+            held = i.held
           ))
           i.saved)
         (Map.values w.instances)

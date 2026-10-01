@@ -6,6 +6,7 @@
 -- pipeline. Session fibers change only their own session, outbox and the
 -- input queue; everything else is changed by the one driver fiber.
 
+import Int
 import JSON
 import List
 import Map
@@ -48,6 +49,9 @@ type Instance(
   public: Bool = false,
   invited: List String = [],
   locked: Bool = true,
+  -- Held for review after enough flags: it shows as waiting for an admin,
+  -- and runs nothing, until an admin resolves its flags.
+  held: Bool = false,
   -- How many of its calls in a row have faulted. It is not saved: a
   -- restart gives every object a new start.
   faults: Int = 0
@@ -61,7 +65,9 @@ type Session(id: String, body: Option String = None, closing: Bool = false)
 -- the room its body goes home to, when not the arrival room, and
 -- `last_seen` when its session last ended. `inspiration` is None until it
 -- first spends or earns any, which is the same as full. `explored` is
--- every room that has given it an exploring bonus, and when.
+-- every room that has given it an exploring bonus, and when. `rules` is
+-- the version of the rules it signed and when. `notices` wait for its next
+-- login. A `paused` account may not log in.
 type Account(
   name: String,
   body: String,
@@ -70,7 +76,29 @@ type Account(
   home: Option String = None,
   last_seen: Option String = None,
   inspiration: Option Inspiration.Inspiration = None,
-  explored: Map DateTime = {}
+  explored: Map DateTime = {},
+  rules: Option Signed = None,
+  notices: List String = [],
+  paused: Bool = false
+)
+
+-- The version of the rules an account signed, and when.
+type Signed(version: Int, at: DateTime)
+
+-- A flag: `by`, an account, says `target` breaks the rules. `kind` is
+-- "room", "object" or "person". `evidence` is what the target was when it
+-- was flagged, so editing it later does not change what an admin sees.
+type Flag(
+  id: Int,
+  by: String,
+  kind: String,
+  target: String,
+  owner: Option String = None,
+  reason: String,
+  at: DateTime,
+  evidence: String,
+  open: Bool = true,
+  resolution: Option String = None
 )
 
 -- What a session hands the driver.
@@ -118,6 +146,13 @@ type World(
   -- The editor as it was before the last /update of it, for an editor that
   -- faults on its new code to go back to.
   editor_before: Option Core.Blueprint = None
+,
+  -- Help topics, by name: the text files in the mudlib's help/.
+  help: Map String = {},
+  -- Every flag, oldest first, open and resolved.
+  flags: List Flag = [],
+  -- The last lines each body said, for a report. They are not saved.
+  said: Map (List String) = {}
 )
 
 let empty =
@@ -445,3 +480,55 @@ let set_access id public invited locked (w: World) =
     id
     (fn i -> Instance(i, public = public, invited = invited, locked = locked))
     w
+
+-- ── The rules, notices and pauses ──────────────────────────────────────
+
+let sign name version at (w: World) =
+  _put_named name (fn a -> Account(a, rules = Some Signed(version, at))) w
+
+-- Tell the account `name` something now if it is awake, and at its next
+-- login if not.
+let notice name text (w: World) =
+  match account name w with
+  | Some a -> if Option.some? (session_of a.body w) then tell a.body text w
+    else add_account Account(a, notices = List.concat a.notices [text]) w
+  | None -> w
+
+-- Take an account's notices out, to tell them.
+let noticed name (w: World) = _put_named name (fn a -> Account(a, notices = [])) w
+
+let set_paused name paused (w: World) =
+  _put_named name (fn a -> Account(a, paused = paused)) w
+
+-- ── Flags ──────────────────────────────────────────────────────────────
+
+-- The most lines kept of what one body said.
+let said_cap = 20
+
+-- Keep a line a body said, for a report.
+let said_by body text (w: World) =
+  let lines = List.concat (Option.default [] (Map.get body w.said)) [text];
+  World(
+    w,
+    said = Map.set body (List.drop (Int.max 0 (List.length lines - said_cap)) lines) w.said
+  )
+
+let add_flag (f: Flag) (w: World) = World(w, flags = List.concat w.flags [f])
+
+let flag n (w: World) = List.find (fn (f: Flag) -> f.id == n) w.flags
+
+let resolve_flag n resolution (w: World) =
+  World(
+    w,
+    flags =
+      List.map
+        (fn (f: Flag) -> if f.id == n then Flag(f, open = false, resolution = Some resolution)
+          else f)
+        w.flags
+  )
+
+-- The open flags on `target`.
+let open_flags target (w: World) =
+  List.filter (fn (f: Flag) -> f.open && f.target == target) w.flags
+
+let set_held id held (w: World) = _put_instance id (fn i -> Instance(i, held = held)) w

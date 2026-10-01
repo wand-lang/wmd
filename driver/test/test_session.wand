@@ -64,7 +64,7 @@ let run! scripts write_ok =
 let sent name (r: Run) = Option.default [] (Map.get name r.sent)
 
 -- The lines that sign up a new account.
-let signup name = [name, "2000-05-01", "%{name}-password", "%{name}-password"]
+let signup name = [name, "2000-05-01", "%{name}-password", "%{name}-password", "sign rules"]
 
 -- Ann signs up, then sends `lines`.
 let one! lines = run! (Map.from_list [("ann", List.concat (signup "ann") lines)]) true
@@ -94,7 +94,7 @@ group "one session" (fn () -> [
   -- The first is the lever the square spawns when the world boots.
   test "every step is logged" (fn t ->
     t.eq
-      ["spawn", "connect", "signup", "login", "command", "disconnect"]
+      ["spawn", "connect", "signup", "login", "command", "signed", "command", "disconnect"]
       (List.map (fn (e: World.Event) -> e.event) (one! ["look"]).after.events))
 ])
 

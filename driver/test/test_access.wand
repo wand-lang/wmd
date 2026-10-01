@@ -50,7 +50,8 @@ let signed_up sid name = [
   line sid name,
   line sid "2000-05-01",
   line sid "%{name}-password",
-  line sid "%{name}-password"
+  line sid "%{name}-password",
+  line sid "sign rules"
 ]
 
 -- Ann in the square and Bo in his private garden, with nothing heard yet.

@@ -61,7 +61,12 @@ let _start! (o: Opts) = (
   List.each
     (fn (path, why) -> IO.println_err "wmd: %{path} did not load: %{why}")
     loaded.failed;
-  World.World(World.with_pepper (Env.get! "WMD_PEPPER"), lib_root = o.lib, lib = loaded.lib)
+  World.World(
+    World.with_pepper (Env.get! "WMD_PEPPER"),
+    lib_root = o.lib,
+    lib = loaded.lib,
+    help = Mudlib.help! o.lib
+  )
 )
 
 -- The driver looks for input every 20ms: nothing can wait on a Shared for

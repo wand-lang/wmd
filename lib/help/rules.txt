@@ -1,0 +1,30 @@
+The rules of WMD, version 1.
+
+WMD is for everyone 13 and older, and everything here must suit the
+youngest of them. Public rooms, objects, descriptions and speech must not
+have:
+
+1. Sexual content or innuendo.
+2. Graphic violence, gore or cruelty. Cartoon peril is fine: a dragon can
+   breathe fire, and a trap can drop you in a pit.
+3. Hate or harassment: attacking or mocking anyone for who they are,
+   bullying, or targeting a person.
+4. Encouraging self-harm, dangerous stunts, or drug and alcohol use.
+5. Profanity. Building around a word filter is still a break of this rule.
+6. Personal information: real names, addresses, schools, phone numbers,
+   social accounts or photos, yours or anyone else's, and asking others
+   for theirs.
+7. Arranging to meet or talk off WMD, especially with someone younger.
+8. Scams, spam, pretending to be another builder or an admin, or copying
+   someone's work and calling it yours.
+9. Code that exists to annoy others: flooding a room with messages,
+   trapping people, or anything meant to get around these rules.
+
+For anything not on the list, ask: would it be fine in a game rated for
+everyone, in front of a thirteen-year-old and their parent? Private rooms
+follow the same rules. Privacy is for unfinished work, not for exceptions.
+
+If something breaks these rules, flag it: /flag here <why> for the room you
+are in, or /flag <thing> <why> for a thing. To report a person, use
+/report <name> <why>. An admin looks at every flag. Who flagged is not
+told to anyone but the admins.

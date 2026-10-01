@@ -50,7 +50,9 @@ type World(
   home_of: ObjId -> ObjId,
   -- Whether a body may go into a room. A private room is closed to all
   -- but its owner, whoever it invites, and the admins.
-  may_enter?: ObjId -> ObjId -> Bool
+  may_enter?: ObjId -> ObjId -> Bool,
+  -- A help topic, as /help shows it: "rules" is the community rules.
+  help_of: String -> Option String
 )
 
 -- Who is asking, about what, where and when. `self` is the object the call
@@ -105,6 +107,10 @@ type Action =
   -- was opened with /eval and no expression. Only /realm/editor may ask
   -- this.
   | Run String
+  -- Say that a player has read and signed the current rules. Only the
+  -- Rules Hall, /realm/rules, may ask this; the driver keeps the signing on
+  -- the account and moves the body to the Commons.
+  | Acknowledge ObjId
 
 -- A command the object answers to. `run` gets the parsed command, with
 -- dobj and iobj already matched to objects.

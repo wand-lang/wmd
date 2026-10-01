@@ -35,6 +35,7 @@ let played lines =
           line "2000-05-01",
           line "ann-password",
           line "ann-password",
+          line "sign rules",
           World.emptied ann
         ]
         (List.map line lines));
