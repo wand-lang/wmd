@@ -3,7 +3,7 @@
 }
 
 -- DO NOT EDIT: interface, written by `wand p`
-version 0.3.0
+version 0.3.1
 
 type driver/Engine.Tx(
   w: World.Current,
@@ -507,7 +507,11 @@ driver/World.with_pepper      : String -> Current
 driver/World.worked           : String -> Current -> Current
 driver/World.wrote            : String -> String -> Current -> Current
 driver.dig_marker  : String
+driver.exit_named  : String -> Map Exit -> Option (String, Exit)
 driver.import_from : String -> String -> String
+driver.name_of     : String -> String
+driver.names?      : String -> String -> Bool
 driver.nothing     : Reply
+driver.starred     : String -> String
 driver.tell        : Context -> String -> Reply
 wmd.stop : 'a -> 'b ! {IO, Proc}
