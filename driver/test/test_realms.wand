@@ -1,0 +1,153 @@
+uses {FS.Read, FS.Write, Random, Shared}
+
+-- Realms: which realms a file is in, who owns a file, and the rules a
+-- realm adds to the driver's own.
+
+import ../Engine
+import ../Mudlib
+import ../World
+import List
+import Map
+import Option
+import Result
+import Shared
+
+let Core = import ../../lib/std/core
+
+let {test, group} = import Test
+
+let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
+
+let at = "2026-09-30T12:00:00Z"
+
+let ann = World.session_id 0
+
+let bo = World.session_id 1
+
+let ann_body = "/std/player#0"
+
+let bo_body = "/std/player#1"
+
+let line sid text = World.queue (World.Line sid at text)
+
+let played changes =
+  with Shared.make start as state -> (
+    Engine.boot state at;
+    List.each (fn f -> (Shared.update state f; Engine.step state)) changes;
+    Shared.get state
+  )
+
+let signed_up sid name = [
+  World.open_next at,
+  line sid name,
+  line sid "2000-05-01",
+  line sid "%{name}-password",
+  line sid "%{name}-password",
+  line sid "sign rules"
+]
+
+let both_in = List.concat (signed_up ann "ann") (signed_up bo "bo")
+
+group "the realms a file is in" (fn () -> [
+  test "are the realms above it, nearest first, up to the Commons" (fn t ->
+    t.eq (["/r/home", "/r"], ["/r/learning", "/r"], ["/r"], []) (
+      Engine.realms_of "/r/home/ann/den" start,
+      Engine.realms_of "/r/learning/hall" start,
+      Engine.realms_of "/r/square" start,
+      Engine.realms_of "/std/player" start
+    )),
+  test "leave out a realm in a builder's home" (fn t ->
+    let home =
+      Result.get! (Option.to_result "no Home realm" (Map.get "/r/home" start.realms));
+    let w = World.set_realm "/r/home/ann/library" home start;
+    t.eq ["/r/home", "/r"] (Engine.realms_of "/r/home/ann/library/den" w)),
+  test "have their objects made at boot" (fn t ->
+    let w = played [];
+    t.eq
+      []
+      (List.filter (fn id -> World.instance id w == None) [
+        "/r#0",
+        "/r/home#0",
+        "/r/rules#0",
+        "/r/learning#0",
+        "/r/editor#0"
+      ]))
+])
+
+group "who owns a file" (fn () -> [
+  test "is what the nearest realm says" (fn t ->
+    t.eq (Some "ann", Some "bo", None, None) (
+      Engine.file_owner "/r/home/ann/den" start,
+      Engine.file_owner "/r/home/Bo/den" start,
+      Engine.file_owner "/r/home/ann" start,
+      Engine.file_owner "/r/learning/hall" start
+    )),
+  test "decides who may edit it" (fn t ->
+    let w = played both_in;
+    t.eq (true, false, false) (
+      Engine.may_edit? ann_body "/r/home/ann/den" w,
+      Engine.may_edit? ann_body "/r/home/bo/den" w,
+      Engine.may_edit? ann_body "/r/learning/hall" w
+    ))
+])
+
+group "a realm's rules" (fn () -> [
+  test "keep anything from being moved into a realm" (fn t ->
+    let w = played both_in;
+    let ctx = Engine.ctx_for w ann_body ann_body;
+    t.eq
+      (Error "may not move /std/player#0 into /r/home#0: a realm is no place")
+      (Engine.allowed ctx (Core.Move ann_body "/r/home#0") w)),
+  test "are asked after the driver's own policy" (fn t ->
+    -- Bo in Ann's editor, where the driver's policy would let the editor
+    -- move him.
+    let w =
+      played
+        (List.concat
+          both_in
+          [line ann "/edit /r/home/ann/den", World.move bo_body "/r/editor/room#0"]);
+    let editor = Engine.ctx_for w "/r/editor/room#0" ann_body;
+    t.eq
+      (Error "the editor moves no one but the person at it")
+      (Engine.allowed editor (Core.Move bo_body "/r/garden") w)),
+  test "grant only to the realm's own objects" (fn t ->
+    let w = played both_in;
+    t.eq (false, true) (
+      Result.ok?
+        (Engine.allowed
+          (Engine.ctx_for w "/r/square#0" ann_body)
+          (Core.Check "/r/home/ann/den" "")
+          w),
+      Result.ok?
+        (Engine.allowed
+          (Engine.ctx_for w "/r/editor/room#0" ann_body)
+          (Core.Check "/r/home/ann/den" "")
+          w)
+    ))
+])
+
+let heard sid (w: World.World) = List.filter (fn l -> l != "") (World.outbox sid w)
+
+group "a realm's verbs" (fn () -> [
+  test "answer after the player's and the room's: look and go are the Commons'" (fn t ->
+    let w = played (List.concat both_in [World.emptied ann, line ann "go west"]);
+    t.eq (Some "/r/learning/hall#0", false) (
+      World.env_of ann_body w,
+      List.any?
+        (fn (v: Core.Verb) -> List.any? (fn n -> n == "go") v.names)
+        (Option.default
+          []
+          (Option.map (fn (i: World.Instance) -> i.object.verbs) (World.instance ann_body w)))
+    )),
+  test "are listed by /verbs here" (fn t ->
+    let w = played (List.concat both_in [World.emptied ann, line ann "/verbs here"]);
+    t.eq
+      [
+        "The Commons answers to nothing.",
+        "Exits: north, west.",
+        "the Commons answers to:",
+        "  look, l",
+        "  go"
+      ]
+      (heard ann w))
+])

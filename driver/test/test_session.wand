@@ -22,7 +22,7 @@ import ../World
 
 -- A new world, with the mudlib in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
+let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 

@@ -20,7 +20,7 @@ let ann = World.session_id 0
 
 let line text = World.queue (World.Line ann at text)
 
-let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
+let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
 
 -- Ann logged in, with nothing heard yet, then `lines` typed.
 let played lines =
@@ -49,16 +49,13 @@ group "/eval" (fn () -> [
     t.eq ["=> 4 : Int"] (heard (played ["/eval 1 + 3"]))),
   test "ctx is the player's, where they stand" (fn t ->
     t.eq
-      [`=> ["/realm/commons/lever#0", "/std/player#0"] : List String`]
+      [`=> ["/r/lever#0", "/std/player#0"] : List String`]
       (heard (played ["/eval List.sort (ctx.world.contents ctx.here)"]))),
   test "the standard modules and Random can be used" (fn t ->
     t.eq ["=> true : Bool"] (heard (played ["/eval Random.int 1 6 <= 6"]))),
   test "a list of actions is applied as the player's" (fn t ->
-    let w = played [`/eval [Core.Spawn "/realm/commons/lever" ctx.here]`];
-    t.eq (["=> 1 actions"], 2) (
-      heard w,
-      List.length (World.instances_of "/realm/commons/lever" w)
-    )),
+    let w = played [`/eval [Core.Spawn "/r/lever" ctx.here]`];
+    t.eq (["=> 1 actions"], 2) (heard w, List.length (World.instances_of "/r/lever" w))),
   test "an expression that does not check says why" (fn t ->
     t.ok
       (List.any?

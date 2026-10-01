@@ -1,0 +1,24 @@
+uses {Random}
+
+-- The Rules realm: the Rules Hall, where an account that has not signed the
+-- current rules wakes. Only reading, signing, help and leaving work here,
+-- and only its objects may say that the rules were signed.
+
+import List
+
+let Core = import ../std/core
+let Realm = import ../std/realm
+
+-- The commands that work before the rules are signed.
+let _open = ["look", "l", "read", "sign", "/help", "/quit"]
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = Realm.object "the Rules realm" [])
+
+implement Core.Realm =
+  let commands _ verb = if List.any? (fn v -> v == verb) _open then Ok()
+  else Error "First read the rules on the wall, then sign them: sign rules.";
+  let allows = Realm.anything;
+  let owner = Realm.admins;
+  let allowed = Core.Everyone;
+  let grants = [Core.MayAcknowledge]

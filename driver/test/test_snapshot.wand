@@ -17,9 +17,11 @@ import ../Engine
 import ../Snapshot
 import ../World
 
+let Core = import ../../lib/std/core
+
 -- A new world, with the mudlib in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
+let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -61,9 +63,7 @@ let _where (w: World.World) =
   List.sort (List.map (fn (i: World.Instance) -> (i.id, i.env)) (Map.values w.instances))
 
 let _lever (w: World.World) =
-  Option.and_then
-    (fn (i: World.Instance) -> i.saved)
-    (World.instance "/realm/commons/lever#0" w)
+  Option.and_then (fn (i: World.Instance) -> i.saved) (World.instance "/r/lever#0" w)
 
 group "a snapshot" (fn () -> [
   test "brings back the accounts, the objects and where each one is" (fn t ->
@@ -101,12 +101,10 @@ group "a snapshot" (fn () -> [
         let (w: World.World) = Shared.get state;
         t.eq ([], []) (
           List.filter
-            (fn (i: World.Instance) -> Option.none? i.saved
-            && i.id != "/realm/commons/lever#0")
+            (fn (i: World.Instance) -> Option.none? i.saved && i.id != "/r/lever#0")
             (Map.values w.instances),
           List.filter
-            (fn (i: World.Instance) -> Option.some? i.saved
-            && i.id == "/realm/commons/lever#0")
+            (fn (i: World.Instance) -> Option.some? i.saved && i.id == "/r/lever#0")
             (Map.values w.instances)
         )
       )
@@ -121,7 +119,7 @@ test "brings back who made each object and when, and each account's home" (fn t 
     let made (w: World.World) =
       Option.map
         (fn (i: World.Instance) -> (i.creator, i.created, i.modified))
-        (World.instance "/realm/commons/lever#0" w);
+        (World.instance "/r/lever#0" w);
     t.eq (made before, Map.values before.accounts) (made after, Map.values after.accounts)
   ))
 
@@ -132,7 +130,7 @@ test "a file without the newer fields still reads" (fn t ->
     let path = Path.join d ./world.json;
     FS.write_file!
       path
-      `{"version": 1, "accounts": [{"name": "Ann", "body": "/std/player#0", "password": "x", "role": "admin"}], "instances": [{"id": "/std/player#0", "blueprint": "/std/player", "env": "/realm/commons/square#0", "state": {"name": "Ann"}}]}`;
+      `{"version": 1, "accounts": [{"name": "Ann", "body": "/std/player#0", "password": "x", "role": "admin"}], "instances": [{"id": "/std/player#0", "blueprint": "/std/player", "env": "/r/square#0", "state": {"name": "Ann"}}]}`;
     t.eq
       (Some (None, None))
       (Option.map
@@ -165,18 +163,18 @@ test "a file without owners gets them on restore" (fn t ->
     let path = Path.join d ./world.json;
     FS.write_file!
       path
-      `{"version": 1, "accounts": [{"name": "Ann", "body": "/std/player#0", "password": "x"}], "instances": [{"id": "/std/player#0", "blueprint": "/std/player", "env": "/realm/commons/square#0", "state": {"name": "Ann"}}, {"id": "/realm/commons/square#0", "blueprint": "/realm/commons/square", "state": {}}]}`;
+      `{"version": 1, "accounts": [{"name": "Ann", "body": "/std/player#0", "password": "x"}], "instances": [{"id": "/std/player#0", "blueprint": "/std/player", "env": "/r/square#0", "state": {"name": "Ann"}}, {"id": "/r/square#0", "blueprint": "/r/square", "state": {}}]}`;
     let w = restored! path;
     t.eq (Some "ann", None) (
       World.owner_of "/std/player#0" w,
-      World.owner_of "/realm/commons/square#0" w
+      World.owner_of "/r/square#0" w
     )
   ))
 
 let _access (w: World.World) =
   List.sort
     (List.map
-      (fn (i: World.Instance) -> (i.id, i.public, i.invited, i.locked))
+      (fn (i: World.Instance) -> (i.id, i.allowed, i.locked))
       (Map.values w.instances))
 
 test "brings back which rooms are private, who is invited, and which things are locked" (fn t ->
@@ -188,9 +186,9 @@ test "brings back which rooms are private, who is invited, and which things are 
         _play state;
         Shared.update state (fn w ->
           w
-          |> World.set_public "/realm/commons/square#0" false
-          |> World.invite "/realm/commons/square#0" "Bo"
-          |> World.set_locked "/realm/commons/lever#0" false);
+          |> World.set_allowed "/r/square#0" (Core.Only [])
+          |> World.invite "/r/square#0" "Bo"
+          |> World.set_locked "/r/lever#0" false);
         Engine.snapshot! state path at;
         Shared.get state
       );
@@ -210,12 +208,12 @@ test "brings back flags, held things, signings, notices and pauses" (fn t ->
             id = 1,
             by = "ann",
             kind = "object",
-            target = "/realm/commons/lever#0",
+            target = "/r/lever#0",
             reason = "rude",
             at = 2026-09-30T12:00:00Z,
             evidence = "brass lever"
           )
-          |> World.set_held "/realm/commons/lever#0" true
+          |> World.set_held "/r/lever#0" true
           |> World.set_paused "ann" true
           |> World.notice "ann" "Your lever was flagged.");
         Engine.snapshot! state path at;
@@ -223,9 +221,7 @@ test "brings back flags, held things, signings, notices and pauses" (fn t ->
       );
     let after = restored! path;
     let held (w: World.World) =
-      Option.map
-        (fn (i: World.Instance) -> i.held)
-        (World.instance "/realm/commons/lever#0" w);
+      Option.map (fn (i: World.Instance) -> i.held) (World.instance "/r/lever#0" w);
     t.eq (before.flags, held before, Map.values before.accounts) (
       after.flags,
       held after,

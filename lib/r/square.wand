@@ -2,18 +2,15 @@ uses {Random}
 
 -- The arrival room: where everyone first stands.
 
-let Core = import ../../std/core
-let Room = import ../../std/room
+let Core = import ../std/core
+let Room = import ../std/room
 
 let square =
   Core.Object(
     Room.room
       "The Commons"
       "A wide, quiet square. Doors of every size stand along its edges, all of them shut for now, but for one to the west, with LEARNING painted over it.",
-    exits = {
-      north = Room.exit "/realm/commons/garden",
-      west = Room.exit "/realm/learning/hall"
-    },
+    exits = {north = Room.exit "/r/garden", west = Room.exit "/r/learning/hall"},
     details = {
       doors = Room.text
         "Doors of wood, of iron, of glass; one is no taller than your knee. Only the one to the west will open.",
@@ -24,5 +21,5 @@ let square =
 -- A new square gets its lever. A restored one already has it.
 implement Core.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = square, actions = [Core.Spawn "/realm/commons/lever" self])
+  | None -> Core.Init(object = square, actions = [Core.Spawn "/r/lever" self])
   | Some _ -> Core.Init(object = square)

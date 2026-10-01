@@ -1,0 +1,21 @@
+uses {Random}
+
+-- The Editor realm: the editor room, of which each person who edits gets
+-- an instance. Only its objects may check, save and run source, and they
+-- move no one but the person at the editor.
+
+let Core = import ../std/core
+let Realm = import ../std/realm
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = Realm.object "the Editor realm" [])
+
+implement Core.Realm =
+  let commands = Realm.anything;
+  let allows (ctx: Core.Context) (a: Core.Action) = match a with
+  | Core.Move o _ when ctx.world.player? o && o != ctx.actor ->
+    Error "the editor moves no one but the person at it"
+  | _ -> Ok();
+  let owner = Realm.admins;
+  let allowed = Core.Everyone;
+  let grants = [Core.MayCheckSave]

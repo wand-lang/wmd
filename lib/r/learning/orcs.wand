@@ -15,10 +15,10 @@ let orcs =
     Room.room
       "Lesson 5: The Orc Room"
       "A low stone room that smells of cabbage. This room is the example: it made its own orc. Read /help lesson5, then /copy here and /copy orc to make them yours.",
-    exits = {hall = Room.exit "/realm/learning/hall"}
+    exits = {hall = Room.exit "/r/learning/hall"}
   )
 
 implement Core.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = orcs, actions = [Core.Spawn "/realm/learning/orc" self])
+  | None -> Core.Init(object = orcs, actions = [Core.Spawn "/r/learning/orc" self])
   | Some _ -> Core.Init(object = orcs)

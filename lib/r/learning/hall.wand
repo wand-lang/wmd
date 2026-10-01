@@ -11,13 +11,13 @@ let hall =
       "The Learning Hall"
       "A long hall with six doors, numbered one to six. Behind each door is a lesson in building with Wand, and a working example to try. Type /help guide to begin, then go one.",
     exits = {
-      east = Room.exit "/realm/commons/square",
-      one = Room.exit "/realm/learning/hours",
-      two = Room.exit "/realm/learning/levers",
-      three = Room.exit "/realm/learning/cats",
-      four = Room.exit "/realm/learning/doors",
-      five = Room.exit "/realm/learning/orcs",
-      six = Room.exit "/realm/learning/cave"
+      east = Room.exit "/r/square",
+      one = Room.exit "/r/learning/hours",
+      two = Room.exit "/r/learning/levers",
+      three = Room.exit "/r/learning/cats",
+      four = Room.exit "/r/learning/doors",
+      five = Room.exit "/r/learning/orcs",
+      six = Room.exit "/r/learning/cave"
     }
   )
 

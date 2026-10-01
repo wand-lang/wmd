@@ -6,7 +6,7 @@
 -- and the driver checks and applies them.
 
 -- An object's id: its blueprint's path and an instance number, as in
--- /realm/commons/lever#0. A connection that has not logged in yet is a
+-- /r/lever#0. A connection that has not logged in yet is a
 -- session id, such as session:3fa9c2d1b07e, which never starts with /.
 type ObjId = String
 
@@ -94,7 +94,7 @@ type Action =
   -- holds. A player's body cannot be removed, nor anything that holds one.
   | Remove ObjId
   -- Check the source of the mudlib file for a blueprint path, such as
-  -- /home/ann/lamp, without saving it. Only /realm/editor may ask this, and
+  -- /r/home/ann/lamp, without saving it. Only /r/editor may ask this, and
   -- only for a file the actor may edit. The driver answers through the
   -- asking object's `result` verb, with an Outcome as JSON in `rest`.
   | Check String String
@@ -105,11 +105,11 @@ type Action =
   -- is formatted when it parses. The same rules and answer as Check.
   | Draft String String
   -- Run source as /eval runs an expression: the editor's buffer, when it
-  -- was opened with /eval and no expression. Only /realm/editor may ask
+  -- was opened with /eval and no expression. Only /r/editor may ask
   -- this.
   | Run String
   -- Say that a player has read and signed the current rules. Only the
-  -- Rules Hall, /realm/rules, may ask this; the driver keeps the signing on
+  -- Rules Hall, /r/rules, may ask this; the driver keeps the signing on
   -- the account and moves the body to the Commons.
   | Acknowledge ObjId
   -- Run the object's own verb of this name once, with no arguments, after
@@ -191,6 +191,45 @@ type Init(object: Object, actions: List Action = [])
 -- `create self saved` builds the instance `self`, from its saved state or,
 -- when `saved` is None, new.
 interface Blueprint(create: ObjId -> Option JSON -> Init ! {Random, Raise})
+
+-- Who may enter a room: everyone, which is a public room, or only the
+-- accounts in the list, by key, which is a private one. A room's owner and
+-- the admins may always enter.
+type Allowed = Everyone | Only (List String)
+
+-- What only the objects of some realms may ask for.
+type Grant =
+  -- Say a player signed the rules: Acknowledge.
+  MayAcknowledge
+  -- Check, save and run source for the player at the editor: Check, Save,
+  -- Draft and Run.
+  | MayCheckSave
+
+-- An area of the world with rules of its own, such as the Home realm or the
+-- Rules Hall. A realm is the file beside its directory: /r/home is the
+-- realm of the rooms in /r/home/, and /r, the Commons, of every room under
+-- /r. It also implements Blueprint: its one instance holds the verbs every
+-- room in the realm answers to, after the room's own.
+--
+-- The driver asks the nearest realm above a file, and each realm above
+-- that, up to the Commons. A rule can only refuse more than the driver's
+-- own policy does, and every realm in the chain must allow a command or an
+-- action. `owner` and `grants` come from the nearest realm alone. The
+-- driver honors a realm only when the admins own its file.
+interface Realm(
+  -- Whether a command works here: a verb, or a / command such as /edit.
+  -- Error says why not, to the player who typed it.
+  commands: Context -> String -> Result String Unit ! {Random, Raise},
+  -- Whether an object here may ask for an action. Error says why not.
+  allows: Context -> Action -> Result String Unit ! {Random, Raise},
+  -- The account that owns the file of a blueprint path in the realm, by its
+  -- key, as ann for /r/home/ann/lamp. None is the admins.
+  owner: String -> Option String ! {Random, Raise},
+  -- Who may enter a new room of the realm, until its owner says otherwise.
+  allowed: Allowed,
+  -- What the realm's own files may ask for that others may not.
+  grants: List Grant
+)
 
 -- A reply that changes nothing.
 let nothing = Reply()

@@ -1,7 +1,8 @@
 uses {FS.Read, FS.Write}
 
--- Mudlib files by blueprint path: who may edit which, and checking and
--- saving them for the editor.
+-- Mudlib files by blueprint path: checking and saving them for the editor,
+-- and moving one to another directory. Who may edit which is the realms'
+-- to say.
 --
 -- A save goes parse, check, gate, format, write. The check reads the
 -- source as typed, so its line numbers are the editor's buffer lines; the
@@ -18,16 +19,51 @@ import Wand
 let Core = import ../lib/std/core
 
 -- Lower-case words of letters, digits and _ between slashes, as
--- /home/ann/lamp. There is no `..`, so a path cannot leave the mudlib.
+-- /r/home/ann/lamp. There is no `..`, so a path cannot leave the mudlib.
 let valid? path = Regex.match? r/^(\/[a-z0-9_]+)+$/ path
-
--- An admin may edit any file. A builder may edit only the files in their
--- own home, /home/<name>/.
-let may_edit? role name path =
-  valid? path && (role == "admin" || String.starts_with? "/home/%{String.lower name}/" path)
 
 -- The file of a blueprint path under the mudlib root `lib`.
 let file_of (lib: Path) path = Path.join lib (Path.of_string ".%{path}.wand")
+
+-- The directories a blueprint's file is in, from the mudlib root: r and
+-- learning for /r/learning/lever.
+let _dir path =
+  List.reverse
+    (List.drop 1 (List.reverse (List.filter (fn s -> s != "") (String.split "/" path))))
+
+-- Where the relative import `rel` leads from the directories `dir`.
+let _follow dir rel =
+  List.fold_left
+    (fn acc seg -> if seg == ".." then List.reverse (List.drop 1 (List.reverse acc))
+      else if seg == "." || seg == "" then acc
+      else List.concat acc [seg])
+    dir
+    (String.split "/" rel)
+
+-- How many leading directories two lists share.
+let _common xs ys =
+  match (xs, ys) with
+  | ([x :: xt], [y :: yt]) when x == y -> 1 + _common xt yt
+  | _ -> 0
+
+-- The relative import from the directories `dir` to the file `to`.
+let _relative dir to =
+  let shared = _common dir to;
+  let rest = String.join "/" (List.drop shared to);
+  let up = List.length dir - shared;
+  if up == 0 then "./%{rest}" else "%{String.repeat up "../"}%{rest}"
+
+-- `source`, the file of `from`, written as the file of `to`: each relative
+-- import names the same file from its new directory. /r/learning/lever
+-- imports ../../std/core, and its copy in /r/home/ann imports
+-- ../../../std/core.
+let moved from to source =
+  let fixed line =
+    match Regex.capture r/^(.*import )(\.\.?\/\S+)(.*)$/ line with
+    | [_, head, rel, tail] -> "%{head}%{_relative (_dir to) (_follow (_dir from) rel)}%{tail}"
+    | _ -> line
+  in
+  String.join "\n" (List.map fixed (String.lines source))
 
 -- The effects mudlib code may perform. Raise is not in a check's effects:
 -- a mudlib call that raises is a fault the driver catches.
@@ -107,11 +143,6 @@ let draft (lib: Path) path source = (
   )
   | Ok _ -> Core.Outcome(action = "draft", path = path, ok = true, text = Some text)
 )
-
--- How many files are in the home of the builder `name`.
-let count (lib: Path) name =
-  let home = Path.join lib (Path.of_string "./home/%{String.lower name}");
-  if FS.dir? home then List.length (FS.glob_in **/*.wand home) else 0
 
 -- Whether the file of `path` is there yet.
 let exists? (lib: Path) path = FS.exists? (file_of lib path)

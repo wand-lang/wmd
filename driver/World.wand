@@ -28,13 +28,13 @@ let Core = import ../lib/std/core
 -- changed it.
 --
 -- `owner` is the account, by its key, whose Capacity the object counts
--- against and whose Inspiration its work spends. It is None for the
--- driver's and the admins' code in /std and /realm. `size` is how many
+-- against and whose Inspiration its work spends. It is None for what the
+-- admins own, as the driver and every realm say. `size` is how many
 -- bytes its saved state was at the last snapshot.
 --
--- A room is `public` when anyone may enter it, and otherwise only its
--- owner, the accounts in `invited` and the admins may. An object that is
--- `locked` is moved only by what its owner owns.
+-- `allowed` says who may enter a room, besides its owner and the admins:
+-- everyone, or only the accounts it names. An object that is `locked` is
+-- moved only by what its owner owns.
 type Instance(
   id: String,
   blueprint: String,
@@ -46,8 +46,7 @@ type Instance(
   modified: Option String = None,
   owner: Option String = None,
   size: Int = 0,
-  public: Bool = false,
-  invited: List String = [],
+  allowed: Core.Allowed = Core.Only [],
   locked: Bool = true,
   -- Held for review after enough flags: it shows as waiting for an admin,
   -- and runs nothing, until an admin resolves its flags.
@@ -67,7 +66,8 @@ type Session(id: String, body: Option String = None, closing: Bool = false)
 -- full amount at the epoch is full at any time after. `explored` is every
 -- room that has given it an exploring bonus, and when. `rules` is
 -- the version of the rules it signed and when. `notices` wait for its next
--- login. A `paused` account may not log in.
+-- login. A `paused` account may not log in. `banned` is the accounts, by
+-- key, that may not enter any room this one owns.
 type Account(
   name: String,
   body: String,
@@ -79,7 +79,8 @@ type Account(
   explored: Map DateTime = {},
   rules: Option Signed = None,
   notices: List String = [],
-  paused: Bool = false
+  paused: Bool = false,
+  banned: List String = []
 )
 
 -- The version of the rules an account signed, and when.
@@ -147,6 +148,9 @@ type World(
   -- Every blueprint the driver can spawn, by path, such as /std/player:
   -- each file's module, as loaded at start or by /update since.
   lib: Map Core.Blueprint = {},
+  -- Every realm, by the path of its file, such as /r/home: the files that
+  -- implement Core.Realm as well as Core.Blueprint.
+  realms: Map Core.Realm = {},
   -- The editor as it was before the last /update of it, for an editor that
   -- faults on its new code to go back to.
   editor_before: Option Core.Blueprint = None
@@ -182,8 +186,8 @@ let outbox_cap = 1000
 
 -- ── Ids ────────────────────────────────────────────────────────────────
 
--- The blueprint of an instance id: /realm/commons/lever#0 is
--- /realm/commons/lever.
+-- The blueprint of an instance id: /r/lever#0 is
+-- /r/lever.
 let blueprint_of id = Option.default id (List.head (String.split "#" id))
 
 -- An exit or a Move may name a blueprint, meaning its first instance.
@@ -241,13 +245,6 @@ let set_owner id owner (w: World) =
   | Some i -> put Instance(i, owner = owner) w
   | None -> w
 
--- Who owns the file of blueprint path `path`: the builder whose home it is
--- in, as ann for /home/ann/lamp. The rest of the mudlib is the admins'.
-let file_owner path =
-  match String.split "/" path with
-  | ["" :: "home" :: name :: _ :: _] -> Some name
-  | _ -> None
-
 -- The instances `owner` owns.
 let owned owner (w: World) =
   List.filter (fn (i: Instance) -> i.owner == Some owner) (Map.values w.instances)
@@ -265,6 +262,9 @@ let instances_of bp (w: World) =
 
 -- Use `b` for blueprint `path` from now on.
 let set_blueprint path (b: Core.Blueprint) (w: World) = World(w, lib = Map.set path b w.lib)
+
+-- Use `r` for the realm whose file is `path` from now on.
+let set_realm path (r: Core.Realm) (w: World) = World(w, realms = Map.set path r w.realms)
 
 -- Take an object out of the world, with its call-outs.
 let remove id (w: World) =
@@ -535,30 +535,64 @@ let _put_instance id f (w: World) =
   | Some i -> put (f i) w
   | None -> w
 
-let set_public id public (w: World) =
-  _put_instance id (fn i -> Instance(i, public = public)) w
+let set_allowed id (allowed: Core.Allowed) (w: World) =
+  _put_instance id (fn i -> Instance(i, allowed = allowed)) w
 
+-- Whether a room is open to everyone.
+let public? (i: Instance) = i.allowed == Core.Everyone
+
+-- Let one more account into a private room. A public room lets in everyone
+-- already.
 let invite id name (w: World) =
   _put_instance
     id
-    (fn i -> Instance(i, invited = List.unique (List.concat i.invited [String.lower name])))
+    (fn i -> match i.allowed with
+      | Core.Only names -> Instance(
+        i,
+        allowed = Core.Only(List.unique (List.concat names [String.lower name]))
+      )
+      | Core.Everyone -> i
+    )
     w
 
 let uninvite id name (w: World) =
   _put_instance
     id
-    (fn i -> Instance(i, invited = List.filter (fn n -> n != String.lower name) i.invited))
+    (fn i -> match i.allowed with
+      | Core.Only names -> Instance(
+        i,
+        allowed = Core.Only(List.filter (fn n -> n != String.lower name) names)
+      )
+      | Core.Everyone -> i
+    )
     w
 
 let set_locked id locked (w: World) =
   _put_instance id (fn i -> Instance(i, locked = locked)) w
 
--- Privacy and the lock, as a snapshot kept them.
-let set_access id public invited locked (w: World) =
-  _put_instance
-    id
-    (fn i -> Instance(i, public = public, invited = invited, locked = locked))
+-- Who may enter and the lock, as a snapshot kept them.
+let set_access id (allowed: Core.Allowed) locked (w: World) =
+  _put_instance id (fn i -> Instance(i, allowed = allowed, locked = locked)) w
+
+-- Keep the account `banned` out of every room the account `by` owns, or no
+-- longer.
+let ban by banned (w: World) =
+  _put_named
+    by
+    (fn a -> Account(a, banned = List.unique (List.concat a.banned [String.lower banned])))
     w
+
+let unban by banned (w: World) =
+  _put_named
+    by
+    (fn a -> Account(a, banned = List.filter (fn n -> n != String.lower banned) a.banned))
+    w
+
+-- Whether the account `owner` bans the account `key`.
+let banned? owner key (w: World) =
+  match account owner w with
+  | Some a -> List.any? (fn n -> n == key) a.banned
+  | None -> false
 
 -- ── The rules, notices and pauses ──────────────────────────────────────
 

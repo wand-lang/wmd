@@ -1,0 +1,33 @@
+-- Helpers for a realm's file. A realm implements Core.Blueprint, for its
+-- one object, and Core.Realm, for its rules:
+--
+--   implement Core.Blueprint =
+--     let create _ _ = Core.Init(object = Realm.object "the Learning realm" [])
+--
+--   implement Core.Realm =
+--     let commands = Realm.anything;
+--     let allows = Realm.anything;
+--     let owner = Realm.admins;
+--     let allowed = Core.Everyone;
+--     let grants = []
+
+import JSON
+
+let Core = import ./core
+
+-- A realm's object: what to call it, and the verbs every room in the realm
+-- answers to after its own. No one stands in it, and it keeps nothing.
+let object short verbs =
+  Core.Object(
+    names = [],
+    short = fn _ -> short,
+    long = fn _ -> short,
+    verbs = verbs,
+    save = fn () -> JSON.null
+  )
+
+-- A rule that allows every command or action.
+let anything _ _ = Ok()
+
+-- An owner rule that gives every file to the admins.
+let admins _ = None

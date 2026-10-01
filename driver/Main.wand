@@ -61,6 +61,7 @@ let _start! (o: Opts) = (
     World.with_pepper (Env.get! "WMD_PEPPER"),
     lib_root = o.lib,
     lib = loaded.lib,
+    realms = loaded.realms,
     help = Mudlib.help! o.lib
   )
 )

@@ -18,8 +18,7 @@ let Core = import ../../lib/std/core
 
 let start =
   World.World(
-    World.with_pepper "test pepper",
-    lib = (Mudlib.load_all! ./lib).lib,
+    Mudlib.with_lib! ./lib (World.with_pepper "test pepper"),
     help = Mudlib.help! ./lib
   )
 
@@ -96,7 +95,7 @@ group "signing the rules" (fn () -> [
       (heard ann w)),
   test "signing takes the body to the Commons, and keeps the version" (fn t ->
     let w = played signed;
-    t.eq (Some "/realm/commons/square#0", Some 1, ["signed"]) (
+    t.eq (Some "/r/square#0", Some 1, ["signed"]) (
       World.env_of ann_body w,
       Option.and_then
         (fn (a: World.Account) -> Option.map (fn (s: World.Signed) -> s.version) a.rules)
@@ -106,9 +105,7 @@ group "signing the rules" (fn () -> [
         (List.map (fn (e: World.Event) -> e.event) w.events)
     )),
   test "a signed account wakes where it was" (fn t ->
-    t.eq
-      (Some "/realm/commons/square#0")
-      (World.env_of ann_body (played (List.concat signed again)))),
+    t.eq (Some "/r/square#0") (World.env_of ann_body (played (List.concat signed again)))),
   test "new rules are signed again at the next login" (fn t ->
     t.eq
       (Some Engine.rules_hall)
@@ -118,7 +115,7 @@ group "signing the rules" (fn () -> [
     t.eq (false, true) (
       Result.ok?
         (Engine.allowed
-          (Engine.ctx_for w "/realm/commons/square#0" ann_body)
+          (Engine.ctx_for w "/r/square#0" ann_body)
           (Core.Acknowledge ann_body)
           w),
       Result.ok?

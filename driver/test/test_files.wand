@@ -1,0 +1,30 @@
+-- Mudlib files by blueprint path.
+
+import ../Files
+
+let {test, group} = import Test
+
+group "a file moved to another directory" (fn () -> [
+  test "imports the same files from its new place" (fn t ->
+    t.eq
+      "let Core = import ../../../std/core\nlet Room = import ../../../std/room"
+      (Files.moved
+        "/r/learning/lever"
+        "/r/home/ann/lever"
+        "let Core = import ../../std/core\nlet Room = import ../../std/room")),
+  test "keeps an import of a file beside it beside it" (fn t ->
+    t.eq
+      "import ../../learning/orc"
+      (Files.moved "/r/learning/orcs" "/r/home/ann/orcs" "import ./orc")),
+  test "leaves every other line as it was" (fn t ->
+    t.eq
+      "uses {Random}\n\nimport JSON\nlet x = 1"
+      (Files.moved
+        "/r/learning/lever"
+        "/r/home/ann/lever"
+        "uses {Random}\n\nimport JSON\nlet x = 1")),
+  test "goes up as far as the two places differ" (fn t ->
+    t.eq
+      "let Core = import ../std/core"
+      (Files.moved "/r/home/ann/lever" "/r/lever" "let Core = import ../../../std/core"))
+])

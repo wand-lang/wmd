@@ -18,7 +18,7 @@ import ../World
 
 -- A new world, with the mudlib in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
+let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -311,7 +311,7 @@ group "socials" (fn () -> [
 group "home" (fn () -> [
   test "home goes to the arrival room by default" (fn t ->
     let w = played (List.concat ann_in [line ann "north", line ann "home"]);
-    t.eq (Some "/realm/commons/square#0") (World.env_of "/std/player#0" w)),
+    t.eq (Some "/r/square#0") (World.env_of "/std/player#0" w)),
   test "/sethome makes this room home" (fn t ->
     let w =
       played
@@ -321,7 +321,7 @@ group "home" (fn () -> [
           line ann "south",
           line ann "home"
         ]);
-    t.eq (Some "/realm/commons/garden#0", true) (
+    t.eq (Some "/r/garden#0", true) (
       World.env_of "/std/player#0" w,
       heard? ann "The Garden is your home now." w
     ))
@@ -329,22 +329,22 @@ group "home" (fn () -> [
 
 group "the action policy" (fn () -> [
   test "no one but /std/login may tell a session" (fn t ->
-    let ctx = Engine.ctx_for (played []) "/realm/commons/lever#0" "/realm/commons/lever#0";
+    let ctx = Engine.ctx_for (played []) "/r/lever#0" "/r/lever#0";
     t.eq
       (Error "only /std/login may tell a session")
       (Engine.allowed ctx (Core.Tell ann "hi") (played []))),
   test "no object may spawn a body" (fn t ->
     let w = played [];
-    let ctx = Engine.ctx_for w "/realm/commons/lever#0" "/realm/commons/lever#0";
+    let ctx = Engine.ctx_for w "/r/lever#0" "/r/lever#0";
     t.eq
       (Error "may not spawn /std/player")
-      (Engine.allowed ctx (Core.Spawn "/std/player" "/realm/commons/square") w)),
+      (Engine.allowed ctx (Core.Spawn "/std/player" "/r/square") w)),
   test "an object may not move what it does not hold" (fn t ->
     let w = played [];
-    let ctx = Engine.ctx_for w "/realm/commons/garden#0" "/realm/commons/garden#0";
+    let ctx = Engine.ctx_for w "/r/garden#0" "/r/garden#0";
     t.eq
-      (Error "may not move /realm/commons/lever#0")
-      (Engine.allowed ctx (Core.Move "/realm/commons/lever" "/realm/commons/garden") w))
+      (Error "may not move /r/lever#0")
+      (Engine.allowed ctx (Core.Move "/r/lever" "/r/garden") w))
 ])
 
 group "more driver commands" (fn () -> [
@@ -368,9 +368,9 @@ group "more driver commands" (fn () -> [
           ]));
     t.eq
       [
-        "/realm/commons/lever#0: brass lever",
-        "  in: /realm/commons/square#0",
-        "  made by: /realm/commons/square#0, %{at}",
+        "/r/lever#0: brass lever",
+        "  in: /r/square#0",
+        "  made by: /r/square#0, %{at}",
         "  owner: the admins",
         "  access: locked",
         "  changed: %{at}",

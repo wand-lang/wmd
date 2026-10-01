@@ -30,7 +30,7 @@ let bo = World.session_id 1
 
 let ann_body = "/std/player#0"
 
-let editor = "/realm/editor/room#0"
+let editor = "/r/editor/room#0"
 
 let line sid text = World.queue (World.Line sid at text)
 
@@ -56,8 +56,8 @@ let admin (w: World.World) =
   | Some a -> World.add_account World.Account(a, role = "admin") w
   | None -> w
 
--- Ann in the editor on a new file, /home/ann/lamp, with nothing heard yet.
-let editing = List.concat ann_in [line ann "/edit /home/ann/lamp", World.emptied ann]
+-- Ann in the editor on a new file, /r/home/ann/lamp, with nothing heard yet.
+let editing = List.concat ann_in [line ann "/edit /r/home/ann/lamp", World.emptied ann]
 
 let heard sid (w: World.World) =
   List.filter
@@ -71,16 +71,16 @@ let heard? sid text (w: World.World) = List.any? (fn l -> l == text) (heard sid 
 -- The mudlib, loaded once. It is the real lib/, because a file loads only
 -- when it imports the driver's own std/core.wand: a copy of lib/ would
 -- declare another Core.Blueprint.
-let loaded = (Mudlib.load_all! ./lib).lib
+let loaded = Mudlib.load_all! ./lib
 
 -- Ann's home, where a test saves. It must not exist before a test, and
 -- it is removed after one, so the mudlib is left as it was found.
-let home = ./lib/home/ann
+let home = ./lib/r/home/ann
 
 let _clean () = (
   let _ = FS.delete_tree home;
-  match FS.list_dir ./lib/home with
-  | Ok [] -> (let _ = FS.delete_tree ./lib/home; ())
+  match FS.list_dir ./lib/r/home with
+  | Ok [] -> (let _ = FS.delete_tree ./lib/r/home; ())
   | _ -> ()
 )
 
@@ -97,31 +97,31 @@ and on_lib! changes check =
   if FS.exists? home then
     Result.get! (Error "%{home} exists: the editor tests save there, and remove it after")
   else with Resource.make (fn () -> ()) (fn () -> _clean ()) as _ ->
-  with Shared.make World.World(World.with_pepper "test pepper", lib = loaded) as state -> (
+  with Shared.make World.World(World.with_pepper "test pepper", lib = loaded.lib, realms = loaded.realms) as state -> (
     Engine.boot state at;
     List.each (fn f -> (Shared.update state f; Engine.step state)) changes;
     check (Shared.get state) ./lib
   )
 
-let lamp lib = Path.join lib ./home/ann/lamp.wand
+let lamp lib = Path.join lib ./r/home/ann/lamp.wand
 
 group "opening" (fn () -> [
   test "a builder may not edit outside their home" (fn t ->
-    on_lib! (List.concat ann_in [line ann "/edit /realm/commons/garden"]) (fn w _ ->
+    on_lib! (List.concat ann_in [line ann "/edit /r/garden"]) (fn w _ ->
       t.eq
-        [
-          "You may not edit /realm/commons/garden. A builder edits the files in /home/<name>/."
-        ]
+        ["You may not edit /r/garden. A builder edits the files in /r/home/<name>/."]
         (heard ann w))),
   test "a path that is not a mudlib path" (fn t ->
-    on_lib! (List.concat ann_in [line ann "/edit /home/ann/../../std/core"]) (fn w _ ->
+    on_lib! (List.concat ann_in [line ann "/edit /r/home/ann/../../std/core"]) (fn w _ ->
       t.eq
-        ["'/home/ann/../../std/core' is not a mudlib path. One looks like /home/ann/lamp."]
+        [
+          "'/r/home/ann/../../std/core' is not a mudlib path. One looks like /r/home/ann/lamp."
+        ]
         (heard ann w))),
   test "a new file in your home opens the editor, and the room sees you go" (fn t ->
-    on_lib! (List.concat both_in [line ann "/edit /home/ann/lamp"]) (fn w _ ->
+    on_lib! (List.concat both_in [line ann "/edit /r/home/ann/lamp"]) (fn w _ ->
       t.eq (true, Some editor, true) (
-        heard? ann "/home/ann/lamp is a new file." w,
+        heard? ann "/r/home/ann/lamp is a new file." w,
         World.env_of ann_body w,
         heard? bo "Ann leaves for the editor." w
       ))),
@@ -129,13 +129,13 @@ group "opening" (fn () -> [
     on_lib! (List.concat ann_in [admin, line ann "/edit here", World.emptied ann, line ann "1p"]) (fn w _ ->
       t.eq ["uses {Random}"] (heard ann w))),
   test "the editor says how to leave it, where a room lists its exits" (fn t ->
-    on_lib! (List.concat ann_in [line ann "/edit /home/ann/lamp"]) (fn w _ ->
+    on_lib! (List.concat ann_in [line ann "/edit /r/home/ann/lamp"]) (fn w _ ->
       t.eq (true, false) (
         heard? ann "q leaves the editor." w,
         heard? ann "There is no way out." w
       ))),
   test "no one else may be moved into your editor" (fn t ->
-    on_lib! (List.concat both_in [line ann "/edit /home/ann/lamp"]) (fn w _ ->
+    on_lib! (List.concat both_in [line ann "/edit /r/home/ann/lamp"]) (fn w _ ->
       let ctx = Engine.ctx_for w "/std/player#1" "/std/player#1";
       t.eq
         (Error "may not move /std/player#1 into %{editor}")
@@ -245,7 +245,7 @@ group "checking and saving" (fn () -> [
       (List.concat (lines ann ["a", "let x=1", "."]) [World.emptied ann, line ann "w"])
     ) (fn w lib ->
       t.eq (
-        ["Saved /home/ann/lamp: 1 lines.", "Formatting changed 1 lines. ,n shows them."],
+        ["Saved /r/home/ann/lamp: 1 lines.", "Formatting changed 1 lines. ,n shows them."],
         "let x = 1\n"
       ) (heard ann w, FS.read_file! (lamp lib)))),
   test "w writes nothing when the file has an error" (fn t ->
@@ -261,8 +261,8 @@ group "checking and saving" (fn () -> [
         "a",
         "uses {Random}",
         "import JSON",
-        "let Core = import ../../std/core",
-        "let Room = import ../../std/room",
+        "let Core = import ../../../std/core",
+        "let Room = import ../../../std/room",
         "implement Core.Blueprint =",
         `  let create _ _ = Core.Init(object = Room.room "A lamp" "It is off.")`,
         ".",
@@ -270,8 +270,8 @@ group "checking and saving" (fn () -> [
       ])
     ) (fn w _ ->
       t.eq (true, true) (
-        Map.has? "/home/ann/lamp" w.lib,
-        heard? ann "Updated /home/ann/lamp: 0 instances on the new code." w
+        Map.has? "/r/home/ann/lamp" w.lib,
+        heard? ann "Updated /r/home/ann/lamp: 0 instances on the new code." w
       )))
 ])
 
@@ -335,18 +335,18 @@ group "leaving" (fn () -> [
   test "Q goes back to the room it was opened from, and the editor is gone" (fn t ->
     on_lib! (List.concat ann_in [
       line ann "north",
-      line ann "/edit /home/ann/lamp",
+      line ann "/edit /r/home/ann/lamp",
       line ann "a",
       line ann "x",
       line ann ".",
       line ann "Q"
     ]) (fn w _ ->
-      t.eq (Some "/realm/commons/garden#0", None) (
+      t.eq (Some "/r/garden#0", None) (
         World.env_of ann_body w,
         Option.map (fn (i: World.Instance) -> i.id) (World.instance editor w)
       ))),
   test "the room sees you come back" (fn t ->
-    on_lib! (List.concat both_in [line ann "/edit /home/ann/lamp", line ann "q"]) (fn w _ ->
+    on_lib! (List.concat both_in [line ann "/edit /r/home/ann/lamp", line ann "q"]) (fn w _ ->
       t.ok (heard? bo "Ann comes back from the editor." w))),
   test "a restart keeps the buffer" (fn t ->
     on_lib! (List.concat editing (lines ann ["a", "kept", "."])) (fn w _ ->
@@ -354,7 +354,11 @@ group "leaving" (fn () -> [
         let path = Path.join d ./world.json;
         with Shared.make w as state -> (
           Engine.snapshot! state path at;
-          with Shared.make World.World(World.with_pepper "test pepper", lib = loaded) as again -> (
+          with Shared.make World.World(
+            World.with_pepper "test pepper",
+            lib = loaded.lib,
+            realms = loaded.realms
+          ) as again -> (
             let _ = Option.map (fn f -> Engine.restore again f at) (Snapshot.read! path);
             let saved (x: World.World) =
               Option.map
@@ -366,7 +370,7 @@ group "leaving" (fn () -> [
       )))
 ])
 
-let lever = ./lib/realm/commons/lever.wand
+let lever = ./lib/r/lever.wand
 
 -- Ann as an admin in the editor on the lever's file, after one pull.
 let on_lever = List.concat ann_in [admin, line ann "pull lever", line ann "/edit lever"]
@@ -374,14 +378,14 @@ let on_lever = List.concat ann_in [admin, line ann "pull lever", line ann "/edit
 let lever_pulls (w: World.World) =
   Option.map
     (fn (i: World.Instance) -> i.object.long (Engine.ctx_for w i.id ann_body))
-    (World.instance "/realm/commons/lever#0" w)
+    (World.instance "/r/lever#0" w)
 
 group "reloading" (fn () -> [
   test "w moves the instances onto the new code, with their state" (fn t ->
     keeping! [lever] (List.concat on_lever [line ann ",s/pulled/yanked/", line ann "w", line ann "q"]) (fn w _ ->
       t.eq (Some "It has been yanked 1 times.", true) (
         lever_pulls w,
-        heard? ann "Updated /realm/commons/lever: 1 instances on the new code." w
+        heard? ann "Updated /r/lever: 1 instances on the new code." w
       ))),
   -- The field is renamed and loses its default, so the saved {"pulls": 1}
   -- has nothing the new State can be made from.
@@ -399,7 +403,7 @@ group "reloading" (fn () -> [
         lever_pulls w,
         List.any?
           (String.contains?
-            "Kept on the old code, because the new code cannot read their saved state: /realm/commons/lever#0.")
+            "Kept on the old code, because the new code cannot read their saved state: /r/lever#0.")
           (heard ann w)
       ))),
   test "a file that does not load changes nothing" (fn t ->
@@ -411,13 +415,11 @@ group "reloading" (fn () -> [
     ]) (fn w _ ->
       t.eq (Some "It has been pulled 1 times.", true) (
         lever_pulls w,
-        List.any?
-          (String.starts_with? "/realm/commons/lever was not updated: ")
-          (heard ann w)
+        List.any? (String.starts_with? "/r/lever was not updated: ") (heard ann w)
       ))),
   test "a builder may not update a file outside their home" (fn t ->
     on_lib! (List.concat ann_in [World.emptied ann, line ann "/update lever"]) (fn w _ ->
-      t.eq ["You may not update /realm/commons/lever."] (heard ann w)))
+      t.eq ["You may not update /r/lever."] (heard ann w)))
 ])
 
 group "resetting" (fn () -> [
@@ -425,25 +427,25 @@ group "resetting" (fn () -> [
     on_lib! (List.concat ann_in [admin, line ann "pull lever", line ann "/reset lever"]) (fn w _ ->
       t.eq (Some "It has been pulled 0 times.", true) (
         lever_pulls w,
-        heard? ann "Reset /realm/commons/lever#0." w
+        heard? ann "Reset /r/lever#0." w
       ))),
   test "the starting actions run again: a reset square makes another lever" (fn t ->
     on_lib! (List.concat ann_in [admin, line ann "/reset here"]) (fn w _ ->
-      t.eq 2 (List.length (World.instances_of "/realm/commons/lever" w)))),
+      t.eq 2 (List.length (World.instances_of "/r/lever" w)))),
   test "/reset me keeps your name" (fn t ->
     on_lib! (List.concat ann_in [line ann "/reset me", World.emptied ann, line ann "/who ann"]) (fn w _ ->
       t.ok (heard? ann "Ann looks like a person." w))),
   test "a builder may not reset what they may not edit" (fn t ->
     on_lib! (List.concat ann_in [World.emptied ann, line ann "/reset lever"]) (fn w _ ->
-      t.eq ["You may not reset /realm/commons/lever#0."] (heard ann w)))
+      t.eq ["You may not reset /r/lever#0."] (heard ann w)))
 ])
 
-let editor_file = ./lib/realm/editor/room.wand
+let editor_file = ./lib/r/editor/room.wand
 
 test "an editor that faults on its new code goes back to the one before" (fn t ->
   keeping! [editor_file] (List.concat ann_in [
     admin,
-    line ann "/edit /realm/editor/room",
+    line ann "/edit /r/editor/room",
     line
       ann
       `,s/| "h" -> _tell ctx _help/| "h" -> _tell ctx (Result.get! (Error "broken"))/`,
@@ -508,9 +510,7 @@ group "limits" (fn () -> [
         line ann "pull lever"
       ])
     ) (fn w _ ->
-      t.eq
-        ["Reset /realm/commons/lever#0.", "Something went wrong with brass lever."]
-        (heard ann w))),
+      t.eq ["Reset /r/lever#0.", "Something went wrong with brass lever."] (heard ann w))),
   test "a line too long to show is refused" (fn t ->
     keeping! [lever] (List.concat ann_in [
       admin,
@@ -550,7 +550,7 @@ group "limits" (fn () -> [
         t.ok
           (List.any?
             (fn (e: World.Event) -> e.event == "fault"
-            && e.actor == "/realm/commons/lever#0"
+            && e.actor == "/r/lever#0"
             && e.text == Some "save: its saved state is 70002 bytes, and the most is 65536")
             (Shared.get state).events)
       )))

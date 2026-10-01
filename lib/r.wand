@@ -1,0 +1,129 @@
+uses {Random}
+
+-- The Commons: the root realm, and the hub of the world. Every other realm
+-- is in it, behind its doors, and its verbs and rules hold everywhere
+-- under /r unless a realm nearer a room has its own.
+--
+-- `look` and `go` are its verbs, after the player's own and the room's, so
+-- a realm can have its own: a dark realm's `look` that sees nothing, say.
+
+import JSON
+import List
+import Map
+import Option
+import Result
+import String
+
+let Core = import ./std/core
+let Realm = import ./std/realm
+let Text = import ./std/text
+
+-- The people already in `room`, who see someone arrive.
+let _in (ctx: Core.Context) room = List.filter ctx.world.player? (ctx.world.contents room)
+
+-- ── look ───────────────────────────────────────────────────────────────
+
+-- The line about a room's exits. A room whose way out is not an exit, such
+-- as the editor, which `q` leaves, says so with an `exits` prop.
+let _way_out (w: Core.World) room exits =
+  match Option.and_then (fn j -> Result.to_option (JSON.get_string j)) (w.prop room "exits") with
+  | Some line -> line
+  | None -> if exits == [] then "There is no way out."
+    else "Exits: %{String.join ", " exits}."
+
+let _room (ctx: Core.Context) =
+  let w = ctx.world;
+  let here = List.filter (fn o -> o != ctx.actor) (w.contents ctx.here);
+  let people = List.filter w.player? here;
+  let things = List.filter (fn o -> !(w.player? o)) here;
+  let exits = Map.keys (w.exits_of ctx.here);
+  let lines =
+    List.flatten [
+      [w.short_of ctx.here, w.long_of ctx.here],
+      if things == [] then []
+      else ["You see %{Text.listing (List.map (fn o -> Text.a (w.short_of o)) things)}."],
+      [_way_out w ctx.here exits],
+      List.map
+        (fn p -> if w.awake? p then "%{w.short_of p} is here."
+          else "%{w.short_of p} is here, asleep.")
+        people
+    ];
+  Core.tell ctx (String.join "\n" lines)
+
+-- `look at window`: a detail of the room, or of something in it or held.
+let _detail (ctx: Core.Context) words = (
+  let w = ctx.world;
+  let places = List.flatten [[ctx.here], w.contents ctx.here, w.contents ctx.actor];
+  match List.head (List.filter_map (fn o -> w.detail_of o words) places) with
+  | Some d -> Core.tell ctx d
+  | None -> Core.tell ctx "You don't see a '%{words}' here."
+)
+
+-- `look`, `look lever`, `look at lever`, `look at window`.
+let _look (ctx: Core.Context) (p: Core.Parsed) = (
+  let words =
+    String.trim
+      (if String.starts_with? "at " p.rest then String.slice 3 (String.length p.rest) p.rest
+      else p.rest);
+  match (p.dobj, p.iobj) with
+  | (Some o, _) -> Core.tell ctx (ctx.world.long_of o)
+  | (None, Some o) -> Core.tell ctx (ctx.world.long_of o)
+  | _ -> if words == "" || words == "here" then _room ctx else _detail ctx words
+)
+
+-- ── go ─────────────────────────────────────────────────────────────────
+
+let _opposites = Map.from_list [
+  ("north", "the south"),
+  ("south", "the north"),
+  ("east", "the west"),
+  ("west", "the east"),
+  ("up", "below"),
+  ("down", "above")
+]
+
+let _arrival name dir =
+  match Map.get dir _opposites with
+  | Some from -> "%{name} arrives from %{from}."
+  | None -> "%{name} arrives."
+
+-- `go north`, and a bare exit name, which the driver makes `go north`.
+let _go (ctx: Core.Context) (p: Core.Parsed) = (
+  let name = ctx.world.short_of ctx.actor;
+  let dir = String.lower (String.trim p.rest);
+  match Map.get dir (ctx.world.exits_of ctx.here) with
+  | None -> Core.tell ctx (if dir == "" then "Go where?" else "You can't go that way.")
+  | Some e -> (
+    let check = Option.default (fn _ -> Ok()) e.check;
+    if !(ctx.world.may_enter? ctx.actor e.to) then
+      Core.tell ctx "That way is still being built."
+    else match check ctx with
+      | Error why -> Core.tell ctx why
+      | Ok _ -> Core.Reply(
+        actions = List.flatten [
+          List.map
+            (fn o -> Core.Tell o (Option.default "%{name} leaves %{dir}." e.leave))
+            (Text.others ctx),
+          List.map
+            (fn o -> Core.Tell o (Option.default (_arrival name dir) e.arrive))
+            (_in ctx e.to),
+          [Core.Move ctx.actor e.to]
+        ]
+      )
+  )
+)
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(
+    object = Realm.object "the Commons" [
+      Core.Verb(names = ["look", "l"], run = _look),
+      Core.Verb(names = ["go"], run = _go)
+    ]
+  )
+
+implement Core.Realm =
+  let commands = Realm.anything;
+  let allows = Realm.anything;
+  let owner = Realm.admins;
+  let allowed = Core.Everyone;
+  let grants = []

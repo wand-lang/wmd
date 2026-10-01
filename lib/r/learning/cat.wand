@@ -19,7 +19,7 @@ let Text = import ../../std/text
 -- and its lessons.
 let _ways (ctx: Core.Context) =
   List.filter
-    (fn (_, e) -> String.starts_with? "/realm/learning/" e.to)
+    (fn (_, e) -> String.starts_with? "/r/learning/" e.to)
     (Map.to_list (ctx.world.exits_of ctx.here))
 
 -- Leave by a way picked at random. The first Say is heard in the room the

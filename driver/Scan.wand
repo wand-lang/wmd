@@ -7,8 +7,9 @@ import List
 import Path
 import String
 
--- A blueprint's path in the world, such as /std/player, and its file.
-type Blueprint(path: String, file: Path)
+-- A blueprint's path in the world, such as /std/player, its file, and
+-- whether it is a realm too.
+type Blueprint(path: String, file: Path, realm: Bool = false)
 
 -- /std/player for ./lib/std/player.wand in ./lib.
 let path_in lib (file: Path) =
@@ -16,6 +17,14 @@ let path_in lib (file: Path) =
   let l = Path.to_string (Path.normalize lib);
   let inside = String.slice (String.length l) (String.length f) f;
   String.slice 0 (String.length inside - 5) inside
+
+-- Whether a source claims `iface`, as `implement Core.Blueprint`.
+let claims? iface source =
+  List.any? (String.starts_with? "implement Core.%{iface}") (String.lines source)
+
+-- Every .wand file in `lib` and under it. `**/*.wand` alone leaves out the
+-- files in `lib` itself, such as r.wand.
+let files lib = List.unique (List.concat (FS.glob_in *.wand lib) (FS.glob_in **/*.wand lib))
 
 -- Every file under `lib` with a line that starts `implement Core.Blueprint`,
 -- sorted by path.
@@ -27,10 +36,8 @@ let blueprints! lib =
     (List.filter_map
       (fn f ->
         let name = Path.to_string (Path.basename f);
-        if String.starts_with? "test_" name then None
-        else if List.any?
-          (String.starts_with? "implement Core.Blueprint")
-          (String.lines (FS.read_file! f)) then
-          Some Blueprint(path = path_in lib f, file = f)
+        let source = if String.starts_with? "test_" name then "" else FS.read_file! f;
+        if claims? "Blueprint" source then
+          Some Blueprint(path = path_in lib f, file = f, realm = claims? "Realm" source)
         else None)
-      (FS.glob_in **/*.wand lib))
+      (files lib))

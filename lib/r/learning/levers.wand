@@ -10,11 +10,11 @@ let levers =
     Room.room
       "Lesson 2: The Lever Room"
       "A bare room with a brass lever in the middle of the floor. Pull it, then /examine lever to see what it keeps. Read /help lesson2, then /copy lever to make it yours.",
-    exits = {hall = Room.exit "/realm/learning/hall"}
+    exits = {hall = Room.exit "/r/learning/hall"}
   )
 
 -- A new room gets its lever. A restored one already has it.
 implement Core.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = levers, actions = [Core.Spawn "/realm/learning/lever" self])
+  | None -> Core.Init(object = levers, actions = [Core.Spawn "/r/learning/lever" self])
   | Some _ -> Core.Init(object = levers)

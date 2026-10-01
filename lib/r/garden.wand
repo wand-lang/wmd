@@ -1,12 +1,12 @@
 uses {Random}
 
-let Core = import ../../std/core
-let Room = import ../../std/room
+let Core = import ../std/core
+let Room = import ../std/room
 
 let garden =
   Core.Object(
     Room.room "The Garden" "A small walled garden. A path leads back south to the Commons.",
-    exits = {south = Room.exit "/realm/commons/square"},
+    exits = {south = Room.exit "/r/square"},
     details = {
       wall = Room.text "Old brick, warm from the sun, with moss in the joints.",
       path = Room.text "Gravel, raked smooth."

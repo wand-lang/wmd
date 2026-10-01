@@ -84,11 +84,13 @@ let run! (o: InitOpts) =
     | Ok typed -> if String.length typed < 8 then Error "a password is at least 8 characters"
       else (
         let at = "%{Clock.now ()}";
+        let loaded = Mudlib.load_all! o.lib;
         let start =
           World.World(
             World.with_pepper (_pepper ()),
             lib_root = o.lib,
-            lib = (Mudlib.load_all! o.lib).lib,
+            lib = loaded.lib,
+            realms = loaded.realms,
             help = Mudlib.help! o.lib
           );
         with Shared.make start as state -> (

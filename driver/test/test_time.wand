@@ -28,7 +28,7 @@ uses {Random}
 import JSON
 import Result
 
-let Core = import ../../std/core
+let Core = import ../../../std/core
 
 type State(beats: Int = 0)
 
@@ -55,7 +55,7 @@ import JSON
 import List
 import Result
 
-let Core = import ../../std/core
+let Core = import ../../../std/core
 
 type State(heard: List String = [])
 
@@ -95,7 +95,7 @@ uses {Random}
 import JSON
 import Result
 
-let Core = import ../../std/core
+let Core = import ../../../std/core
 
 let thing =
   Core.Object(
@@ -110,7 +110,7 @@ implement Core.Blueprint =
   let create _ _ = Core.Init(object = thing)
 `
 
-let dir = ./lib/home/tock
+let dir = ./lib/r/home/tock
 
 let lib = (
   FS.mkdir! dir;
@@ -119,15 +119,15 @@ let lib = (
     (./timer.wand, timer),
     (./broken.wand, broken)
   ];
-  let loaded = (Mudlib.load_all! ./lib).lib;
+  let loaded = Mudlib.load_all! ./lib;
   let _ = FS.delete_tree dir;
-  match FS.list_dir ./lib/home with
-  | Ok [] -> (let _ = FS.delete_tree ./lib/home; ())
+  match FS.list_dir ./lib/r/home with
+  | Ok [] -> (let _ = FS.delete_tree ./lib/r/home; ())
   | _ -> ();
   loaded
 )
 
-let start = World.World(World.with_pepper "test pepper", lib = lib)
+let start = World.World(World.with_pepper "test pepper", lib = lib.lib, realms = lib.realms)
 
 let noon = 2026-09-30T12:00:00Z
 
@@ -136,11 +136,11 @@ let at = "%{noon}"
 -- The time `n` seconds after noon, as an input carries it.
 let after n = "%{noon + Duration.seconds n}"
 
-let clock_id = "/home/tock/clock#0"
+let clock_id = "/r/home/tock/clock#0"
 
-let timer_id = "/home/tock/timer#0"
+let timer_id = "/r/home/tock/timer#0"
 
-let broken_id = "/home/tock/broken#0"
+let broken_id = "/r/home/tock/broken#0"
 
 -- What a test does to the world, one step at a time.
 let on time f state =
@@ -187,22 +187,22 @@ let events (w: World.World) = List.map (fn (e: World.Event) -> e.event) w.events
 group "heartbeats" (fn () -> [
   test "the test blueprints loaded" (fn t ->
     t.eq (true, true, true) (
-      Map.has? "/home/tock/clock" lib,
-      Map.has? "/home/tock/timer" lib,
-      Map.has? "/home/tock/broken" lib
+      Map.has? "/r/home/tock/clock" lib.lib,
+      Map.has? "/r/home/tock/timer" lib.lib,
+      Map.has? "/r/home/tock/broken" lib.lib
     )),
   test "an object with a heartbeat is called on every tick" (fn t ->
     t.eq
       (Some (JSON.of_int 2))
-      (beats (played [spawn "/home/tock/clock" None, tick at, tick (after 2)]))),
+      (beats (played [spawn "/r/home/tock/clock" None, tick at, tick (after 2)]))),
   test "nothing ticks in a world with no heartbeat and no call-out" (fn t ->
     t.eq (false, true, true) (
       World.ticking? (played []),
-      World.ticking? (played [spawn "/home/tock/clock" None]),
-      World.ticking? (played [spawn "/home/tock/timer" None, verb timer_id "set" at])
+      World.ticking? (played [spawn "/r/home/tock/clock" None]),
+      World.ticking? (played [spawn "/r/home/tock/timer" None, verb timer_id "set" at])
     )),
   test "a heartbeat charges its owner the steps it took" (fn t ->
-    let w = played [tock 1000, spawn "/home/tock/clock" (Some "tock"), tick at];
+    let w = played [tock 1000, spawn "/r/home/tock/clock" (Some "tock"), tick at];
     t.eq (Some (JSON.of_int 1), Some 999) (
       beats w,
       Option.map
@@ -213,7 +213,7 @@ group "heartbeats" (fn () -> [
     let w =
       played
         (List.concat
-          [spawn "/home/tock/broken" None]
+          [spawn "/r/home/tock/broken" None]
           (List.map (fn n -> tick (after (2 * n))) [0, 1, 2, 3, 4, 5, 6]));
     t.eq (5, 1) (
       List.length (List.filter (fn e -> e == "fault") (events w)),
@@ -223,7 +223,7 @@ group "heartbeats" (fn () -> [
 
 group "call-outs" (fn () -> [
   test "a call-out runs once, when its time has come" (fn t ->
-    let set = [spawn "/home/tock/timer" None, verb timer_id "set" at];
+    let set = [spawn "/r/home/tock/timer" None, verb timer_id "set" at];
     t.eq (words [], 1, words ["ring"], words ["ring"], 0) (
       heard (played (List.concat set [tick (after 29)])),
       List.length (played (List.concat set [tick (after 29)])).callouts,
@@ -235,20 +235,23 @@ group "call-outs" (fn () -> [
     t.eq
       (words ["early", "late"])
       (heard
-        (played [spawn "/home/tock/timer" None, verb timer_id "wind" at, tick (after 60)]))),
+        (played [spawn "/r/home/tock/timer" None, verb timer_id "wind" at, tick (after 60)]))),
   test "a call-out to a verb the object does not have is dropped, and logged" (fn t ->
-    let w = played [spawn "/home/tock/timer" None, verb timer_id "stray" at, tick (after 1)];
+    let w =
+      played [spawn "/r/home/tock/timer" None, verb timer_id "stray" at, tick (after 1)];
     t.eq ([], true) (w.callouts, List.any? (fn e -> e == "refused") (events w))),
   test "removing an object drops its call-outs" (fn t ->
     t.eq
       []
-      (World.remove timer_id (played [spawn "/home/tock/timer" None, verb timer_id "set" at])).callouts),
+      (World.remove
+        timer_id
+        (played [spawn "/r/home/tock/timer" None, verb timer_id "set" at])).callouts),
   test "call-outs are kept in world.json and run after a restart" (fn t ->
     with FS.temp_dir "wmd_time_" as d -> (
       let path = Path.join d ./world.json;
       let _ =
         played [
-          spawn "/home/tock/timer" None,
+          spawn "/r/home/tock/timer" None,
           verb timer_id "set" at,
           fn state -> Engine.snapshot! state path at
         ];
@@ -268,8 +271,8 @@ group "call-outs" (fn () -> [
     let paused =
       [
         tock 0,
-        spawn "/home/tock/clock" (Some "tock"),
-        spawn "/home/tock/timer" (Some "tock"),
+        spawn "/r/home/tock/clock" (Some "tock"),
+        spawn "/r/home/tock/timer" (Some "tock"),
         verb timer_id "set" at,
         tock (0 - 10),
         tick (after 30)

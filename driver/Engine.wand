@@ -12,8 +12,10 @@ import ./Files
 import ./Inspiration
 import ./Parse
 import ./Password
+import ./Scan
 import ./Snapshot
 import ./World
+import FS
 import JSON
 import List
 
@@ -35,10 +37,10 @@ let login_id = "/std/login#0"
 let player_bp = "/std/player"
 
 -- Where a body wakes until its account has signed the current rules.
-let rules_hall = "/realm/rules/hall#0"
+let rules_hall = "/r/rules/hall#0"
 
 -- Where every new body first stands.
-let arrival = "/realm/commons/square#0"
+let arrival = "/r/square#0"
 
 -- ── Changes ────────────────────────────────────────────────────────────
 
@@ -133,6 +135,83 @@ let max_files = 100
 
 let max_saved_total = 1048576
 
+-- ── Realms ─────────────────────────────────────────────────────────────
+
+-- The path above a blueprint path, as /r/home for /r/home/ann. None above
+-- the root.
+let _parent path =
+  let segs = String.split "/" path;
+  let up = String.join "/" (List.take (List.length segs - 1) segs);
+  if up == "" then None else Some up
+
+-- Every path above `path`, nearest first: /r/home/ann, /r/home and /r for
+-- /r/home/ann/den.
+let _above path =
+  match _parent path with
+  | Some p -> p :: _above p
+  | None -> []
+
+-- A realm's rule, under the same limits as any mudlib call. A rule does not
+-- leave anything to chance: each draw it makes is 0, so asking it again
+-- gives the same answer, and asking changes nothing.
+let _rule body =
+  match Wand.limit limits (fn () ->
+    try handle body () with
+    | Random!int _ k -> k 0
+    | Random!float _ k -> k 0.0
+    | Random!seed _ k -> k ()) with
+  | Ok r -> r
+  | Error why -> Error why
+
+-- What the `owner` rule of the realm whose file is `realm` says of `path`.
+-- A rule that faults gives the file to the admins.
+let _owner_by realm path (w: World.World) =
+  match Map.get realm w.realms with
+  | None -> None
+  | Some r -> (
+    match _rule (fn () -> r.owner path) with
+    | Ok owner -> Option.map String.lower owner
+    | Error _ -> None
+  )
+
+-- The realms a blueprint path is in, nearest first, up to the Commons. A
+-- realm counts only when the admins own its file, so a builder cannot make
+-- one in their home.
+let realms_of path (w: World.World) =
+  List.fold_left
+    (fn chain p -> if !(Map.has? p w.realms) then chain
+      else match chain with
+        | [near :: _] when _owner_by near p w != None -> chain
+        | _ -> p :: chain
+    )
+    []
+    (List.reverse (_above path))
+
+-- Who owns the file of blueprint path `path`, by account key: what the
+-- nearest realm's `owner` rule says, as ann for /r/home/ann/lamp. A file in
+-- no realm is the admins'.
+let file_owner path (w: World.World) =
+  match realms_of path w with
+  | [near :: _] -> _owner_by near path w
+  | [] -> None
+
+-- The one instance of the realm whose file is `path`.
+let realm_id path = "%{path}#0"
+
+-- Whether `id` is a realm's instance, which holds the realm's verbs and is
+-- no place to be.
+let realm? id (w: World.World) = Map.has? (World.blueprint_of id) w.realms
+
+-- Whether the nearest realm of the file of `id` grants `g`.
+let _granted? id (g: Core.Grant) (w: World.World) =
+  match realms_of (World.blueprint_of id) w with
+  | [near :: _] -> (
+    match Map.get near w.realms with
+    | Some r -> List.any? (fn x -> x == g) r.grants
+    | None -> false
+  )
+  | [] -> false
+
 -- ── Ownership ──────────────────────────────────────────────────────────
 
 -- The account key of a body, when it is one.
@@ -155,7 +234,7 @@ let _exempt? owner (w: World.World) =
 let _owner id (w: World.World) =
   match World.instance id w with
   | Some i -> i.owner
-  | None -> World.file_owner (World.blueprint_of id)
+  | None -> file_owner (World.blueprint_of id) w
 
 -- Code the ownership rules do not hold to: the driver's and the admins'.
 let _trusted? id (w: World.World) = _exempt? (World.owner_of id w) w
@@ -183,24 +262,42 @@ let players_in room (w: World.World) = List.filter player? (World.contents room 
 let _players (w: World.World) =
   List.filter player? (List.map (fn (i: World.Instance) -> i.id) (Map.values w.instances))
 
--- Whether `body` may go into `room`. A private room is open to its owner,
--- the accounts it invites, and the admins. A room not made yet will be
--- made private when a builder owns its file. Only a body is kept out:
--- anything else may go anywhere it is moved.
+-- Who may enter a new room of blueprint `path`: what its nearest realm
+-- says, and everyone in a room outside every realm.
+let start_allowed path (w: World.World) =
+  match realms_of path w with
+  | [near :: _] -> (
+    match Map.get near w.realms with
+    | Some r -> r.allowed
+    | None -> Core.Everyone
+  )
+  | [] -> Core.Everyone
+
+-- Whether `body` may go into `room`. Its owner and the admins always may.
+-- Anyone else may when the room allows them and its owner has not banned
+-- them. A room not made yet allows whom its realm says a new one does. Only
+-- a body is kept out: anything else may go anywhere it is moved, and a body
+-- may go into anything that is not a room.
 let may_enter? body room (w: World.World) =
   let key = _key_of body w;
-  let (public, owner, invited) =
+  let (allowed, owner) =
     match World.instance room w with
-    | Some i -> (i.public || i.env != None, i.owner, i.invited)
-    | None -> (
-      let owner = World.file_owner (World.blueprint_of room);
-      (owner == None, owner, [])
-    )
+    | Some i -> (if i.env != None then Core.Everyone else i.allowed, i.owner)
+    | None -> (let bp = World.blueprint_of room; (start_allowed bp w, file_owner bp w))
+  in
+  let named =
+    match allowed with
+    | Core.Everyone -> true
+    | Core.Only names -> List.any? (fn n -> Some n == key) names
+  in
+  let banned =
+    match (owner, key) with
+    | (Some o, Some k) -> World.banned? o k w
+    | _ -> false
   in
   !(player? body)
-  || public
-  || Option.some? key && (key == owner || List.any? (fn n -> Some n == key) invited)
-  || Option.some? key && _exempt? key w
+  || Option.some? key && (key == owner || _exempt? key w)
+  || named && !banned
 
 -- The version of the rules: the number after "version" on the first line
 -- of the rules help topic, as 3 in "The rules of WMD, version 3.", and 1
@@ -312,7 +409,7 @@ let _locked? obj (w: World.World) =
 
 let _from_login? (ctx: Core.Context) = World.blueprint_of ctx.self == "/std/login"
 
-let editor_bp = "/realm/editor/room"
+let editor_bp = "/r/editor/room"
 
 -- Whether a source claims Core.Blueprint, as the files the driver loads do.
 -- A helper, such as std/text.wand, is saved and not loaded.
@@ -332,16 +429,20 @@ let _too_long text =
     Error "a line of %{String.length text} characters, and the most is %{max_line}"
   else Ok()
 
--- Whether the player `body` may edit the file of blueprint path `path`.
+-- Whether the player `body` may edit the file of blueprint path `path`: an
+-- admin may edit any file, and a builder the files they own.
 let may_edit? body path (w: World.World) =
   match World.account_of body w with
-  | Some a -> Files.may_edit? a.role a.name path
+  | Some a ->
+    Files.valid? path
+    && (a.role == "admin" || file_owner path w == Some (String.lower a.name))
   | None -> false
 
--- Only the editor may check or save a file, and only one its actor may
--- edit.
+-- Only an object of a realm that grants MayCheckSave may check or save a
+-- file, and only one its actor may edit.
 let _may_file (ctx: Core.Context) path (w: World.World) =
-  if !(_editor? ctx.self) then Error "only %{editor_bp} may check or save a file"
+  if !(_granted? ctx.self Core.MayCheckSave w) then
+    Error "only the editor may check or save a file"
   else if !(may_edit? ctx.actor path w) then Error "%{ctx.actor} may not edit %{path}"
   else Ok()
 
@@ -365,9 +466,9 @@ let _may_spawn_in? (ctx: Core.Context) dest (w: World.World) =
   || _trusted? ctx.self w
   || Option.some? (World.owner_of ctx.self w) && _owner dest w == World.owner_of ctx.self w
 
--- Whether `ctx.self` may ask for action `a`, and why not. Every rule on
--- what mudlib code may do is here, in one place.
-let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
+-- The driver's own policy on action `a`, which every realm's rules come
+-- after.
+let _policy (ctx: Core.Context) (a: Core.Action) (w: World.World) =
   match a with
   | Core.Say text -> _too_long text
   | Core.Tell target text -> if World.session? target then
@@ -387,6 +488,7 @@ let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
     -- Only what its owner owns moves a locked thing.
     else if !(player? o) && o != ctx.self && _locked? o w && !(_same_owner? ctx o w) then
       Error "may not move %{o}: it is locked"
+    else if realm? d w then Error "may not move %{o} into %{d}: a realm is no place"
     else if !(may_enter? o d w) then Error "may not move %{o} into %{d}: it is private"
     -- An editor is private to the one it was opened for.
     else if _editor? d && Option.and_then (fn (i: World.Instance) -> i.creator) (World.instance d w) != Some o then
@@ -396,6 +498,8 @@ let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
   | Core.Spawn bp dest -> (
     let d = World.resolve dest;
     if bp == player_bp || bp == "/std/login" then Error "may not spawn %{bp}"
+    else if Map.has? bp w.realms then Error "may not spawn %{bp}: it is a realm"
+    else if realm? d w then Error "may not spawn into %{d}: a realm is no place"
     else if !(_may_spawn_in? ctx d w) then
       Error "may not spawn into %{d}: it is not here, and not its owner's"
     else Ok()
@@ -417,14 +521,50 @@ let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
   | Core.Check path _ -> _may_file ctx path w
   | Core.Save path _ -> _may_file ctx path w
   | Core.Draft path _ -> _may_file ctx path w
-  | Core.Run _ -> if _editor? ctx.self then Ok() else Error "only %{editor_bp} may run source"
-  | Core.Acknowledge body -> if String.starts_with? "/realm/rules/" ctx.self && body == ctx.actor then Ok()
-    else Error "only /realm/rules may say the rules were signed"
+  | Core.Run _ -> if _granted? ctx.self Core.MayCheckSave w then Ok()
+    else Error "only the editor may run source"
+  | Core.Acknowledge body -> if _granted? ctx.self Core.MayAcknowledge w && body == ctx.actor then Ok()
+    else Error "only the Rules Hall may say the rules were signed"
   | Core.After _ _ -> (
     let n = List.length (World.callouts_of ctx.self w);
     if n >= max_callouts then Error "%{n} call-outs waiting, and the most is %{max_callouts}"
     else Ok()
   )
+
+-- What `rule` says of each realm `room` is in, nearest first, given the
+-- realm's path and module: the first refusal, or Ok when every realm
+-- allows. A rule that faults refuses.
+let _realms_say room rule (w: World.World) =
+  List.fold_left
+    (fn acc p -> match (acc, Map.get p w.realms) with
+      | (Ok _, Some r) -> (
+        match _rule (fn () -> rule p r) with
+        | Ok said -> said
+        | Error _ -> Error "the rules of %{p} are not working"
+      )
+      | _ -> acc
+    )
+    Ok()
+    (realms_of (World.blueprint_of room) w)
+
+-- Whether `ctx.self` may ask for action `a`, and why not: the driver's
+-- policy first, then the `allows` rule of every realm the object's room is
+-- in. Every rule on what mudlib code may do is here, in one place.
+let allowed (ctx: Core.Context) (a: Core.Action) (w: World.World) =
+  match _policy ctx a w with
+  | Error why -> Error why
+  | Ok _ -> _realms_say (room_of ctx.self w) (fn _ (r: Core.Realm) -> r.allows ctx a) w
+
+-- Whether `body` may use the command `verb` where it is, and why not.
+-- /quit always works.
+let _command_ok body verb (w: World.World) =
+  let here = room_of body w;
+  if verb == "/quit" then Ok()
+  else
+    _realms_say
+      here
+      (fn p (r: Core.Realm) -> r.commands (ctx_for w (realm_id p) body) verb)
+      w
 
 -- ── Capacity and Inspiration ───────────────────────────────────────────
 
@@ -450,8 +590,15 @@ let _price (a: Core.Action) =
 let _size bytes = Size.format (Size.of_bytes bytes)
 
 -- Whether a new file fits the Capacity of `owner`.
+-- How many mudlib files the account `key` owns, by the owner rules.
+let file_count key (w: World.World) =
+  List.length
+    (List.filter
+      (fn f -> file_owner (Scan.path_in w.lib_root f) w == Some key)
+      (Scan.files w.lib_root))
+
 let _file_room owner path (w: World.World) =
-  let n = Files.count w.lib_root owner;
+  let n = file_count owner w;
   if Files.exists? w.lib_root path || n < max_files then Ok()
   else
     Error "You have %{n} files, and the most is %{max_files}. Remove one to make another."
@@ -540,6 +687,42 @@ let _pay body cost what k (tx: Tx) = (
   | _ -> k tx
 )
 
+let _fits? (arg: Core.Arg) (f: Parse.Found) holder =
+  match arg with
+  | Core.NoArg -> true
+  | Core.This -> Parse.found? holder f
+  | Core.AnyObj -> Option.some? (Parse.found_id f)
+
+-- The first verb that answers: on the player, then the room, then the
+-- direct object, then the indirect one, then each realm the room is in,
+-- nearest first, up to the Commons.
+let _find (w: World.World) holders verb dobj iobj =
+  List.head
+    (List.filter_map
+      (fn h -> match World.instance h w with
+        | None -> None
+        | Some i ->
+          Option.map
+            (fn v -> (h, v))
+            (List.find
+              (fn (v: Core.Verb) -> List.any? (fn n -> n == verb) v.names
+              && _fits? v.dobj dobj h
+              && _fits? v.iobj iobj h)
+              i.object.verbs)
+      )
+      holders)
+
+-- Whose verbs a command of `body` in `here` may run, in the order they are
+-- asked: the body, the room, the objects the command names, then each
+-- realm the room is in.
+let _holders body here named (w: World.World) =
+  List.unique
+    (List.flatten [
+      [body, here],
+      named,
+      List.map realm_id (realms_of (World.blueprint_of here) w)
+    ])
+
 -- ── Spawning ───────────────────────────────────────────────────────────
 
 -- Make instance `id` of blueprint `bp` inside `dest`, owned by `owner`, and
@@ -563,8 +746,8 @@ let _create id bp saved dest owner (tx: Tx) =
             env = dest,
             created = Some tx.at,
             owner = owner,
-            -- A builder's room starts private; the admins' rooms are open.
-            public = owner == None
+            -- A room starts open to whom its realm says.
+            allowed = start_allowed bp tx.w
           )))
       |> _apply_actions (ctx_for tx.w id id) init.actions
   )
@@ -574,7 +757,7 @@ let _create id bp saved dest owner (tx: Tx) =
 and _ensure id (tx: Tx) =
   let full = World.resolve id;
   if Option.some? (World.instance full tx.w) then tx
-  else _create full (World.blueprint_of full) None None (World.file_owner (World.blueprint_of full)) tx
+  else _create full (World.blueprint_of full) None None (file_owner (World.blueprint_of full) tx.w) tx
 
 -- A new instance of `bp` in `dest`, made by `actor`'s command and owned by
 -- `owner`.
@@ -649,7 +832,7 @@ and _move (ctx: Core.Context) obj dest (tx: Tx) =
 and _explore body room (tx: Tx) =
   match (World.account_of body tx.w, World.owner_of room tx.w) with
   | (Some a, Some o) when World.env_of room tx.w == None
-    && Option.map (fn (i: World.Instance) -> i.public) (World.instance room tx.w) == Some true
+    && Option.map World.public? (World.instance room tx.w) == Some true
     && o != String.lower a.name
     && !(Map.has? room a.explored)
     && Inspiration.today tx.w.now a.explored < Inspiration.bonuses_a_day ->
@@ -746,7 +929,18 @@ and update actor path (tx: Tx) =
     moved
     |> _event (World.Event(at = "", event = "update", actor = actor, object = Some path, text = Some "%{n} moved, %{List.length kept} kept"))
     |> change (World.tell actor told)
+    |> _update_realm actor path
   )
+
+-- A file that is a realm too: load its rules again, and make its instance
+-- when the realm is new. Rules that do not load leave the old ones. A file
+-- that no longer claims Core.Realm is a realm no more.
+and _update_realm actor path (tx: Tx) =
+  if !(Scan.claims? "Realm" (Option.default "" (Files.read tx.w.lib_root path))) then
+    change (fn w -> World.World(w, realms = Map.delete path w.realms)) tx
+  else match Wand.load Core.Realm.loader (Files.file_of tx.w.lib_root path) with
+    | Error why -> change (World.tell actor "The rules of %{path} were not updated: %{why}") tx
+    | Ok r -> tx |> change (World.set_realm path r) |> _ensure (realm_id path)
 
 -- Make instances again as `create` makes a new one, and apply its starting
 -- actions again. Each keeps its id, its place and who made it. A body
@@ -909,7 +1103,16 @@ and verb_with self actor (p: Core.Parsed) (tx: Tx) =
     )
   )
 
-and look body (tx: Tx) = verb body body "look" tx
+-- `look`, for a body that moved: the first `look` its holders answer to,
+-- as when the player types it.
+and look body (tx: Tx) =
+  let here = room_of body tx.w;
+  match _find tx.w (_holders body here [] tx.w) "look" Parse.NoWords Parse.NoWords with
+  | Some(h, v) -> (
+    let ctx = ctx_for tx.w h body;
+    run ctx (fn () -> v.run ctx (Core.Parsed(verb = "look"))) tx
+  )
+  | None -> tx
 
 -- ── Login ──────────────────────────────────────────────────────────────
 
@@ -1003,30 +1206,6 @@ let _expand line =
   else if String.starts_with? ";" line then "semipose %{rest}"
   else line
 
-let _fits? (arg: Core.Arg) (f: Parse.Found) holder =
-  match arg with
-  | Core.NoArg -> true
-  | Core.This -> Parse.found? holder f
-  | Core.AnyObj -> Option.some? (Parse.found_id f)
-
--- The first verb that answers: on the player, then the room, then the
--- direct object, then the indirect one.
-let _find (w: World.World) holders verb dobj iobj =
-  List.head
-    (List.filter_map
-      (fn h -> match World.instance h w with
-        | None -> None
-        | Some i ->
-          Option.map
-            (fn v -> (h, v))
-            (List.find
-              (fn (v: Core.Verb) -> List.any? (fn n -> n == verb) v.names
-              && _fits? v.dobj dobj h
-              && _fits? v.iobj iobj h)
-              i.object.verbs)
-      )
-      holders)
-
 -- Why nothing answered, in words the player can act on.
 let _unmatched (w: World.World) verb (dobj: Parse.Found) =
   match dobj with
@@ -1051,8 +1230,11 @@ let command body line (tx: Tx) = (
   let dobj = Parse.resolve tx.w body here words.dobj;
   let iobj = Parse.resolve tx.w body here words.iobj;
   let holders =
-    List.unique
-      (List.flatten [[body, here], _list (Parse.found_id dobj), _list (Parse.found_id iobj)]);
+    _holders
+      body
+      here
+      (List.concat (_list (Parse.found_id dobj)) (_list (Parse.found_id iobj)))
+      tx.w;
   match _find tx.w holders verb dobj iobj with
   | Some(h, v) -> (
     let ctx = ctx_for tx.w h body;
@@ -1110,9 +1292,10 @@ let _or_none xs = if xs == [] then "nothing" else String.join ", " xs
 let _access (i: World.Instance) =
   if player? i.id then "its own"
   else if i.env == None then
-    if i.public then "public"
-    else if i.invited == [] then "private"
-    else "private, and open to %{String.join ", " i.invited}"
+    match i.allowed with
+    | Core.Everyone -> "public"
+    | Core.Only [] -> "private"
+    | Core.Only names -> "private, and open to %{String.join ", " names}"
   else if i.locked then "locked"
   else "unlocked"
 
@@ -1157,7 +1340,7 @@ let _examine body words (w: World.World) = (
 )
 
 -- The blueprint path `/edit` names: the room's, an object's by name, or
--- one written out, as /home/ann/lamp.
+-- one written out, as /r/home/ann/lamp.
 let _edit_target body words (w: World.World) = (
   let here = room_of body w;
   if words == "" || words == "here" then Ok (World.blueprint_of here)
@@ -1212,13 +1395,13 @@ let _edit body words (tx: Tx) =
   | Error why -> change (World.tell body why) tx
   | Ok path -> if !(Files.valid? path) then
       change
-        (World.tell body "'%{path}' is not a mudlib path. One looks like /home/ann/lamp.")
+        (World.tell body "'%{path}' is not a mudlib path. One looks like /r/home/ann/lamp.")
         tx
     else if !(may_edit? body path tx.w) then
       change
         (World.tell
           body
-          "You may not edit %{path}. A builder edits the files in /home/<name>/.")
+          "You may not edit %{path}. A builder edits the files in /r/home/<name>/.")
         tx
     else (
       let text = Files.read tx.w.lib_root path;
@@ -1297,7 +1480,8 @@ let _forms (i: World.Instance) (v: Core.Verb) =
   let iobj = if v.iobj == Core.NoArg then "" else " <word>%{arg v.iobj}";
   String.join ", " (List.map (fn n -> "%{n}%{arg v.dobj}%{iobj}") v.names)
 
--- /verbs: what a thing answers to, and a room's exits.
+-- /verbs: what a thing answers to, and a room's exits. For the room you
+-- are in, also what each realm it is in answers to, nearest first.
 let _verbs body words (w: World.World) =
   match _named body words w with
   | Parse.Found id -> (
@@ -1311,13 +1495,25 @@ let _verbs body words (w: World.World) =
       let exits =
         if i.object.exits == Map.empty then []
         else ["Exits: %{String.join ", " (Map.keys i.object.exits)}."];
-      World.tell body (String.join "\n" (List.concat verbs exits)) w
+      let realms =
+        if id != room_of body w then []
+        else
+          List.flatten
+            (List.filter_map
+              (fn r -> match World.instance r w with
+                | Some ri when ri.object.verbs != [] ->
+                  Some
+                    ("%{short_of r w} answers to:" :: List.map (fn v -> "  %{_forms ri v}") ri.object.verbs)
+                | _ -> None
+              )
+              (List.map realm_id (realms_of (World.blueprint_of id) w)));
+      World.tell body (String.join "\n" (List.flatten [verbs, exits, realms])) w
     )
   )
   | _ -> World.tell body "You don't see a '%{words}' here." w
 
 -- The examples /copy may copy: the files of the Learning Hall.
-let learning = "/realm/learning/"
+let learning = "/r/learning/"
 
 -- /copy: write the file of a Learning Hall example into the builder's home,
 -- and load it, as a start to change. A file of that name already there is
@@ -1329,7 +1525,7 @@ let _copy body words (tx: Tx) =
     let from = World.blueprint_of id;
     let key = String.lower a.name;
     let to =
-      "/home/%{key}/%{Option.default "" (List.head (List.reverse (String.split "/" from)))}";
+      "/r/home/%{key}/%{Option.default "" (List.head (List.reverse (String.split "/" from)))}";
     let room? = World.env_of id tx.w == None;
     if !(String.starts_with? learning from) then
       change
@@ -1339,7 +1535,7 @@ let _copy body words (tx: Tx) =
         tx
     else if Files.exists? tx.w.lib_root to then
       change (World.tell body "You have %{to} already. Change it with /edit %{to}.") tx
-    else match Files.read tx.w.lib_root from with
+    else match Option.map (Files.moved from to) (Files.read tx.w.lib_root from) with
       | None -> change (World.tell body "%{from} has no file to copy.") tx
       | Some source -> (
         match budget (Some key) (Core.Save to source) tx.w with
@@ -1387,7 +1583,7 @@ let _stat_text (a: World.Account) (w: World.World) =
   let lines =
     [
       "%{a.name}, %{a.role}.",
-      "Capacity: %{List.length (World.owned key w)} of %{max_owned} objects, %{Files.count w.lib_root key} of %{max_files} files, %{_size (World.saved_bytes key w)} of %{_size max_saved_total} of saved state.",
+      "Capacity: %{List.length (World.owned key w)} of %{max_owned} objects, %{file_count key w} of %{max_files} files, %{_size (World.saved_bytes key w)} of %{_size max_saved_total} of saved state.",
       "Inspiration: %{Inspiration.amount w.now i} of %{Inspiration.full}, refilling %{60 / Inspiration.seconds_per_point} a minute.",
       "Rooms explored: %{Map.size a.explored}, %{Inspiration.today w.now a.explored} of %{Inspiration.bonuses_a_day} today."
     ];
@@ -1418,6 +1614,13 @@ let _may_change? body id (w: World.World) =
   let key = _key_of body w;
   Option.some? key && (World.owner_of id w == key || _exempt? key w)
 
+-- Who may enter `room` once it is private: whom it lets in already, or
+-- only its owner and the admins when it was public.
+let _closed room (w: World.World) =
+  match Option.map (fn (i: World.Instance) -> i.allowed) (World.instance room w) with
+  | Some (Core.Only names) -> Core.Only names
+  | _ -> Core.Only []
+
 -- /public and /private: open the room `body` is in to everyone, or close it
 -- to all but its owner, whoever it invites, and the admins.
 let _set_public body words public (tx: Tx) =
@@ -1429,7 +1632,7 @@ let _set_public body words public (tx: Tx) =
     change (World.tell body "%{name} is not yours to open or close.") tx
   else
     tx
-    |> change (World.set_public room public)
+    |> change (World.set_allowed room (if public then Core.Everyone else _closed room tx.w))
     |> _event World.Event(
       at = "",
       event = if public then "public" else "private",
@@ -1451,6 +1654,10 @@ let _invite body words yes (tx: Tx) = (
   | [name :: rest] when rest == [] || rest == ["here"] -> (
     if !(_may_change? body room tx.w) then
       change (World.tell body "%{title} is not yours to invite anyone into.") tx
+    else if Option.map World.public? (World.instance room tx.w) == Some true then
+      change
+        (World.tell body "%{title} is public: anyone may come in. /private here closes it.")
+        tx
     else match World.account name tx.w with
       | None -> change (World.tell body "There is no one called %{name}.") tx
       | Some a -> if yes then
@@ -1487,6 +1694,45 @@ let _invite body words yes (tx: Tx) = (
         (if yes then "Invite whom? /invite bo here" else "Uninvite whom? /uninvite bo here"))
       tx
 )
+
+-- /ban and /unban: keep one account out of every room the account of
+-- `body` owns, public or private, or no longer. A banned body in one of
+-- those rooms goes home. The banned person is not told: a room they try to
+-- enter says what a private room says.
+let _ban body words yes (tx: Tx) =
+  match (World.account_of body tx.w, String.words words) with
+  | (None, _) -> change (World.tell body "You have no account.") tx
+  | (Some me, [name]) -> (
+    match World.account name tx.w with
+    | None -> change (World.tell body "There is no one called %{name}.") tx
+    | Some a when String.lower a.name == String.lower me.name ->
+      change (World.tell body "You cannot ban yourself.") tx
+    | Some a when a.role == "admin" ->
+      change (World.tell body "An admin may go anywhere, so %{a.name} cannot be banned.") tx
+    | Some a -> if yes then (
+        let banned =
+          tx
+          |> change (World.ban me.name a.name)
+          |> _event World.Event(at = "", event = "ban", actor = body, name = Some a.name)
+          |> change (World.tell body "%{a.name} may no longer come into your rooms.");
+        let room = room_of a.body banned.w;
+        if World.owner_of room banned.w == Some (String.lower me.name) then
+          banned
+          |> _tell_room room a.body "%{a.name} leaves."
+          |> _move (ctx_for banned.w a.body a.body) a.body (home_of a.body banned.w)
+        else banned
+      )
+      else
+        tx
+        |> change (World.unban me.name a.name)
+        |> _event World.Event(at = "", event = "unban", actor = body, name = Some a.name)
+        |> change
+          (World.tell body "%{a.name} may come into your rooms again, where they are let in.")
+  )
+  | _ ->
+    change
+      (World.tell body (if yes then "Ban whom? /ban bo" else "Unban whom? /unban bo"))
+      tx
 
 -- /lock and /unlock: whether only what its owner owns may move a thing,
 -- or anything that can reach it.
@@ -1565,8 +1811,8 @@ let _hold_if_flagged (f: World.Flag) (tx: Tx) = (
   let held =
     (if List.length by < flags_to_hold then None
      else match World.instance f.target tx.w with
-       | Some i when f.kind == "room" && i.public -> Some (
-         World.set_public f.target false,
+       | Some i when f.kind == "room" && World.public? i -> Some (
+         World.set_allowed f.target (Core.Only []),
          "is private until an admin has looked at it"
        )
        | Some i when f.kind == "object" && !i.held -> Some (
@@ -1763,7 +2009,7 @@ let _resolve body words (tx: Tx) = (
             change (World.tell body "Only a room is made private.") tx
           else
             tx
-            |> change (World.set_public f.target false)
+            |> change (World.set_allowed f.target (Core.Only []))
             |> (match f.owner with
               | Some o -> change (World.notice o "An admin made your room %{f.target} private: %{f.reason}.%{why}")
               | None -> fn t -> t)
@@ -1827,10 +2073,6 @@ let _set_paused body words paused (tx: Tx) =
 -- The verbs whose lines a report can show.
 let _speech = ["say", "pose", "semipose"]
 
--- What a body may do before it has signed the rules: read them, sign
--- them, or leave.
-let _before_signing = ["look", "l", "read", "sign", "/help", "/quit"]
-
 -- /help: the topics, or one of them.
 let _help body words (w: World.World) = (
   let topics =
@@ -1862,14 +2104,16 @@ let _command_line sid body at line (tx: Tx) =
         )
         tx;
     -- What a body says is kept for a while, in case someone reports it.
-    let logged =
+    let said =
       if List.any? (fn v -> v == verb) _speech then change (World.said_by body full) noted
       else noted;
-    if !(signed? body tx.w) && !(List.any? (fn v -> v == verb) _before_signing) then
-      change
-        (World.tell body "First read the rules on the wall, then sign them: sign rules.")
-        logged
-    else match verb with
+    -- A body whose account has not signed the current rules is taken to the
+    -- Rules Hall, and the realms of where it stands say which commands work.
+    let logged = if signed? body tx.w then said else _to_hall body said;
+    match _command_ok body verb logged.w with
+    | Error why -> change (World.tell body why) logged
+    | Ok _ -> (
+      match verb with
       | "/quit" ->
         logged |> change (World.tell body "Goodbye.") |> change (World.close_soon sid)
       | "/who" -> (
@@ -1892,6 +2136,8 @@ let _command_line sid body at line (tx: Tx) =
       | "/private" -> _set_public body (_after_verb full) false logged
       | "/invite" -> _invite body (_after_verb full) true logged
       | "/uninvite" -> _invite body (_after_verb full) false logged
+      | "/ban" -> _ban body (_after_verb full) true logged
+      | "/unban" -> _ban body (_after_verb full) false logged
       | "/lock" -> _set_locked body (_after_verb full) true logged
       | "/unlock" -> _set_locked body (_after_verb full) false logged
       | "/edit" -> _edit body (_after_verb full) logged
@@ -1909,6 +2155,7 @@ let _command_line sid body at line (tx: Tx) =
         |> change (World.tell body "%{short_of room tx.w} is your home now.")
       )
       | _ -> command body full logged
+    )
   )
 
 -- The input hook of the room `body` is in, when it takes `line`: every
@@ -1986,9 +2233,11 @@ let run_input (i: World.Input) (tx: Tx) =
 
 -- ── The loop ───────────────────────────────────────────────────────────
 
--- The rooms and services that exist before anyone connects.
+-- The rooms, services and realms that exist before anyone connects.
 let boot state at =
-  let tx = begin (Shared.get state) at |> _ensure login_id |> _ensure arrival;
+  let start = begin (Shared.get state) at |> _ensure login_id |> _ensure arrival;
+  let honored = List.filter (fn p -> file_owner p start.w == None) (Map.keys start.w.realms);
+  let tx = List.fold_left (fn t p -> _ensure (realm_id p) t) start honored;
   Shared.update state (commit tx)
 
 -- Take every queued input, in order. Each is applied in its own update,
@@ -2118,11 +2367,18 @@ let snapshot! state path at = (
 -- Who owns an object a snapshot kept. A version 1 file did not keep
 -- owners, so there a body is its account's and anything else is the owner
 -- of its file.
-let _restored_owner (f: Snapshot.File) (s: Snapshot.Saved) =
+let _restored_owner (f: Snapshot.File) (s: Snapshot.Saved) (w: World.World) =
   if f.version >= 2 then s.owner
   else match List.find (fn (a: World.Account) -> a.body == s.id) f.accounts with
     | Some a -> Some (String.lower a.name)
-    | None -> World.file_owner s.blueprint
+    | None -> file_owner s.blueprint w
+
+-- Who may enter a room a snapshot kept: everyone when it was public, and
+-- otherwise whom it invited. Before rooms were private, a room the admins
+-- owned was public.
+let _restored_allowed (f: Snapshot.File) (s: Snapshot.Saved) (w: World.World) =
+  if Option.default (_restored_owner f s w == None) s.public then Core.Everyone
+  else Core.Only s.invited
 
 -- Bring back what a snapshot kept: the accounts, then every object, made
 -- again by its blueprint's `create` from its saved state, and the
@@ -2139,15 +2395,10 @@ let restore state (f: Snapshot.File) at =
   let tx =
     List.fold_left
       (fn t (s: Snapshot.Saved) -> t
-      |> _create s.id s.blueprint (Some s.state) s.env (_restored_owner f s)
+      |> _create s.id s.blueprint (Some s.state) s.env (_restored_owner f s t.w)
       |> change (World.set_made s.id s.creator s.created s.modified)
       |> change (World.keep_saved s.id s.state)
-      |> change
-        (World.set_access
-          s.id
-          (Option.default (_restored_owner f s == None) s.public)
-          s.invited
-          s.locked)
+      |> change (World.set_access s.id (_restored_allowed f s t.w) s.locked)
       |> change (World.set_held s.id s.held))
       accounts
       f.instances;

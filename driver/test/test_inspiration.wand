@@ -73,8 +73,8 @@ test "a run costs a point for each 1000 steps or part" (fn t ->
 test "only today's bonuses count toward the day's" (fn t ->
   let explored =
     Map.from_list [
-      ("/home/bo/hall#0", 2026-09-29T23:59:59Z),
-      ("/home/bo/den#0", 2026-09-30T00:00:00Z),
-      ("/home/cy/attic#0", 2026-09-30T11:00:00Z)
+      ("/r/home/bo/hall#0", 2026-09-29T23:59:59Z),
+      ("/r/home/bo/den#0", 2026-09-30T00:00:00Z),
+      ("/r/home/cy/attic#0", 2026-09-30T11:00:00Z)
     ];
   t.eq 2 (Inspiration.today noon explored))

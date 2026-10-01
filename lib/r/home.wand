@@ -1,0 +1,22 @@
+uses {Random}
+
+-- The Home realm: every builder's home, as /r/home/ann/ for ann. Each
+-- builder owns the files in their own home.
+
+import String
+
+let Core = import ../std/core
+let Realm = import ../std/realm
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = Realm.object "the Home realm" [])
+
+implement Core.Realm =
+  let commands = Realm.anything;
+  let allows = Realm.anything;
+  let owner path = match String.split "/" path with
+  | ["" :: "r" :: "home" :: name :: _ :: _] -> Some (String.lower name)
+  | _ -> None;
+  -- A builder's new room is private until they make it public.
+  let allowed = Core.Only [];
+  let grants = []

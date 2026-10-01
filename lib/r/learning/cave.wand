@@ -29,11 +29,11 @@ let cave =
     long = fn ctx -> if _lit ctx > 0 then
         "Lamplight shines on wet stone walls. Water drips somewhere further in. Read /help lesson6, then /copy here and /copy lamp to make them yours."
       else "It is pitch dark. Something metal clinks at your feet: a lamp, by the feel of it. Try light lamp.",
-    exits = {hall = Room.exit "/realm/learning/hall"},
+    exits = {hall = Room.exit "/r/learning/hall"},
     save = fn () -> JSON.null
   )
 
 implement Core.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = cave, actions = [Core.Spawn "/realm/learning/lamp" self])
+  | None -> Core.Init(object = cave, actions = [Core.Spawn "/r/learning/lamp" self])
   | Some _ -> Core.Init(object = cave)

@@ -19,7 +19,7 @@ let {test, group} = import Test
 
 let Core = import ../../lib/std/core
 
-let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
+let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -33,11 +33,11 @@ let ann_body = "/std/player#0"
 
 let bo_body = "/std/player#1"
 
-let square = "/realm/commons/square#0"
+let square = "/r/square#0"
 
-let garden = "/realm/commons/garden#0"
+let garden = "/r/garden#0"
 
-let lever = "/realm/commons/lever#0"
+let lever = "/r/lever#0"
 
 let line sid text = World.queue (World.Line sid at text)
 
@@ -90,7 +90,7 @@ let inspiration name (w: World.World) =
   | Some a -> Inspiration.amount noon a.inspiration
   | None -> 0
 
-let spawn_lever = line ann `/eval [Core.Spawn "/realm/commons/lever" ctx.here]`
+let spawn_lever = line ann `/eval [Core.Spawn "/r/lever" ctx.here]`
 
 group "owners" (fn () -> [
   test "a body is its account's, and the commons are the admins'" (fn t ->
@@ -103,11 +103,11 @@ group "owners" (fn () -> [
   test "what a builder spawns is theirs" (fn t ->
     t.eq
       (Some "ann")
-      (World.owner_of "/realm/commons/lever#1" (played (List.concat ann_in [spawn_lever])))),
+      (World.owner_of "/r/lever#1" (played (List.concat ann_in [spawn_lever])))),
   test "a room in a builder's home is theirs" (fn t ->
     t.eq (Some "ann", None) (
-      World.file_owner "/home/ann/hall",
-      World.file_owner "/realm/commons/square"
+      Engine.file_owner "/r/home/ann/hall" start,
+      Engine.file_owner "/r/square" start
     ))
 ])
 
@@ -145,9 +145,9 @@ group "the policy" (fn () -> (
       t.ok (ok (Engine.allowed (Engine.ctx_for w ann_body ann_body) (Core.Tell bo_body "Hi.") w))),
     test "an object spawns here, and in what its owner owns, and nowhere else" (fn t ->
       t.eq (true, true, false) (
-        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/realm/commons/lever" square) w),
-        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/realm/commons/lever" "/home/bo/hall") w),
-        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/realm/commons/lever" garden) w)
+        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/r/lever" square) w),
+        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/r/lever" "/r/home/bo/hall") w),
+        ok (Engine.allowed (as_lever ann_body) (Core.Spawn "/r/lever" garden) w)
       ))
   ]
 ))
@@ -168,7 +168,7 @@ group "Inspiration" (fn () -> [
         ann
         "That needs 10 Inspiration, and you have 3. You will have enough in 42 seconds."
         w,
-      List.length (World.instances_of "/realm/commons/lever" w)
+      List.length (World.instances_of "/r/lever" w)
     )),
   test "/eval with none left is refused" (fn t ->
     t.eq
@@ -180,10 +180,7 @@ group "Inspiration" (fn () -> [
       (heard ann (played (List.concat ann_in [ann_has 4, line ann "/reset me"])))),
   test "an admin is held to none of it" (fn t ->
     let w = played (List.concat ann_in [ann_admin, ann_has 0, spawn_lever]);
-    t.eq (2, 0) (
-      List.length (World.instances_of "/realm/commons/lever" w),
-      inspiration "ann" w
-    ))
+    t.eq (2, 0) (List.length (World.instances_of "/r/lever" w), inspiration "ann" w))
 ])
 
 group "Capacity" (fn () -> [
@@ -193,14 +190,14 @@ group "Capacity" (fn () -> [
       match World.instance lever w with
       | Some l ->
         List.fold_left
-          (fn acc n -> World.put World.Instance(l, id = "/realm/commons/lever#%{n + 10}", owner = Some "ann") acc)
+          (fn acc n -> World.put World.Instance(l, id = "/r/lever#%{n + 10}", owner = Some "ann") acc)
           w
           (List.range 1 199)
       | None -> w;
     let w = played (List.concat ann_in [fill, spawn_lever]);
     t.eq (true, None) (
       heard? ann "You own 200 objects, and the most is 200. Remove some to make more." w,
-      World.instance "/realm/commons/lever#210" w |> Option.map (fn (i: World.Instance) -> i.id)
+      World.instance "/r/lever#210" w |> Option.map (fn (i: World.Instance) -> i.id)
     ))
 ])
 

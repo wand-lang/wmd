@@ -13,7 +13,7 @@ import String
 
 let {test, group} = import Test
 
-let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
+let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -23,11 +23,11 @@ let bo = World.session_id 1
 
 let cy = World.session_id 2
 
-let square = "/realm/commons/square#0"
+let square = "/r/square#0"
 
-let garden = "/realm/commons/garden#0"
+let garden = "/r/garden#0"
 
-let lever = "/realm/commons/lever#0"
+let lever = "/r/lever#0"
 
 let line sid text = World.queue (World.Line sid at text)
 
@@ -92,9 +92,7 @@ group "flagging" (fn () -> [
     t.eq (Some ("cy", "object", lever, Some "bo", "it says something rude"), true, true) (
       Option.map (fn (f: World.Flag) -> (f.by, f.kind, f.target, f.owner, f.reason)) f,
       Option.map
-        (fn (f: World.Flag) -> String.contains?
-          "--- /realm/commons/lever.wand ---"
-          f.evidence)
+        (fn (f: World.Flag) -> String.contains? "--- /r/lever.wand ---" f.evidence)
         f == Some true,
       heard? cy "Thank you. An admin will look at it." w
     )),
@@ -102,7 +100,7 @@ group "flagging" (fn () -> [
     let w = after [line cy "/flag lever it says something rude"];
     t.eq
       [
-        "Your object /realm/commons/lever#0 was flagged: it says something rude. An admin will look at it."
+        "Your object /r/lever#0 was flagged: it says something rude. An admin will look at it."
       ]
       (heard bo w)),
   test "here is the room" (fn t ->
@@ -145,10 +143,7 @@ group "three flags" (fn () -> [
     t.eq (true, true, true) (
       heard_any? cy "something waiting for an admin" w,
       heard? cy "That is waiting for an admin." w,
-      heard?
-        bo
-        "Your object /realm/commons/lever#0 is out of view until an admin has looked at it."
-        w
+      heard? bo "Your object /r/lever#0 is out of view until an admin has looked at it." w
     )),
   test "from one person count once" (fn t ->
     let w =
@@ -162,9 +157,7 @@ group "three flags" (fn () -> [
       (Option.map (fn (i: World.Instance) -> i.held) (World.instance lever w))),
   test "make a room private" (fn t ->
     let w = after [line ann "/flag here a", line bo "/flag here b", line cy "/flag here c"];
-    t.eq
-      (Some false)
-      (Option.map (fn (i: World.Instance) -> i.public) (World.instance square w)))
+    t.eq (Some false) (Option.map World.public? (World.instance square w)))
 ])
 
 group "review" (fn () -> [
@@ -172,9 +165,7 @@ group "review" (fn () -> [
     t.eq ["Only an admin reviews flags."] (heard bo (after [line bo "/flags"]))),
   test "/flags lists the open ones" (fn t ->
     let w = after [line cy "/flag lever rude", World.emptied ann, line ann "/flags"];
-    t.eq
-      [`#1 object /realm/commons/lever#0, by cy at 2026-09-30T12:00:00Z: rude`]
-      (heard ann w)),
+    t.eq [`#1 object /r/lever#0, by cy at 2026-09-30T12:00:00Z: rude`] (heard ann w)),
   test "/flags 1 shows the evidence" (fn t ->
     let w = after [line cy "/flag lever rude", World.emptied ann, line ann "/flags 1"];
     t.ok (heard? ann "It has been pulled 0 times." w)),
@@ -202,7 +193,7 @@ group "review" (fn () -> [
     t.eq (None, [], true) (
       World.instance lever w,
       World.open_flags lever w,
-      heard_any? bo "An admin removed your object /realm/commons/lever#0" w
+      heard_any? bo "An admin removed your object /r/lever#0" w
     )),
   test "warn tells the owner" (fn t ->
     let w =
@@ -211,9 +202,7 @@ group "review" (fn () -> [
         World.emptied bo,
         line ann "/resolve 1 warn please fix it"
       ];
-    t.eq
-      ["An admin warns you about object /realm/commons/lever#0: rude. please fix it"]
-      (heard bo w)),
+    t.eq ["An admin warns you about object /r/lever#0: rude. please fix it"] (heard bo w)),
   test "pause ends the owner's session, and /unpause lets them back" (fn t ->
     let w = after [line cy "/report bo was unkind", line ann "/resolve 1 pause"];
     let back =

@@ -6,15 +6,18 @@ uses {FS.Read, FS.Write, Random, Shared}
 import ../Engine
 import ../Mudlib
 import ../World
-import List
 
+import List
 import Option
+
 import Shared
 import String
 
+let Core = import ../../lib/std/core
+
 let {test, group} = import Test
 
-let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
+let start = Mudlib.with_lib! ./lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -26,11 +29,11 @@ let ann_body = "/std/player#0"
 
 let bo_body = "/std/player#1"
 
-let square = "/realm/commons/square#0"
+let square = "/r/square#0"
 
-let garden = "/realm/commons/garden#0"
+let garden = "/r/garden#0"
 
-let lever = "/realm/commons/lever#0"
+let lever = "/r/lever#0"
 
 let line sid text = World.queue (World.Line sid at text)
 
@@ -61,7 +64,7 @@ let set_up = List.flatten [
   [
     line bo "north",
     World.set_owner garden (Some "bo"),
-    World.set_public garden false,
+    World.set_allowed garden (Core.Only []),
     World.emptied ann,
     World.emptied bo
   ]
@@ -80,9 +83,9 @@ let refusals (w: World.World) =
     (fn (e: World.Event) -> if e.event == "refused" then e.text else None)
     w.events
 
-let take = line ann `/eval [Core.Move "/realm/commons/lever#0" ctx.actor]`
+let take = line ann `/eval [Core.Move "/r/lever#0" ctx.actor]`
 
-let bo_takes = line bo `/eval [Core.Move "/realm/commons/lever#0" ctx.actor]`
+let bo_takes = line bo `/eval [Core.Move "/r/lever#0" ctx.actor]`
 
 group "a private room" (fn () -> [
   test "is closed to other builders" (fn t ->
@@ -92,17 +95,17 @@ group "a private room" (fn () -> [
     let w = after [line bo "south", line bo "north"];
     t.eq (Some garden) (where bo_body w)),
   test "cannot be reached another way" (fn t ->
-    let w = after [line ann `/eval [Core.Move ctx.actor "/realm/commons/garden"]`];
-    t.eq (
-      Some square,
-      ["may not move /std/player#0 into /realm/commons/garden#0: it is private"]
-    ) (where ann_body w, refusals w)),
+    let w = after [line ann `/eval [Core.Move ctx.actor "/r/garden"]`];
+    t.eq (Some square, ["may not move /std/player#0 into /r/garden#0: it is private"]) (
+      where ann_body w,
+      refusals w
+    )),
   test "a builder's room starts private, and the admins' are public" (fn t ->
     let w = played (signed_up ann "ann");
     t.eq (true, false, false) (
       Engine.may_enter? ann_body square w,
-      Engine.may_enter? ann_body "/home/bo/den" w,
-      Engine.may_enter? "/std/player#9" "/home/bo/den" w
+      Engine.may_enter? ann_body "/r/home/bo/den" w,
+      Engine.may_enter? "/std/player#9" "/r/home/bo/den" w
     ))
 ])
 
@@ -168,7 +171,7 @@ group "locks" (fn () -> [
     t.eq (Some ann_body) (where lever (after [anns_lever, take]))),
   test "no one else may" (fn t ->
     let w = after [anns_lever, line bo "south", bo_takes];
-    t.eq (Some square, ["may not move /realm/commons/lever#0: it is locked"]) (
+    t.eq (Some square, ["may not move /r/lever#0: it is locked"]) (
       where lever w,
       refusals w
     )),
@@ -193,7 +196,48 @@ group "locks" (fn () -> [
         line ann "/unlock lever",
         line bo "south",
         bo_takes,
-        line bo `/eval [Core.Remove "/realm/commons/lever#0"]`
+        line bo `/eval [Core.Remove "/r/lever#0"]`
       ];
     t.eq (Some bo_body) (where lever w))
+])
+
+group "bans" (fn () -> [
+  test "keep one person out of a public room" (fn t ->
+    let w =
+      after [
+        line bo "/public here",
+        line bo "/ban ann",
+        World.emptied ann,
+        line ann "north"
+      ];
+    t.eq (true, ["That way is still being built."], Some square) (
+      heard? bo "Ann may no longer come into your rooms." w,
+      heard ann w,
+      where ann_body w
+    )),
+  test "send someone already in the room home" (fn t ->
+    let w = after [line bo "/public here", line ann "north", line bo "/ban ann"];
+    t.eq (Some square) (where ann_body w)),
+  test "win over an invitation" (fn t ->
+    let w = after [line bo "/invite ann", line bo "/ban ann", line ann "north"];
+    t.eq (Some square) (where ann_body w)),
+  test "can be taken back" (fn t ->
+    let w =
+      after [
+        line bo "/public here",
+        line bo "/ban ann",
+        line bo "/unban ann",
+        line ann "north"
+      ];
+    t.eq (Some garden) (where ann_body w)),
+  test "do not keep anyone out of someone else's rooms" (fn t ->
+    let w = after [line ann "/ban bo", line bo "south"];
+    t.eq (Some square) (where bo_body w))
+])
+
+group "a public room" (fn () -> [
+  test "needs no invitation" (fn t ->
+    t.eq
+      ["The Garden is public: anyone may come in. /private here closes it."]
+      (heard bo (after [line bo "/public here", World.emptied bo, line bo "/invite ann"])))
 ])

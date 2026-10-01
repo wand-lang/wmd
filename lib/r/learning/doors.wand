@@ -10,7 +10,7 @@ import Result
 let Core = import ../../std/core
 let Room = import ../../std/room
 
-let door = "/realm/learning/door#0"
+let door = "/r/learning/door#0"
 
 -- The exit checks the door's `open` prop. A room cannot change the door; it
 -- can only look.
@@ -23,9 +23,9 @@ let doors =
       "Lesson 4: The Door Room"
       "A narrow room. In the far wall is a green door, and through it a cupboard. Open the door and go through, but be quick. Read /help lesson4, then /copy door to make it yours.",
     exits = {
-      hall = Room.exit "/realm/learning/hall",
+      hall = Room.exit "/r/learning/hall",
       through = Core.Exit(
-        to = "/realm/learning/cupboard",
+        to = "/r/learning/cupboard",
         check = Some (fn ctx ->
           if _open? ctx then Ok() else Error "The green door is shut.")
       )
@@ -34,5 +34,5 @@ let doors =
 
 implement Core.Blueprint =
   let create self saved = match saved with
-  | None -> Core.Init(object = doors, actions = [Core.Spawn "/realm/learning/door" self])
+  | None -> Core.Init(object = doors, actions = [Core.Spawn "/r/learning/door" self])
   | Some _ -> Core.Init(object = doors)

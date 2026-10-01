@@ -9,8 +9,8 @@ uses {Random}
 import JSON
 import Result
 
-let Core = import ../../std/core
-let Text = import ../../std/text
+let Core = import ../std/core
+let Text = import ../std/text
 
 type State(pulls: Int = 0)
 

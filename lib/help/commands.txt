@@ -1,11 +1,12 @@
-Commands that start with / are the driver's, and work anywhere:
+Commands that start with / are the driver's. They work anywhere a realm
+has not turned them off:
 
   /who [name]          who is awake, or one person
   /help [topic]        this help, or a topic
   /examine [thing]     what the driver knows of a thing or this room
   /stat me             your Capacity and Inspiration
   /verbs [thing]       what a thing, or this room, answers to
-  /edit [path]         edit a file in your home, as /edit /home/ann/lamp
+  /edit [path]         edit a file in your home, as /edit /r/home/ann/lamp
   /copy <thing>        copy an example from the Learning Hall into your home
   /update [path]       load a file's new code
   /reset [thing]       make a thing again from its file
@@ -13,11 +14,13 @@ Commands that start with / are the driver's, and work anywhere:
   /sethome             make this room your home
   /public, /private    open or close the room you own
   /invite, /uninvite   let one builder into your private room, or not
+  /ban, /unban         keep one person out of all your rooms, or not
   /lock, /unlock       whether others may move a thing you own
   /flag, /report       tell the admins something breaks the rules
   /quit                leave
 
-The rest are your verbs and the room's: look, go, say, pose, home, and
-the exits by name.
+The rest are verbs: your own, such as say, pose and home; the room's and
+its things'; and the realm's, such as look and go. An exit works by its
+name. /verbs here lists the room's and the realm's.
 
 New to building? /help guide starts the lessons.

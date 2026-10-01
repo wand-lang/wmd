@@ -21,5 +21,5 @@ and the exit's check reads it with ctx.world.prop.
 Try it:
 
   1. /copy door
-  2. /eval [Core.Spawn "/home/<you>/door" ctx.here]
+  2. /eval [Core.Spawn "/r/home/<you>/door" ctx.here]
   3. Make it close after 10s, then add a verb knock.

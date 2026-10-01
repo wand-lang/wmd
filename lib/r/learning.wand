@@ -1,0 +1,17 @@
+uses {Random}
+
+-- The Learning realm: the Learning Hall, west of the Commons, and its six
+-- lessons.
+
+let Core = import ../std/core
+let Realm = import ../std/realm
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = Realm.object "the Learning realm" [])
+
+implement Core.Realm =
+  let commands = Realm.anything;
+  let allows = Realm.anything;
+  let owner = Realm.admins;
+  let allowed = Core.Everyone;
+  let grants = []

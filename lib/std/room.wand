@@ -2,7 +2,7 @@
 -- record update:
 --
 --   Core.Object(Room.room "The Garden" "A small walled garden.",
---     exits = {south = Room.exit "/realm/commons/square"})
+--     exits = {south = Room.exit "/r/square"})
 
 import JSON
 

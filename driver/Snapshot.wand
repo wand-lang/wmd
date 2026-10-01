@@ -15,6 +15,8 @@ import Result
 
 import ./World
 
+let Core = import ../lib/std/core
+
 -- One object as the file keeps it.
 type Saved(
   id: String,
@@ -25,8 +27,9 @@ type Saved(
   created: Option String = None,
   modified: Option String = None,
   owner: Option String = None,
-  -- None in a file from before rooms were private: a room is then public
-  -- when the admins own it.
+  -- Who may enter the room, as World.Instance `allowed` says: everyone when
+  -- `public`, and otherwise only the `invited`. None in a file from before
+  -- rooms were private: a room is then public when the admins own it.
   public: Option Bool = None,
   invited: List String = [],
   locked: Bool = true,
@@ -63,8 +66,10 @@ let of_world (w: World.World) =
             created = i.created,
             modified = i.modified,
             owner = i.owner,
-            public = Some i.public,
-            invited = i.invited,
+            public = Some (World.public? i),
+            invited = match i.allowed with
+              | Core.Only names -> names
+              | Core.Everyone -> [],
             locked = i.locked,
             held = i.held
           ))
