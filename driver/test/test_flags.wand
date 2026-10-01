@@ -13,7 +13,7 @@ import String
 
 let {test, group} = import Test
 
-let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./_lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 

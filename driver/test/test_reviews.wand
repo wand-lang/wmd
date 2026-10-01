@@ -71,22 +71,22 @@ implement Driver.Blueprint =
 `
 
 let _write! () = (
-  FS.mkdir! ./lib/r/guild/inner;
-  FS.write_file! ./lib/r/guild.wand guild;
-  FS.write_file! ./lib/r/guild/inner.wand inner;
-  FS.write_file! ./lib/r/guild/inner/hall.wand hall
+  FS.mkdir! ./_lib/r/guild/inner;
+  FS.write_file! ./_lib/r/guild.wand guild;
+  FS.write_file! ./_lib/r/guild/inner.wand inner;
+  FS.write_file! ./_lib/r/guild/inner/hall.wand hall
 )
 
 let _clean () = (
-  let _ = FS.delete_tree ./lib/r/guild;
-  let _ = FS.delete ./lib/r/guild.wand;
-  let _ = FS.delete_tree ./lib/r/home/dee;
-  match FS.list_dir ./lib/r/home with
-  | Ok [] -> (let _ = FS.delete_tree ./lib/r/home; ())
+  let _ = FS.delete_tree ./_lib/r/guild;
+  let _ = FS.delete ./_lib/r/guild.wand;
+  let _ = FS.delete_tree ./_lib/r/home/dee;
+  match FS.list_dir ./_lib/r/home with
+  | Ok [] -> (let _ = FS.delete_tree ./_lib/r/home; ())
   | _ -> ()
 )
 
-let loaded = (_write! (); let l = Library.load_all! ./lib; _clean (); l)
+let loaded = (_write! (); let l = Library.load_all! ./_lib; _clean (); l)
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -127,9 +127,9 @@ let asked = List.flatten [
 ]
 
 let played! changes check =
-  if FS.exists? ./lib/r/home/dee then
+  if FS.exists? ./_lib/r/home/dee then
     Result.get!
-      (Error "./lib/r/home/dee exists: these tests build there, and remove it after")
+      (Error "./_lib/r/home/dee exists: these tests build there, and remove it after")
   else with Resource.make (fn () -> _write! ()) (fn () -> _clean ()) as _ ->
   with Shared.make (Library.into loaded (World.with_pepper "test pepper")) as state -> (
     Engine.boot state at;

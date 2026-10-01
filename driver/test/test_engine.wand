@@ -1,6 +1,6 @@
 uses {FS.Read, FS.Write, Random, Shared}
 
--- Commands through the driver and the real Library in ../lib, with no
+-- Commands through the driver and the real Library in ../_lib, with no
 -- socket: a test changes the world as a session would, then lets the
 -- driver take what was queued, as its loop does.
 
@@ -18,7 +18,7 @@ import ../World
 
 -- A new world, with the Library in lib/ loaded and passwords hashed with a
 -- test pepper.
-let start = Library.with_lib! ./lib (World.with_pepper "test pepper")
+let start = Library.with_lib! ./_lib (World.with_pepper "test pepper")
 
 let at = "2026-09-30T12:00:00Z"
 

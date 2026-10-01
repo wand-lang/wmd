@@ -68,13 +68,13 @@ implement Driver.Blueprint =
 `
 
 let lib = (
-  FS.mkdir! ./lib/r/guild/inner;
-  FS.write_file! ./lib/r/guild.wand guild;
-  FS.write_file! ./lib/r/guild/inner.wand inner;
-  FS.write_file! ./lib/r/guild/inner/hall.wand hall;
-  let loaded = Library.load_all! ./lib;
-  let _ = FS.delete_tree ./lib/r/guild;
-  let _ = FS.delete ./lib/r/guild.wand;
+  FS.mkdir! ./_lib/r/guild/inner;
+  FS.write_file! ./_lib/r/guild.wand guild;
+  FS.write_file! ./_lib/r/guild/inner.wand inner;
+  FS.write_file! ./_lib/r/guild/inner/hall.wand hall;
+  let loaded = Library.load_all! ./_lib;
+  let _ = FS.delete_tree ./_lib/r/guild;
+  let _ = FS.delete ./_lib/r/guild.wand;
   loaded
 )
 

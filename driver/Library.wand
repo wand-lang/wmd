@@ -20,6 +20,7 @@ import ./World
 -- What the game's init.wand says, the blueprints and realms that loaded,
 -- by path, and each file that did not, with why.
 type Loaded(
+  root: Path = ./lib,
   library: Option Driver.Library = None,
   lib: Map Driver.Blueprint = {},
   realms: Map Driver.Realm = {},
@@ -35,10 +36,11 @@ let _realm (l: Loaded) (b: Scan.Blueprint) =
 let load_all! root =
   let init = Path.join root ./init.wand;
   let started =
-    if !(FS.exists? init) then Loaded(failed = [("/init", "there is no init.wand")])
+    if !(FS.exists? init) then
+      Loaded(root = root, failed = [("/init", "there is no init.wand")])
     else match Wand.load Driver.Library.loader init with
-      | Ok l -> Loaded(library = Some l)
-      | Error why -> Loaded(failed = [("/init", why)])
+      | Ok l -> Loaded(root = root, library = Some l)
+      | Error why -> Loaded(root = root, failed = [("/init", why)])
   in
   List.fold_left
     (fn (l: Loaded) (b: Scan.Blueprint) -> match Wand.load Driver.Blueprint.loader b.file with
@@ -48,8 +50,8 @@ let load_all! root =
     started
     (Scan.blueprints! root)
 
--- `w` with what `loaded` holds: where the game's files are, its
--- blueprints and its realms.
+-- `w` with what `loaded` holds: where the Library is and where its files
+-- are, its blueprints and its realms.
 let into (loaded: Loaded) (w: World.Current) =
   let with_start =
     match Option.map (fn (l: Driver.Library) -> l.start) loaded.library with
@@ -69,7 +71,12 @@ let into (loaded: Loaded) (w: World.Current) =
     )
     | None -> w
   in
-  World.Current(with_start, lib = loaded.lib, realms = loaded.realms)
+  World.Current(
+    with_start,
+    lib_root = loaded.root,
+    lib = loaded.lib,
+    realms = loaded.realms
+  )
 
 -- `w` with the game at `root`.
 let with_lib! root (w: World.Current) = into (load_all! root) w

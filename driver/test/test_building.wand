@@ -13,7 +13,7 @@ import Shared
 
 let {test, group} = import Test
 
-let loaded = Library.load_all! ./lib
+let loaded = Library.load_all! ./_lib
 
 let at = "2026-09-30T12:00:00Z"
 
@@ -25,12 +25,12 @@ let line text = World.queue (World.Line dee at text)
 
 -- Dee's home, where these tests build. It must not exist before a test,
 -- and it is removed after one, so the Library is left as it was found.
-let home = ./lib/r/home/dee
+let home = ./_lib/r/home/dee
 
 let _clean () = (
   let _ = FS.delete_tree home;
-  match FS.list_dir ./lib/r/home with
-  | Ok [] -> (let _ = FS.delete_tree ./lib/r/home; ())
+  match FS.list_dir ./_lib/r/home with
+  | Ok [] -> (let _ = FS.delete_tree ./_lib/r/home; ())
   | _ -> ()
 )
 
@@ -85,7 +85,7 @@ group "/dig" (fn () -> [
       ))),
   test "makes the directories it needs" (fn t ->
     built! (List.concat in_hall [line "/dig east shop/front"]) (fn _ ->
-      t.ok (FS.exists? ./lib/r/home/dee/shop/front.wand))),
+      t.ok (FS.exists? ./_lib/r/home/dee/shop/front.wand))),
   test "will not dig an exit the room has" (fn t ->
     built! (List.concat in_hall [
       line "/dig east shop/front",

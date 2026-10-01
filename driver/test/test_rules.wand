@@ -18,8 +18,8 @@ let Driver = import ../../driver
 
 let start =
   World.Current(
-    Library.with_lib! ./lib (World.with_pepper "test pepper"),
-    help = Library.help! ./lib
+    Library.with_lib! ./_lib (World.with_pepper "test pepper"),
+    help = Library.help! ./_lib
   )
 
 let at = "2026-09-30T12:00:00Z"

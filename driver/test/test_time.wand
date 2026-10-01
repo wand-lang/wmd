@@ -110,7 +110,7 @@ implement Driver.Blueprint =
   let create _ _ = Driver.Init(object = thing)
 `
 
-let dir = ./lib/r/home/tock
+let dir = ./_lib/r/home/tock
 
 let lib = (
   FS.mkdir! dir;
@@ -119,10 +119,10 @@ let lib = (
     (./timer.wand, timer),
     (./broken.wand, broken)
   ];
-  let loaded = Library.load_all! ./lib;
+  let loaded = Library.load_all! ./_lib;
   let _ = FS.delete_tree dir;
-  match FS.list_dir ./lib/r/home with
-  | Ok [] -> (let _ = FS.delete_tree ./lib/r/home; ())
+  match FS.list_dir ./_lib/r/home with
+  | Ok [] -> (let _ = FS.delete_tree ./_lib/r/home; ())
   | _ -> ();
   loaded
 )

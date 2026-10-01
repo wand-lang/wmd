@@ -71,16 +71,16 @@ let heard? sid text (w: World.Current) = List.any? (fn l -> l == text) (heard si
 -- The Library, loaded once. It is the real lib/, because a file loads only
 -- when it imports the driver's own std/driver.wand: a copy of lib/ would
 -- declare another Driver.Blueprint.
-let loaded = Library.load_all! ./lib
+let loaded = Library.load_all! ./_lib
 
 -- Ann's home, where a test saves. It must not exist before a test, and
 -- it is removed after one, so the Library is left as it was found.
-let home = ./lib/r/home/ann
+let home = ./_lib/r/home/ann
 
 let _clean () = (
   let _ = FS.delete_tree home;
-  match FS.list_dir ./lib/r/home with
-  | Ok [] -> (let _ = FS.delete_tree ./lib/r/home; ())
+  match FS.list_dir ./_lib/r/home with
+  | Ok [] -> (let _ = FS.delete_tree ./_lib/r/home; ())
   | _ -> ()
 )
 
@@ -100,7 +100,7 @@ and on_lib! changes check =
   with Shared.make (Library.into loaded (World.with_pepper "test pepper")) as state -> (
     Engine.boot state at;
     List.each (fn f -> (Shared.update state f; Engine.step state)) changes;
-    check (Shared.get state) ./lib
+    check (Shared.get state) ./_lib
   )
 
 let lamp lib = Path.join lib ./r/home/ann/lamp.wand
@@ -368,7 +368,7 @@ group "leaving" (fn () -> [
       )))
 ])
 
-let lever = ./lib/r/lever.wand
+let lever = ./_lib/r/lever.wand
 
 -- Ann as a Keymaster in the editor on the lever's file, after one pull.
 let on_lever = List.concat ann_in [keymaster, line ann "pull lever", line ann "/edit lever"]
@@ -438,7 +438,7 @@ group "resetting" (fn () -> [
       t.eq ["You may not reset /r/lever#0."] (heard ann w)))
 ])
 
-let editor_file = ./lib/r/editor/room.wand
+let editor_file = ./_lib/r/editor/room.wand
 
 test "an editor that faults on its new code goes back to the one before" (fn t ->
   keeping! [editor_file] (List.concat ann_in [
