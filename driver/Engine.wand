@@ -1276,6 +1276,110 @@ let _reset body words (tx: Tx) =
     else _pay body (Inspiration.build_cost * List.length ids) "reset" (reset body ids) tx
   )
 
+-- What /verbs and /copy name: the room with here or nothing,
+-- the body with me, or a thing by name.
+let _named body words (w: World.World) =
+  let here = room_of body w;
+  if words == "" || words == "here" then Parse.Found here
+  else if words == "me" then Parse.Found body
+  else Parse.resolve w body here (String.words words)
+
+-- One verb as a player types it, for each of its names: `pull lever`, or
+-- `give <thing> <word> lever` for a verb that takes another object.
+let _forms (i: World.Instance) (v: Core.Verb) =
+  let me = Option.default "it" (List.head i.object.names);
+  let arg (a: Core.Arg) =
+    match a with
+    | Core.NoArg -> ""
+    | Core.This -> " %{me}"
+    | Core.AnyObj -> " <thing>"
+  in
+  let iobj = if v.iobj == Core.NoArg then "" else " <word>%{arg v.iobj}";
+  String.join ", " (List.map (fn n -> "%{n}%{arg v.dobj}%{iobj}") v.names)
+
+-- /verbs: what a thing answers to, and a room's exits.
+let _verbs body words (w: World.World) =
+  match _named body words w with
+  | Parse.Found id -> (
+    match World.instance id w with
+    | None -> World.tell body "There is no %{id}." w
+    | Some i -> (
+      let name = short_of id w;
+      let verbs =
+        if i.object.verbs == [] then ["%{name} answers to nothing."]
+        else "%{name} answers to:" :: List.map (fn v -> "  %{_forms i v}") i.object.verbs;
+      let exits =
+        if i.object.exits == Map.empty then []
+        else ["Exits: %{String.join ", " (Map.keys i.object.exits)}."];
+      World.tell body (String.join "\n" (List.concat verbs exits)) w
+    )
+  )
+  | _ -> World.tell body "You don't see a '%{words}' here." w
+
+-- The examples /copy may copy: the files of the Learning Hall.
+let learning = "/realm/learning/"
+
+-- /copy: write the file of a Learning Hall example into the builder's home,
+-- and load it, as a start to change. A file of that name already there is
+-- never written over. It is paid for as a save.
+let _copy body words (tx: Tx) =
+  match (_named body words tx.w, World.account_of body tx.w) with
+  | (_, None) -> change (World.tell body "You have no account to copy into.") tx
+  | (Parse.Found id, Some a) -> (
+    let from = World.blueprint_of id;
+    let key = String.lower a.name;
+    let to =
+      "/home/%{key}/%{Option.default "" (List.head (List.reverse (String.split "/" from)))}";
+    let room? = World.env_of id tx.w == None;
+    if !(String.starts_with? learning from) then
+      change
+        (World.tell
+          body
+          "Only the examples in the Learning Hall can be copied, and %{short_of id tx.w} is not one.")
+        tx
+    else if Files.exists? tx.w.lib_root to then
+      change (World.tell body "You have %{to} already. Change it with /edit %{to}.") tx
+    else match Files.read tx.w.lib_root from with
+      | None -> change (World.tell body "%{from} has no file to copy.") tx
+      | Some source -> (
+        match budget (Some key) (Core.Save to source) tx.w with
+        | Error why -> change (World.tell body why) tx
+        | Ok cost -> (
+          let o = Files.save tx.w.lib_root to source;
+          let use =
+            if room? then `Go there with /eval [Core.Move ctx.actor "%{to}"]`
+            else `Make one with /eval [Core.Spawn "%{to}" ctx.here]`;
+          match (o.ok, Wand.load Core.Blueprint.loader (Files.file_of tx.w.lib_root to)) with
+          | (true, Ok b) ->
+            tx
+            |> _charge (Some key) cost "copy"
+            |> change (World.set_blueprint to b)
+            |> _event World.Event(
+              at = "",
+              event = "copy",
+              actor = body,
+              object = Some to,
+              text = Some from
+            )
+            |> change
+              (World.tell
+                body
+                "Copied %{from} to %{to}. %{use}, and change it with /edit %{to}.")
+          | (true, Error why) ->
+            change
+              (World.tell body "Copied %{from} to %{to}, but it did not load: %{why}")
+              tx
+          | (false, _) ->
+            change
+              (World.tell
+                body
+                "%{from} could not be copied: %{String.join "; " (List.map (fn (p: Core.Problem) -> p.message) o.problems)}")
+              tx
+        )
+      )
+  )
+  | (_, Some _) -> change (World.tell body "You don't see a '%{words}' here.") tx
+
 -- An account's Capacity and Inspiration, as /stat shows them.
 let _stat_text (a: World.Account) (w: World.World) =
   let key = String.lower a.name;
@@ -1775,6 +1879,8 @@ let _command_line sid body at line (tx: Tx) =
       )
       | "/examine" -> change (_examine body (_after_verb full)) logged
       | "/stat" -> _stat body (_after_verb full) logged
+      | "/verbs" -> change (_verbs body (_after_verb full)) logged
+      | "/copy" -> _copy body (_after_verb full) logged
       | "/help" -> change (_help body (_after_verb full)) logged
       | "/flag" -> _flag body (_after_verb full) logged
       | "/report" -> _report body (_after_verb full) logged

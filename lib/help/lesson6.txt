@@ -1,0 +1,26 @@
+Lesson 6: a dark cave and a lamp, with props
+
+Go to the Dark Cave: west from the Commons, then six. It is dark. Light
+the lamp, look, and wait.
+
+A lit lamp has a heartbeat that burns its oil. An unlit lamp has none:
+
+  heartbeat = if s.lit then Some (fn _ -> burn s) else None
+
+so it costs nothing until someone lights it. When the oil runs out it
+flickers, and a call-out puts it out 4 seconds later. fill lamp fills it.
+
+The lamp shows how much light it gives with props, and the cave adds up
+the light of everything in it:
+
+  List.fold_left (fn n id -> n + _light ctx id) 0 (ctx.world.contents ctx.self)
+
+Objects can look at each other with ctx.world.prop, but only change
+themselves. /examine lamp shows the props the cave reads.
+
+Try it:
+
+  1. /copy here and /copy lamp
+  2. Change your cave to spawn your lamp, as in lesson 5, and go in.
+  3. Make a second light: a candle that gives light 1 and never runs out.
+     Two lit things make the cave brighter; change its text for that.

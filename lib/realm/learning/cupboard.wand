@@ -1,0 +1,17 @@
+uses {Random}
+
+-- Behind the green door of lesson 4.
+
+let Core = import ../../std/core
+let Room = import ../../std/room
+
+let cupboard =
+  Core.Object(
+    Room.room
+      "A Cupboard"
+      "A cupboard full of brooms. You made it through the door in time. Go out to go back.",
+    exits = {out = Room.exit "/realm/learning/doors"}
+  )
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = cupboard)

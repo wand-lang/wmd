@@ -1,0 +1,38 @@
+uses {Random}
+
+-- The room of lesson 4. Its example is the green door, which the exit
+-- `through` asks whether it is open.
+
+import JSON
+import Option
+import Result
+
+let Core = import ../../std/core
+let Room = import ../../std/room
+
+let door = "/realm/learning/door#0"
+
+-- The exit checks the door's `open` prop. A room cannot change the door; it
+-- can only look.
+let _open? (ctx: Core.Context) =
+  Option.and_then (fn j -> Result.to_option (JSON.get_bool j)) (ctx.world.prop door "open") == Some true
+
+let doors =
+  Core.Object(
+    Room.room
+      "Lesson 4: The Door Room"
+      "A narrow room. In the far wall is a green door, and through it a cupboard. Open the door and go through, but be quick. Read /help lesson4, then /copy door to make it yours.",
+    exits = {
+      hall = Room.exit "/realm/learning/hall",
+      through = Core.Exit(
+        to = "/realm/learning/cupboard",
+        check = Some (fn ctx ->
+          if _open? ctx then Ok() else Error "The green door is shut.")
+      )
+    }
+  )
+
+implement Core.Blueprint =
+  let create self saved = match saved with
+  | None -> Core.Init(object = doors, actions = [Core.Spawn "/realm/learning/door" self])
+  | Some _ -> Core.Init(object = doors)

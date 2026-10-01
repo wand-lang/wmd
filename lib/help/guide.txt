@@ -1,0 +1,31 @@
+The wmd Programmer's Guide
+
+Everything in this world is a Wand program, and you can write your own.
+The lessons are rooms in the Learning Hall, west of the Commons. Each one
+has a working example to try, and a /help topic that explains it.
+
+  /help lesson1   a room, and text that changes
+  /help lesson2   a lever that counts: state and save
+  /help lesson3   a cat that wanders: heartbeats and Random
+  /help lesson4   a door that closes itself: call-outs
+  /help lesson5   a room that makes its own orc: Init and Spawn
+  /help lesson6   a dark cave and a lamp: props
+
+How each lesson works:
+
+  1. Go to its room, try the example, and read about it.
+  2. /copy the example. That writes its file into your home, as
+     /home/<you>/lever, and loads it.
+  3. /edit your copy, change it, and save it with w. Your change loads at
+     once. Type h in the editor for its commands.
+  4. Make one of it, or go into it, with the /eval line /copy gives you.
+
+Tools that help:
+
+  /verbs <thing>     what a thing answers to
+  /examine <thing>   what the driver knows of it: owner, props, call-outs
+  /eval <expr>       run one line of Wand, as your own body
+  /stat me           your Capacity and Inspiration
+
+Building costs Inspiration, which refills over time; /stat me shows how
+much you have. Everything you build must follow the rules: /help rules.

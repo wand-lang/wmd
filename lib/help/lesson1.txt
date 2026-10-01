@@ -1,0 +1,31 @@
+Lesson 1: a room, and text that changes
+
+Go to the Room of Hours: west from the Commons, then one. Look at it now,
+and again in an hour.
+
+A room is an Object, made in a file that starts with
+"implement Core.Blueprint". Its `short` is its name and its `long` is
+what look shows. Both are functions that get a Context, `ctx`.
+
+Text that never changes needs no function of your own:
+
+  short = Room.text "Lesson 1: The Room of Hours"
+
+Text that changes is a function. The Room of Hours reads the time from
+ctx.time, and puts values into a string with %{...}:
+
+  long = fn ctx -> "The clock says %{DateTime.time_string ctx.time}."
+
+Exits are a map from a name to a place:
+
+  exits = {hall = Room.exit "/realm/learning/hall"}
+
+Try it:
+
+  1. /copy here
+  2. /eval [Core.Move ctx.actor "/home/<you>/hours"] to go into your copy.
+  3. /edit here, find the long text with ,n, change it with c, then w.
+  4. look. Your room says what you wrote.
+
+Your room is private: only you, the people you /invite, and the admins
+may come in. /public here opens it to everyone.

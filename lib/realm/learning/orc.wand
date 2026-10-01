@@ -1,0 +1,32 @@
+uses {Random}
+
+-- The orc that lesson 5's room makes. A friendly one.
+
+import JSON
+
+let Core = import ../../std/core
+let Text = import ../../std/text
+
+let orc =
+  Core.Object(
+    names = ["orc"],
+    short = fn _ -> "orc",
+    long = fn _ -> "A short green orc in a knitted hat. It is eating cabbage.",
+    verbs = [
+      Core.Verb(
+        names = ["poke"],
+        dobj = Core.This,
+        run = fn ctx _ -> Core.Reply(
+          actions =
+            Text.act
+              ctx
+              "You poke the orc. It grunts and offers you some cabbage."
+              "%{ctx.world.short_of ctx.actor} pokes the orc. It grunts."
+        )
+      )
+    ],
+    save = fn () -> JSON.null
+  )
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = orc)

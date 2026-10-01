@@ -1,0 +1,24 @@
+uses {Random}
+
+-- Lesson 5: a room that makes its own orc.
+--
+-- `create` gives back an Init: the room, and actions for the driver to apply
+-- once the room exists. A new room asks for a Spawn of an orc inside
+-- itself. A room brought back after a restart gets `saved`, and spawns
+-- nothing, because its orc was saved too.
+
+let Core = import ../../std/core
+let Room = import ../../std/room
+
+let orcs =
+  Core.Object(
+    Room.room
+      "Lesson 5: The Orc Room"
+      "A low stone room that smells of cabbage. This room is the example: it made its own orc. Read /help lesson5, then /copy here and /copy orc to make them yours.",
+    exits = {hall = Room.exit "/realm/learning/hall"}
+  )
+
+implement Core.Blueprint =
+  let create self saved = match saved with
+  | None -> Core.Init(object = orcs, actions = [Core.Spawn "/realm/learning/orc" self])
+  | Some _ -> Core.Init(object = orcs)

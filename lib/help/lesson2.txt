@@ -1,0 +1,27 @@
+Lesson 2: a lever that counts, with state and save
+
+Go to the Lever Room: west from the Commons, then two. Pull the lever,
+then /examine lever.
+
+An object never changes. A verb gives back a Reply: actions for the
+driver, and `next`, the object to use from now on. The lever keeps its
+count in a record, State, and makes a new object over a new State:
+
+  type State(pulls: Int = 0)
+
+  next = Some (make State(pulls = s.pulls + 1))
+
+`save` gives the driver the state to keep in world.json, and `create`
+gets it back after a restart, as `saved`. A new lever gets None.
+
+Text.act shows one line to the one who pulls and another to everyone
+else in the room.
+
+Try it:
+
+  1. /copy lever
+  2. /eval [Core.Spawn "/home/<you>/lever" ctx.here] makes one here.
+  3. Pull your lever. /edit /home/<you>/lever, make it say something else,
+     then w. Your lever keeps its count: the driver moves it onto the new
+     code with its saved state.
+  4. Add a second verb, push, that counts down.

@@ -132,7 +132,9 @@ group "signing the rules" (fn () -> [
 group "/help" (fn () -> [
   test "lists the topics" (fn t ->
     t.eq
-      ["Help topics: commands, rules. Type /help and a topic."]
+      [
+        "Help topics: commands, guide, lesson1, lesson2, lesson3, lesson4, lesson5, lesson6, rules. Type /help and a topic."
+      ]
       (heard ann (played (List.concat signed [World.emptied ann, line ann "/help"])))),
   test "shows a topic" (fn t ->
     t.ok

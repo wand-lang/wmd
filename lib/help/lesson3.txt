@@ -1,0 +1,31 @@
+Lesson 3: a cat that wanders, with heartbeats and Random
+
+Go to the Cat Room: west from the Commons, then three. Wait a while. The
+cat may be out; it wanders the Learning Hall.
+
+An object with a heartbeat is called every 2 seconds:
+
+  heartbeat = Some (fn ctx -> ...)
+
+The cat picks a number with Random.int, and `match` decides what the
+number means:
+
+  match Random.int 0 29 with
+  | 0 -> Core.Reply(actions = [Core.Say "The grey cat yawns."])
+  | 2 -> _wander ctx
+  | _ -> Core.nothing
+
+Random is the one effect mudlib code may perform. A file that tries to
+read files or the clock is refused when you save it.
+
+To leave, the cat gives back three actions: a Say heard where it is, a
+Move, and a Say heard where it arrives. The driver applies them in order.
+
+A heartbeat costs Inspiration every time it runs, paid by the owner. When
+you run out, your heartbeats wait until it refills.
+
+Try it:
+
+  1. /copy cat
+  2. /eval [Core.Spawn "/home/<you>/cat" ctx.here]
+  3. Make it a dog: change its names, its text and what it does.

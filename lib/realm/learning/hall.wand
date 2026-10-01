@@ -1,0 +1,25 @@
+uses {Random}
+
+-- The Learning Hall: the way into the lessons, west of the Commons.
+
+let Core = import ../../std/core
+let Room = import ../../std/room
+
+let hall =
+  Core.Object(
+    Room.room
+      "The Learning Hall"
+      "A long hall with six doors, numbered one to six. Behind each door is a lesson in building with Wand, and a working example to try. Type /help guide to begin, then go one.",
+    exits = {
+      east = Room.exit "/realm/commons/square",
+      one = Room.exit "/realm/learning/hours",
+      two = Room.exit "/realm/learning/levers",
+      three = Room.exit "/realm/learning/cats",
+      four = Room.exit "/realm/learning/doors",
+      five = Room.exit "/realm/learning/orcs",
+      six = Room.exit "/realm/learning/cave"
+    }
+  )
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = hall)

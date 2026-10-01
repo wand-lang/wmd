@@ -1,0 +1,39 @@
+uses {Random}
+
+-- Lesson 6: a dark cave.
+--
+-- The cave has no light of its own. Its long text adds up the `light` prop
+-- of everything in it with ctx.world.prop, so a lit lamp lights it and an
+-- unlit one does not. The cave cannot change the lamp; it can only look.
+
+import JSON
+import List
+import Option
+import Result
+
+let Core = import ../../std/core
+let Room = import ../../std/room
+
+let _light (ctx: Core.Context) id =
+  Option.default
+    0
+    (Option.and_then (fn j -> Result.to_option (JSON.get_int j)) (ctx.world.prop id "light"))
+
+let _lit (ctx: Core.Context) =
+  List.fold_left (fn n id -> n + _light ctx id) 0 (ctx.world.contents ctx.self)
+
+let cave =
+  Core.Object(
+    names = [],
+    short = Room.text "Lesson 6: The Dark Cave",
+    long = fn ctx -> if _lit ctx > 0 then
+        "Lamplight shines on wet stone walls. Water drips somewhere further in. Read /help lesson6, then /copy here and /copy lamp to make them yours."
+      else "It is pitch dark. Something metal clinks at your feet: a lamp, by the feel of it. Try light lamp.",
+    exits = {hall = Room.exit "/realm/learning/hall"},
+    save = fn () -> JSON.null
+  )
+
+implement Core.Blueprint =
+  let create self saved = match saved with
+  | None -> Core.Init(object = cave, actions = [Core.Spawn "/realm/learning/lamp" self])
+  | Some _ -> Core.Init(object = cave)

@@ -1,0 +1,246 @@
+uses {FS.Read, FS.Write, Random, Shared}
+
+-- The Learning Hall: its lessons, each example working as its lesson says,
+-- /verbs, /copy, and the guide's help topics.
+
+import ../Engine
+import ../Files
+import ../Mudlib
+import ../World
+import Duration
+import FS
+import JSON
+import List
+import Map
+import Option
+import Path
+import Resource
+import Result
+import Shared
+import String
+
+let {test, group} = import Test
+
+let start = World.World(World.with_pepper "test pepper", lib = (Mudlib.load_all! ./lib).lib)
+
+let noon = 2026-09-30T12:00:00Z
+
+let at = "%{noon}"
+
+let after n = "%{noon + Duration.seconds n}"
+
+let cy = World.session_id 0
+
+let cy_body = "/std/player#0"
+
+-- One step of a test: a line Cy types, which the driver then takes, or a
+-- tick at a time.
+let line text state =
+  let _ = Shared.update state (World.queue (World.Line cy at text));
+  Engine.step state
+
+let tick time state = Engine.tick state time
+
+let forget state =
+  let _ = Shared.update state (World.emptied cy);
+  ()
+
+let signed_up = [
+  fn state -> (let _ = Shared.update state (World.open_next at); Engine.step state),
+  line "cy",
+  line "2000-05-01",
+  line "cy-password",
+  line "cy-password",
+  line "sign rules",
+  forget
+]
+
+-- Cy signed up, in the Commons, and then `steps`.
+let played steps =
+  with Shared.make start as state -> (
+    Engine.boot state at;
+    List.each (fn f -> f state) (List.concat signed_up steps);
+    Shared.get state
+  )
+
+let heard (w: World.World) =
+  List.filter
+    (fn l -> l != "")
+    (List.map
+      (fn l -> String.replace "\xff\xfc\x01" "" (String.replace "\xff\xfb\x01" "" l))
+      (World.outbox cy w))
+
+let heard? text w = List.any? (fn l -> l == text) (heard w)
+
+let heard_some? part w = List.any? (fn l -> String.contains? part l) (heard w)
+
+let events (w: World.World) = List.map (fn (e: World.Event) -> e.event) w.events
+
+let prop id key (w: World.World) = (Engine.view w id).prop id key
+
+-- Cy's home, where /copy writes. It must not exist before a test, and it is
+-- removed after one, so the mudlib is left as it was found.
+let home = ./lib/home/cy
+
+let _clean () = (
+  let _ = FS.delete_tree home;
+  match FS.list_dir ./lib/home with
+  | Ok [] -> (let _ = FS.delete_tree ./lib/home; ())
+  | _ -> ()
+)
+
+let copying! steps check =
+  if FS.exists? home then
+    Result.get! (Error "%{home} exists: the guide tests copy there, and remove it after")
+  else with Resource.make (fn () -> ()) (fn () -> _clean ()) as _ -> check (played steps)
+
+group "the Learning Hall" (fn () -> [
+  test "the Commons opens west onto it" (fn t ->
+    t.ok (heard? "The Learning Hall" (played [line "west"]))),
+  test "the Room of Hours tells the time" (fn t ->
+    t.ok (heard_some? "It is afternoon outside" (played [line "west", line "one"]))),
+  test "the lever counts its pulls" (fn t ->
+    let w = played [line "west", line "two", line "pull lever", line "pull lever"];
+    t.eq (Some (JSON.of_int 2), true) (
+      prop "/realm/learning/lever#0" "pulls" w,
+      heard? "You pull the lever. Clunk." w
+    )),
+  test "the cat has a heartbeat, and runs on every tick without a fault" (fn t ->
+    let w =
+      played
+        (List.concat
+          [line "west", line "three"]
+          (List.map (fn n -> tick (after (2 * n))) (List.range 1 40)));
+    t.eq (true, false) (
+      Option.map
+        (fn (i: World.Instance) -> Option.some? i.object.heartbeat)
+        (World.instance "/realm/learning/cat#0" w) == Some true,
+      List.any? (fn e -> e == "fault") (events w)
+    )),
+  test "the door lets you through while it is open" (fn t ->
+    t.ok
+      (heard?
+        "A Cupboard"
+        (played [line "west", line "four", line "open door", line "through"]))),
+  test "the door shuts itself 30 seconds after it opens" (fn t ->
+    let opened = [line "west", line "four", line "open door"];
+    let w = played (List.concat opened [tick (after 29)]);
+    let shut = played (List.concat opened [tick (after 30), line "through"]);
+    t.eq (Some (JSON.of_bool true), Some (JSON.of_bool false), true, true) (
+      prop "/realm/learning/door#0" "open" w,
+      prop "/realm/learning/door#0" "open" shut,
+      heard? "The green door swings shut." shut,
+      heard? "The green door is shut." shut
+    )),
+  test "the Orc Room makes its own orc" (fn t ->
+    let w = played [line "west", line "five", line "poke orc"];
+    t.eq (Some "/realm/learning/orcs#0", true) (
+      World.env_of "/realm/learning/orc#0" w,
+      heard? "You poke the orc. It grunts and offers you some cabbage." w
+    )),
+  test "the cave is dark until the lamp is lit" (fn t ->
+    let w = played [line "west", line "six", line "light lamp", line "look"];
+    t.eq (true, true) (
+      heard_some? "It is pitch dark." w,
+      heard_some? "Lamplight shines on wet stone walls." w
+    )),
+  test "the lamp burns its oil, flickers, and goes out" (fn t ->
+    let lit = [line "west", line "six", line "light lamp", forget];
+    let w =
+      played
+        (List.flatten [
+          lit,
+          List.map (fn n -> tick (after (2 * n))) (List.range 1 30),
+          [tick (after 64)]
+        ]);
+    t.eq (true, true, Some (JSON.of_int 0), false) (
+      heard? "The lamp flickers." w,
+      heard? "The lamp goes out." w,
+      prop "/realm/learning/lamp#0" "light" w,
+      Option.map
+        (fn (i: World.Instance) -> Option.some? i.object.heartbeat)
+        (World.instance "/realm/learning/lamp#0" w) == Some true
+    ))
+])
+
+group "/verbs" (fn () -> [
+  test "lists what a thing answers to" (fn t ->
+    t.eq
+      ["brass lever answers to:", "  pull lever, yank lever"]
+      (heard (played [line "west", line "two", forget, line "/verbs lever"]))),
+  test "lists a room's exits" (fn t ->
+    t.eq
+      [
+        "The Learning Hall answers to nothing.",
+        "Exits: east, one, two, three, four, five, six."
+      ]
+      (heard (played [line "west", forget, line "/verbs"])))
+])
+
+group "/copy" (fn () -> [
+  test "writes an example into your home, and loads it" (fn t ->
+    copying! [line "west", line "two", forget, line "/copy lever"] (fn w ->
+      t.eq (true, true, true) (
+        heard?
+          `Copied /realm/learning/lever to /home/cy/lever. Make one with /eval [Core.Spawn "/home/cy/lever" ctx.here], and change it with /edit /home/cy/lever.`
+          w,
+        FS.exists? (Path.join home ./lever.wand),
+        Map.has? "/home/cy/lever" w.lib
+      ))),
+  test "a copy works as the example does" (fn t ->
+    copying! [
+      line "west",
+      line "two",
+      line "/copy lever",
+      line `/eval [Core.Spawn "/home/cy/lever" ctx.here]`
+    ] (fn w ->
+      t.eq (Some "/realm/learning/levers#0", Some "cy") (
+        World.env_of "/home/cy/lever#0" w,
+        World.owner_of "/home/cy/lever#0" w
+      ))),
+  test "a room is copied with here, and gone into with /eval" (fn t ->
+    copying! [line "west", line "one", forget, line "/copy here"] (fn w ->
+      t.ok
+        (heard?
+          `Copied /realm/learning/hours to /home/cy/hours. Go there with /eval [Core.Move ctx.actor "/home/cy/hours"], and change it with /edit /home/cy/hours.`
+          w))),
+  test "never writes over a file you have" (fn t ->
+    copying! [line "west", line "two", line "/copy lever", forget, line "/copy lever"] (fn w ->
+      t.eq
+        ["You have /home/cy/lever already. Change it with /edit /home/cy/lever."]
+        (heard w))),
+  test "copies only the examples in the Learning Hall" (fn t ->
+    copying! [line "/copy lever"] (fn w ->
+      t.eq (
+        [
+          "Only the examples in the Learning Hall can be copied, and brass lever is not one."
+        ],
+        false
+      ) (heard w, FS.exists? home)))
+])
+
+group "the guide" (fn () -> [
+  test "every example still checks when it is copied into a home" (fn t ->
+    let failed =
+      List.filter_map
+        (fn f ->
+          let name = Path.to_string (Path.basename f);
+          let path = "/home/cy/%{String.slice 0 (String.length name - 5) name}";
+          let o = Files.check ./lib path (FS.read_file! f);
+          if o.ok then None else Some path)
+        (FS.glob_in *.wand ./lib/realm/learning);
+    t.eq [] failed),
+  test "has a help topic for itself and for each lesson" (fn t ->
+    let topics = Mudlib.help! ./lib;
+    t.eq
+      []
+      (List.filter (fn n -> !(Map.has? n topics)) [
+        "guide",
+        "lesson1",
+        "lesson2",
+        "lesson3",
+        "lesson4",
+        "lesson5",
+        "lesson6"
+      ]))
+])

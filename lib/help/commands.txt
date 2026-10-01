@@ -4,7 +4,9 @@ Commands that start with / are the driver's, and work anywhere:
   /help [topic]        this help, or a topic
   /examine [thing]     what the driver knows of a thing or this room
   /stat me             your Capacity and Inspiration
+  /verbs [thing]       what a thing, or this room, answers to
   /edit [path]         edit a file in your home, as /edit /home/ann/lamp
+  /copy <thing>        copy an example from the Learning Hall into your home
   /update [path]       load a file's new code
   /reset [thing]       make a thing again from its file
   /eval <expression>   run Wand, as your own body
@@ -17,3 +19,5 @@ Commands that start with / are the driver's, and work anywhere:
 
 The rest are your verbs and the room's: look, go, say, pose, home, and
 the exits by name.
+
+New to building? /help guide starts the lessons.

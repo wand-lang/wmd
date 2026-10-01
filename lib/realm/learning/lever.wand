@@ -1,0 +1,45 @@
+uses {Random}
+
+-- Lesson 2: a lever that counts its pulls.
+--
+-- The state is a record, State. The object's functions close over it: `long`
+-- reads `s.pulls`. A verb cannot change `s`. It gives back the next object,
+-- made from a new State, and the driver keeps that one. `save` gives the
+-- driver the state to write to world.json, and `create` gets it back after
+-- a restart.
+
+import JSON
+import Result
+
+let Core = import ../../std/core
+let Text = import ../../std/text
+
+type State(pulls: Int = 0)
+
+let make (s: State) =
+  Core.Object(
+    names = ["lever", "brass lever"],
+    short = fn _ -> "brass lever",
+    long = fn _ -> "It has been pulled %{s.pulls} times.",
+    props = Some (fn _ -> {pulls = JSON.of_int s.pulls}),
+    verbs = [
+      Core.Verb(
+        names = ["pull", "yank"],
+        dobj = Core.This,
+        run = fn ctx _ -> Core.Reply(
+          actions =
+            Text.act
+              ctx
+              "You pull the lever. Clunk."
+              "%{ctx.world.short_of ctx.actor} pulls the lever. Clunk.",
+          next = Some (make State(pulls = s.pulls + 1))
+        )
+      )
+    ],
+    save = fn () -> State.encoder s
+  )
+
+implement Core.Blueprint =
+  let create _ saved = match saved with
+  | None -> Core.Init(object = make State())
+  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))

@@ -1,0 +1,24 @@
+Lesson 5: a room that makes its own orc, with Init and Spawn
+
+Go to the Orc Room: west from the Commons, then five. Poke the orc.
+
+`create` gives back an Init: the object, and actions to apply once it
+exists. A new Orc Room asks for an orc:
+
+  | None -> Core.Init(object = orcs, actions = [Core.Spawn "/realm/learning/orc" self])
+  | Some _ -> Core.Init(object = orcs)
+
+A room brought back after a restart gets its saved state, and spawns
+nothing, because its orc was saved too. Without that check, every restart
+would add one more orc.
+
+Each Spawn costs Inspiration, and what you own counts against your
+Capacity: /stat me shows both.
+
+Try it:
+
+  1. /copy here and /copy orc
+  2. /edit /home/<you>/orcs, change the Spawn to "/home/<you>/orc", then w.
+  3. /eval [Core.Move ctx.actor "/home/<you>/orcs"]. Your room is made the
+     first time you go in, and it spawns your orc. /reset here makes it
+     again, as new, and it spawns one more.

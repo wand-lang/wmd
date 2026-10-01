@@ -1,0 +1,34 @@
+uses {Random}
+
+-- Lesson 1: a room.
+--
+-- A room is an Object. Its short text never changes, so Room.text makes
+-- it from a plain string. Its long text is a function of the Context, so it
+-- can change: here it reads the time from `ctx.time` and puts it into the
+-- text with %{...}.
+
+import DateTime
+import JSON
+
+let Core = import ../../std/core
+let Room = import ../../std/room
+
+-- The part of the day an hour is in.
+let part hour =
+  if hour < 6 then "night"
+  else if hour < 12 then "morning"
+  else if hour < 18 then "afternoon"
+  else "evening"
+
+let hours =
+  Core.Object(
+    names = [],
+    short = Room.text "Lesson 1: The Room of Hours",
+    long = fn (ctx: Core.Context) -> "A round room with one tall window. It is %{part (DateTime.hour ctx.time)} outside, and the clock on the wall says %{DateTime.time_string ctx.time}. This room is the example: /copy here makes it yours. Read /help lesson1.",
+    exits = {hall = Room.exit "/realm/learning/hall"},
+    details = {clock = Room.text "A plain clock with a loud tick. It is always right."},
+    save = fn () -> JSON.null
+  )
+
+implement Core.Blueprint =
+  let create _ _ = Core.Init(object = hours)

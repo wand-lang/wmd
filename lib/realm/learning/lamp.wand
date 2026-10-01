@@ -1,0 +1,79 @@
+uses {Random}
+
+-- Lesson 6: a lamp that burns its oil.
+--
+-- A lit lamp has a heartbeat, which burns one drop of oil every 2 seconds.
+-- An unlit lamp has no heartbeat at all, so it costs nothing. When the oil
+-- is gone, the lamp flickers, and a call-out puts it out 4 seconds later.
+-- `props` shows how much light the lamp gives, for the cave to read.
+
+import JSON
+import Result
+
+let Core = import ../../std/core
+let Text = import ../../std/text
+
+type State(lit: Bool = false, oil: Int = 30)
+
+let make (s: State) =
+  Core.Object(
+    names = ["lamp", "brass lamp"],
+    short = fn _ -> if s.lit then "brass lamp, lit" else "brass lamp",
+    long = fn _ -> "A brass lamp with %{s.oil} drops of oil left.",
+    props = Some (fn _ -> {
+      light = JSON.of_int (if s.lit then 1 else 0),
+      lit = JSON.of_bool s.lit,
+      oil = JSON.of_int s.oil
+    }),
+    verbs = [
+      Core.Verb(
+        names = ["light"],
+        dobj = Core.This,
+        run = fn ctx _ -> if s.lit then Core.tell ctx "It is lit already."
+          else if s.oil == 0 then Core.tell ctx "It has no oil. Try fill lamp."
+          else Core.Reply(
+            actions =
+              Text.act
+                ctx
+                "You light the lamp."
+                "%{ctx.world.short_of ctx.actor} lights the lamp.",
+            next = Some (make State(s, lit = true))
+          )
+      ),
+      Core.Verb(
+        names = ["fill"],
+        dobj = Core.This,
+        run = fn ctx _ -> Core.Reply(
+          actions = [Core.Tell ctx.actor "You fill the lamp from the oil jar by the wall."],
+          next = Some (make State(s, oil = 30))
+        )
+      ),
+      -- The call-out runs this, and so may anyone: douse lamp.
+      Core.Verb(
+        names = ["out", "douse"],
+        dobj = Core.This,
+        run = fn _ _ -> if !s.lit then Core.nothing
+          else Core.Reply(
+            actions = [Core.Say "The lamp goes out."],
+            next = Some (make State(s, lit = false))
+          )
+      )
+    ],
+    heartbeat = if s.lit then Some (fn _ -> burn s) else None,
+    save = fn () -> State.encoder s
+  )
+
+-- One heartbeat of a lit lamp. The drop that empties it starts the
+-- flicker; after that it waits for the call-out.
+and burn (s: State) =
+  if s.oil == 0 then Core.nothing
+  else if s.oil == 1 then Core.Reply(
+    actions = [Core.Say "The lamp flickers.", Core.After 4s "out"],
+    next = Some (make State(s, oil = 0))
+  )
+  else Core.Reply(next = Some (make State(s, oil = s.oil - 1)))
+
+implement Core.Blueprint =
+  let create _ saved = match saved with
+  | None -> Core.Init(object = make State())
+  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))

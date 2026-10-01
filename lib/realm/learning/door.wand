@@ -1,0 +1,58 @@
+uses {Random}
+
+-- Lesson 4: a door that closes itself.
+--
+-- Opening the door also gives back the action After 30s "close": a
+-- call-out. The driver keeps it, and 30 seconds later it runs this door's
+-- own verb `close`, with the door as the actor. If someone closed the door
+-- first, the call-out finds it shut and does nothing.
+
+import JSON
+import List
+import Result
+
+let Core = import ../../std/core
+let Text = import ../../std/text
+
+type State(open: Bool = false)
+
+let make (s: State) =
+  Core.Object(
+    names = ["door", "green door"],
+    short = fn _ -> "green door",
+    long = fn _ -> if s.open then "A green door, standing open." else "A green door, shut.",
+    -- What others may read: the room's exit asks whether the door is open.
+    props = Some (fn _ -> {open = JSON.of_bool s.open}),
+    verbs = [
+      Core.Verb(
+        names = ["open"],
+        dobj = Core.This,
+        run = fn ctx _ -> if s.open then Core.tell ctx "It is open already."
+          else Core.Reply(
+            actions =
+              List.concat
+                (Text.act
+                  ctx
+                  "You open the green door."
+                  "%{ctx.world.short_of ctx.actor} opens the green door.")
+                [Core.After 30s "close"],
+            next = Some (make State(open = true))
+          )
+      ),
+      Core.Verb(
+        names = ["close", "shut"],
+        dobj = Core.This,
+        run = fn ctx _ -> if !s.open then Core.tell ctx "It is shut already."
+          else Core.Reply(
+            actions = [Core.Say "The green door swings shut."],
+            next = Some (make State(open = false))
+          )
+      )
+    ],
+    save = fn () -> State.encoder s
+  )
+
+implement Core.Blueprint =
+  let create _ saved = match saved with
+  | None -> Core.Init(object = make State())
+  | Some j -> Core.Init(object = make (Result.get! (JSON.decode State.decoder j)))

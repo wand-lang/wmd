@@ -1,0 +1,25 @@
+Lesson 4: a door that closes itself, with call-outs
+
+Go to the Door Room: west from the Commons, then four. Open the door and
+go through. Wait 30 seconds, and it shuts.
+
+Opening the door gives back one more action:
+
+  Core.After 30s "close"
+
+This is a call-out. 30 seconds later the driver runs the door's own verb
+close, with the door as the actor. Call-outs are saved, so they run even
+after a restart. /examine door shows the ones waiting.
+
+The room cannot open or close the door; only the door changes itself.
+The room's exit asks the door through its props:
+
+  props = Some (fn _ -> {open = JSON.of_bool s.open})
+
+and the exit's check reads it with ctx.world.prop.
+
+Try it:
+
+  1. /copy door
+  2. /eval [Core.Spawn "/home/<you>/door" ctx.here]
+  3. Make it close after 10s, then add a verb knock.

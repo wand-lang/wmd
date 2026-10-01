@@ -214,7 +214,7 @@ group "moving" (fn () -> [
   test "no such exit" (fn t ->
     t.eq
       ["You can't go that way."]
-      (heard ann (played (List.concat ann_in [line ann "go west"]))))
+      (heard ann (played (List.concat ann_in [line ann "go east"]))))
 ])
 
 group "objects" (fn () -> [
@@ -265,7 +265,7 @@ group "looking" (fn () -> [
   test "look at a detail of the room" (fn t ->
     t.eq
       [
-        "Doors of wood, of iron, of glass; one is no taller than your knee. None will open."
+        "Doors of wood, of iron, of glass; one is no taller than your knee. Only the one to the west will open."
       ]
       (heard ann (played (List.concat ann_in [line ann "look at doors"])))),
   test "look at something that is not here" (fn t ->
