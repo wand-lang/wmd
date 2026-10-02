@@ -6,7 +6,7 @@ uses {Random}
 
 import List
 
-let Driver = import ../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Realm = import ../std/realm
 
 -- The commands that work before the rules are signed.

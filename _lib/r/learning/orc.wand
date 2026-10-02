@@ -4,7 +4,7 @@ uses {Random}
 
 import JSON
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Text = import ../../std/text
 
 let orc =

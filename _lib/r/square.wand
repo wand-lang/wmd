@@ -2,7 +2,7 @@ uses {Random}
 
 -- The arrival room: where everyone first stands.
 
-let Driver = import ../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Room = import ../std/room
 
 let square =
@@ -11,12 +11,13 @@ let square =
       "The Commons"
       "A wide, quiet square. Doors of every size stand along its edges, all of them shut for now, but for one to the west, with LEARNING painted over it.",
     exits = {
-      north = Room.exit "/r/garden",
-      -- What `look west` shows: the exit's own view, as through a window.
-      west =
+      "n*orth" = Room.exit "/r/garden",
+      -- What is seen that way, in "To the west you see ...", here and with
+      -- `look west`.
+      "w*est" =
         Driver.Exit(
           Room.exit "/r/learning/hall",
-          view = Some "Through the open door to the west, a long hall lined with numbered doors."
+          view = Some "an open door, and a long hall lined with numbered doors"
         )
     },
     details = {

@@ -4,7 +4,7 @@ uses {Random}
 -- an instance. Only its objects may check, save and run source, and they
 -- move no one but the person at the editor.
 
-let Driver = import ../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Realm = import ../std/realm
 
 implement Driver.Blueprint =

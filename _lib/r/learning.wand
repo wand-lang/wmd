@@ -3,7 +3,7 @@ uses {Random}
 -- The Learning realm: the Learning Hall, west of the Commons, and its six
 -- lessons.
 
-let Driver = import ../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Realm = import ../std/realm
 
 implement Driver.Blueprint =

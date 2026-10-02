@@ -97,8 +97,8 @@ let copying! steps check =
 group "the Learning Hall" (fn () -> [
   test "the Commons opens west onto it" (fn t ->
     t.ok (heard? "The Learning Hall" (played [line "west"]))),
-  test "the Room of Hours tells the time" (fn t ->
-    t.ok (heard_some? "It is afternoon outside" (played [line "west", line "one"]))),
+  test "the Room of Seconds tells the time" (fn t ->
+    t.ok (heard_some? "Its pendulum is at the" (played [line "west", line "one"]))),
   test "the lever counts its pulls" (fn t ->
     let w = played [line "west", line "two", line "pull lever", line "pull lever"];
     t.eq (Some (JSON.of_int 2), true) (
@@ -172,7 +172,7 @@ group "/verbs" (fn () -> [
     t.eq
       [
         "The Learning Hall answers to nothing.",
-        "Exits: east, one, two, three, four, five, six.",
+        "Exits: e*ast, one, two, three, four, five, six.",
         "the Commons answers to:",
         "  l*ook",
         "  go"
@@ -220,7 +220,7 @@ group "/copy" (fn () -> [
     copying! [line "west", line "one", forget, line "/copy here"] (fn w ->
       t.ok
         (heard?
-          `Copied /r/learning/hours to /r/home/cy/hours. Go there with /move /r/home/cy/hours, and change it with /edit /r/home/cy/hours.`
+          `Copied /r/learning/seconds to /r/home/cy/seconds. Go there with /move /r/home/cy/seconds, and change it with /edit /r/home/cy/seconds.`
           w))),
   test "never writes over a file you have" (fn t ->
     copying! [line "west", line "two", line "/copy lever", forget, line "/copy lever"] (fn w ->

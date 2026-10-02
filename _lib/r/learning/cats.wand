@@ -3,7 +3,7 @@ uses {Random}
 -- The room of lesson 3. Its example is the cat, which may have wandered
 -- off.
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Room = import ../../std/room
 
 let cats =

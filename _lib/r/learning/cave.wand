@@ -11,7 +11,7 @@ import List
 import Option
 import Result
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Room = import ../../std/room
 
 let _light (ctx: Driver.Context) id =

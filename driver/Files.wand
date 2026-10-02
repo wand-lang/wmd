@@ -43,8 +43,8 @@ let _follow dir rel =
 
 -- `source`, the file of `from`, written as the file of `to`: each relative
 -- import names the same file from its new directory. /r/learning/lever
--- imports ../../std/driver, and its copy in /r/home/ann imports
--- ../../../std/driver.
+-- imports ../../std/room, and its copy in /r/home/ann imports
+-- ../../../std/room. An import by URL, as the driver's, stays as it is.
 let moved from to source =
   let fixed line =
     match Regex.capture r/^(.*import )(\.\.?\/\S+)(.*)$/ line with

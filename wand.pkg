@@ -1,5 +1,5 @@
 { package = github.com/wand-lang/wmd
-, wand    = 0.100.0
+, wand    = 0.101.0
 }
 
 -- DO NOT EDIT: interface, written by `wand p`

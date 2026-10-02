@@ -128,17 +128,17 @@ group "/files" (fn () -> [
 group "look" (fn () -> [
   test "shows the room's file to whoever may edit it" (fn t ->
     built! (List.concat in_hall [line "look"]) (fn w ->
-      t.ok (List.any? (fn l -> l == "File: /r/home/dee/hall") (heard w)))),
+      t.ok (List.any? (fn l -> l == "A new room (/r/home/dee/hall)") (heard w)))),
   test "and not to anyone else" (fn t ->
     built! [line "look"] (fn w ->
-      t.not_ok (List.any? (fn l -> l == "File: /r/square") (heard w))))
+      t.not_ok (List.any? (fn l -> l == "The Commons (/r/square)") (heard w))))
 ])
 
 group "looking through an exit" (fn () -> [
   test "shows its view, when it has one" (fn t ->
     built! [line "look west"] (fn w ->
       t.eq
-        ["Through the open door to the west, a long hall lined with numbered doors."]
+        ["To the west you see an open door, and a long hall lined with numbered doors."]
         (heard w))),
   test "and otherwise the room on the other side" (fn t ->
     built! [line "look north"] (fn w ->
@@ -175,5 +175,5 @@ group "short forms" (fn () -> [
       ) ["the commons", "THE  Commons", "  the commons ", "the"])),
   test "a verb answers to a short form" (fn t ->
     built! (List.concat in_hall [line "lo"]) (fn w ->
-      t.ok (List.any? (fn l -> l == "A new room") (heard w))))
+      t.ok (List.any? (fn l -> l == "A new room (/r/home/dee/hall)") (heard w))))
 ])

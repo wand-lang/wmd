@@ -17,7 +17,7 @@ import Regex
 import Result
 import String
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 
 -- The file, the buffer and the current line. `adding` is the number of
 -- lines above where typed text goes while the editor takes text, and None
@@ -33,21 +33,50 @@ type State(
   eval: Bool = false
 )
 
-let _help = `
-Lines are numbered from 1. A range is n, n,m, . (the current line), $ (the last), or , (all).
-  [range]p      print lines
-  [range]n      print lines with their numbers
-  n             go to line n and print it
-  [n]a          add lines after line n; end with a line that is only .
-  [n]i          add lines before line n; end with .
-  [range]c      change lines: replace them with the lines you type; end with .
-  [range]d      delete lines
-  [range]s/old/new/[g]   replace text: the first on each line, or all with g
-  t             check the file: errors, with line numbers, and its effects
-  w             check, save, and load the new code, as /update does
-  w!            save without a check, to keep unfinished work
-  q             leave; refused while there are unsaved changes
-  Q             leave, and lose unsaved changes`
+let _help (s: State) =
+  let title = if s.eval then "The /eval buffer - Help" else "Editing %{s.path} - Help";
+  `%{title}
+
+Lines
+  N          line N (the first line is 1)
+  .          the current line
+  $          the last line
+  N,M        lines N to M; N and M can also be . or $
+  ,          all lines
+
+  A command can start with one of the Lines forms. With none, it
+  uses the current line. Lines with no command print the last line
+  of the Lines.
+
+Look
+  [Lines]p              print the lines
+  [Lines]n              print the lines with their numbers
+  N                     go to line N and print it
+
+Change
+  [N]a                  add lines after line N
+  [N]i                  add lines before line N
+  [Lines]c              replace the lines with the lines you type
+  [Lines]d              delete the lines
+  [Lines]s/old/new/     replace the first old on each line
+  [Lines]s/old/new/g    replace all of old on each line
+
+  After a, i or c, type the lines. A line that is only . stops.
+
+Save and leave
+  t          check the file: errors, with line numbers, and effects
+  w          check, save, and load the new code, as /update does
+  w!         save with no check, to keep unfinished work
+  q          leave; not possible while there are unsaved changes
+  Q          leave, and lose unsaved changes
+  h          show this help
+  /command   goes to the driver, for example /who
+
+Examples
+  ,n         print all lines with their numbers
+  3,7d       delete lines 3 to 7
+  .,$p       print from the current line to the end
+  $a         add lines at the end`
 
 let _source (s: State) = "%{String.join "\n" s.lines}\n"
 
@@ -276,8 +305,8 @@ let _run (s: State) (ctx: Driver.Context) r cmd = (
         "You have unsaved changes. Save them with w or w!, or leave without them with Q."
     else _quit s ctx
   | "Q" -> _quit s ctx
-  | "h" -> _tell ctx _help
-  | "help" -> _tell ctx _help
+  | "h" -> _tell ctx (_help s)
+  | "help" -> _tell ctx (_help s)
   | _ -> if String.starts_with? "s/" cmd then _substitute s ctx here cmd
     else _tell ctx "'%{cmd}' is not a command. Type h for help."
 )

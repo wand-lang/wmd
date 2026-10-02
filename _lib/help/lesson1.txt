@@ -1,7 +1,7 @@
 Lesson 1: a room, and text that changes
 
-Go to the Room of Hours: west from the Commons, then one. Look at it now,
-and again in an hour.
+Go to the Room of Seconds: west from the Commons, then one. Look at it,
+count to five, and look again.
 
 A room is an Object, made in a file that starts with
 "implement Driver.Blueprint". Its `short` is its name and its `long` is
@@ -9,9 +9,9 @@ what look shows. Both are functions that get a Context, `ctx`.
 
 Text that never changes needs no function of your own:
 
-  short = Room.text "Lesson 1: The Room of Hours"
+  short = Room.text "Lesson 1: The Room of Seconds"
 
-Text that changes is a function. The Room of Hours reads the time from
+Text that changes is a function. The Room of Seconds reads the time from
 ctx.time, and puts values into a string with %{...}:
 
   long = fn ctx -> "The clock says %{DateTime.time_string ctx.time}."

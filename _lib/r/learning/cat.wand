@@ -12,7 +12,7 @@ import Map
 import Random
 import String
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Text = import ../../std/text
 
 -- The ways out of the room the cat is in. It stays in the Learning Hall
@@ -22,6 +22,15 @@ let _ways (ctx: Driver.Context) =
     (fn (_, e) -> String.starts_with? "/r/learning/" e.to)
     (Map.to_list (ctx.world.exits_of ctx.here))
 
+-- Which way the cat goes, in words: "to the north" for a direction, and
+-- otherwise toward the room the exit leads to, as "toward The Learning
+-- Hall", since an exit such as `six` or `through` is no place.
+let _whither (ctx: Driver.Context) name (e: Driver.Exit) =
+  let way = Driver.name_of name;
+  if List.any? (fn d -> d == way) ["north", "south", "east", "west"] then "to the %{way}"
+  else if way == "up" || way == "down" then way
+  else "toward %{ctx.world.short_of e.to}"
+
 -- Leave by a way picked at random. The first Say is heard in the room the
 -- cat leaves. The Move takes it away, so the second Say is heard where it
 -- arrives.
@@ -29,7 +38,7 @@ let _wander (ctx: Driver.Context) =
   match Random.choose (_ways ctx) with
   | Some(name, e) -> Driver.Reply(
     actions = [
-      Driver.Say "The grey cat pads off to the %{name}.",
+      Driver.Say "The grey cat pads off %{_whither ctx name e}.",
       Driver.Move ctx.self e.to,
       Driver.Say "A grey cat pads in and looks around."
     ]

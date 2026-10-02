@@ -6,7 +6,7 @@
 
 import JSON
 
-let Driver = import ./driver
+let Driver = import github.com/wand-lang/wmd/driver
 
 -- A description that never changes.
 let text s = fn (_: Driver.Context) -> s

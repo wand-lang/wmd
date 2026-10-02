@@ -7,7 +7,7 @@ uses {Random}
 -- itself. A room brought back after a restart gets `saved`, and spawns
 -- nothing, because its orc was saved too.
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Room = import ../../std/room
 
 let orcs =

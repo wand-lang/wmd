@@ -1,28 +1,32 @@
 -- What this game tells the driver as it starts: where its files are, and
 -- the room /dig makes.
 
-let Driver = import ./std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 
 -- A room /dig makes at `path`, with an exit `back` to the room it was dug
 -- from.
 let _dug path back from = `
 uses {Random}
 
--- A room made by /dig. Give it a name and a description with /edit here.
+-- A room made by /dig. Give it a name and a description with /edit here:
+-- each part has a line of its own, and the room is made from them below.
 
-let Driver = import %{Driver.import_from path "/std/driver"}
+let Driver = import github.com/wand-lang/wmd/driver
 let Room = import %{Driver.import_from path "/std/room"}
+
+let title = "A new room"
+
+let description = "Nothing is here yet. Describe it with /edit here."
+
+-- Scenery: look wall reads wall here, as wall = Room.text "Old brick.".
+let noticeable = {}
 
 %{Driver.dig_marker}
 let exits = {
   "%{Driver.starred back}" = Room.exit "%{from}"
 }
 
-let room =
-  Driver.Object(
-    Room.room "A new room" "Nothing is here yet. Describe it with /edit here.",
-    exits = exits
-  )
+let room = Driver.Object(Room.room title description, exits = exits, details = noticeable)
 
 implement Driver.Blueprint =
   let create _ _ = Driver.Init(object = room)
@@ -37,6 +41,6 @@ implement Driver.Library =
     editor = "/r/editor/room",
     examples = "/r/learning",
     homes = "/r/home",
-    driver = "./std/driver",
+    driver = "github.com/wand-lang/wmd/driver",
     dig = _dug
   )

@@ -144,7 +144,7 @@ group "a realm's verbs" (fn () -> [
     t.eq
       [
         "The Commons answers to nothing.",
-        "Exits: north, west.",
+        "Exits: n*orth, w*est.",
         "the Commons answers to:",
         "  l*ook",
         "  go"

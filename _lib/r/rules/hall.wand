@@ -6,7 +6,7 @@ uses {Random}
 import JSON
 import Option
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 
 let _rules (ctx: Driver.Context) =
   Option.default

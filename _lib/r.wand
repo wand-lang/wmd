@@ -16,7 +16,7 @@ import Option
 import Result
 import String
 
-let Driver = import ./std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Realm = import ./std/realm
 let Text = import ./std/text
 
@@ -25,33 +25,97 @@ let _in (ctx: Driver.Context) room = List.filter ctx.world.player? (ctx.world.co
 
 -- ── look ───────────────────────────────────────────────────────────────
 
--- The line about a room's exits. A room whose way out is not an exit, such
--- as the editor, which `q` leaves, says so with an `exits` prop.
-let _way_out (w: Driver.WorldView) room exits =
-  match Option.and_then (fn j -> Result.to_option (JSON.get_string j)) (w.prop room "exits") with
+-- The directions an exit can point, in the order the exits paragraph
+-- names them.
+let _directions = ["north", "south", "east", "west", "up", "down"]
+
+let _compass? name = List.any? (fn d -> d == name) (List.take 4 _directions)
+
+let _direction? name = List.any? (fn d -> d == name) _directions
+
+-- How a sentence about a direction starts: "To the north", "Above" or
+-- "Below".
+let _toward name =
+  if name == "up" then "Above" else if name == "down" then "Below" else "To the %{name}"
+
+-- What lies past an exit, as words in a sentence: its view, or else the
+-- name of the room it leads to, to whoever may go in. None when nothing
+-- past it can be seen.
+let _beyond (w: Driver.WorldView) actor (e: Driver.Exit) =
+  match e.view with
+  | Some v -> Some v
+  | None -> if w.may_enter? actor e.to && w.made? e.to then Some (w.short_of e.to) else None
+
+-- A view as a sentence of its own: "Door one, with a loud tick behind it."
+-- A view that ends a sentence already, as one /approve writes, keeps its
+-- own stop.
+let _sentence phrase =
+  let stop =
+    if List.any? (fn p -> String.ends_with? p phrase) [".", "!", "?"] then "" else ".";
+  "%{String.upper (String.slice 0 1 phrase)}%{String.slice 1 (String.length phrase) phrase}%{stop}"
+
+-- The paragraph about a room's exits. Each direction past which something
+-- can be seen has a sentence, as "To the north you see The Garden.", in
+-- compass order. One more names the rest: the other exits, such as the
+-- Learning Hall's doors, in the order of the rooms they lead to, and the
+-- directions with nothing to see. A room whose way out is not an exit,
+-- such as the editor, which `q` leaves, says so with an `exits` prop.
+let _way_out (ctx: Driver.Context) = (
+  let w = ctx.world;
+  let exits =
+    List.map (fn (n, e) -> (Driver.name_of n, e)) (Map.to_list (w.exits_of ctx.here));
+  let directions =
+    List.filter_map (fn d -> List.find (fn (n, _) -> n == d) exits) _directions;
+  let seen =
+    List.filter_map
+      (fn (n, e) -> Option.map (fn b -> "%{_toward n} you see %{b}.") (_beyond w ctx.actor e))
+      directions;
+  let unseen =
+    List.filter_map
+      (fn (n, e) -> if _beyond w ctx.actor e == None then Some n else None)
+      directions;
+  let others =
+    List.map
+      (fn (n, _) -> n)
+      (List.sort_by
+        (fn (n, (e: Driver.Exit)) -> "%{w.short_of e.to} %{n}")
+        (List.filter (fn (n, _) -> !(_direction? n)) exits));
+  let rest = List.concat unseen others;
+  let one = List.length rest == 1;
+  let last =
+    if rest == [] then []
+    else if List.all? _compass? rest then
+      ["You see %{if one then "an exit" else "exits"} to the %{Text.listing rest}."]
+    else ["You see %{if one then "the exit" else "the exits"} %{Text.listing rest}."];
+  match Option.and_then (fn j -> Result.to_option (JSON.get_string j)) (w.prop ctx.here "exits") with
   | Some line -> line
   | None -> if exits == [] then "There is no way out."
-    else "Exits: %{String.join ", " exits}."
+    else String.join " " (List.concat seen last)
+)
 
+-- A room: its name, its description, and what and who is in it; then a
+-- paragraph about its exits.
 let _room (ctx: Driver.Context) =
   let w = ctx.world;
   let file = Option.default ctx.here (List.head (String.split "#" ctx.here));
   let here = List.filter (fn o -> o != ctx.actor) (w.contents ctx.here);
   let people = List.filter w.player? here;
   let things = List.filter (fn o -> !(w.player? o)) here;
-  let exits = List.map Driver.name_of (Map.keys (w.exits_of ctx.here));
+  -- Whoever may edit the room sees which file it is, after its name.
+  let title =
+    if w.may_edit? ctx.actor file then "%{w.short_of ctx.here} (%{file})"
+    else w.short_of ctx.here;
   let lines =
     List.flatten [
-      [w.short_of ctx.here, w.long_of ctx.here],
+      -- A blank line first, so the room stands apart from what was typed.
+      ["", title, w.long_of ctx.here],
       if things == [] then []
       else ["You see %{Text.listing (List.map (fn o -> Text.a (w.short_of o)) things)}."],
-      [_way_out w ctx.here exits],
       List.map
         (fn p -> if w.awake? p then "%{w.short_of p} is here."
           else "%{w.short_of p} is here, asleep.")
         people,
-      -- Whoever may edit the room sees which file it is.
-      if w.may_edit? ctx.actor file then ["File: %{file}"] else []
+      ["", _way_out ctx]
     ];
   Driver.tell ctx (String.join "\n" lines)
 
@@ -64,18 +128,24 @@ let _detail (ctx: Driver.Context) words = (
   | None -> Driver.tell ctx "You don't see a '%{words}' here."
 )
 
--- `look east`: what lies that way, as through a window. The exit's own
--- view, when it has one, and otherwise the room on the other side, to
--- anyone who may go in. A force hides a room you may not enter, so no one
--- sees into a private room, or one they are banned from.
-let _through (ctx: Driver.Context) (e: Driver.Exit) = (
+-- `look east`: what lies that way, as through a window. The exit's view, as
+-- "To the west you see ..." for a direction and as a sentence of its own
+-- for another exit, as `look one`; and otherwise the room on the other
+-- side, to anyone who may go in. A force hides a room you
+-- may not enter, so no one sees into a private room, or one they are
+-- banned from.
+let _through (ctx: Driver.Context) name (e: Driver.Exit) = (
   let w = ctx.world;
+  -- A view starts with a blank line, as a room does.
   match e.view with
-  | Some v -> Driver.tell ctx v
+  | Some v ->
+    Driver.tell
+      ctx
+      (if _direction? name then "\n%{_toward name} you see %{v}." else "\n%{_sentence v}")
   | None -> if !(w.may_enter? ctx.actor e.to) then
       Driver.tell ctx "A force hides what lies that way."
     else if !(w.made? e.to) then Driver.tell ctx "You can't make out what lies that way."
-    else Driver.tell ctx "%{w.short_of e.to}\n%{w.long_of e.to}"
+    else Driver.tell ctx "\n%{w.short_of e.to}\n%{w.long_of e.to}"
 )
 
 -- `look`, `look lever`, `look at lever`, `look at window`, and `look east`.
@@ -90,7 +160,7 @@ let _look (ctx: Driver.Context) (p: Driver.Parsed) = (
   | _ -> (
     if words == "" || words == "here" then _room ctx
     else match Driver.exit_named (String.lower words) (ctx.world.exits_of ctx.here) with
-      | Some(_, e) -> _through ctx e
+      | Some(name, e) -> _through ctx name e
       | None -> _detail ctx words
   )
 )

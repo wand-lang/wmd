@@ -2,7 +2,7 @@ uses {Random}
 
 -- The room of lesson 2. Its example is the lever in it.
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Room = import ../../std/room
 
 let levers =

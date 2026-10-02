@@ -1,20 +1,34 @@
 uses {Random}
 
-let Driver = import ../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Room = import ../std/room
+
+let title = "The Garden"
+
+let description = "A small walled garden. A path leads back south to the Commons."
+
+let noticeable = {
+  wall = Room.text "Old brick, warm from the sun, with moss in the joints.",
+  path = Room.text "Gravel, raked smooth.",
+  robin = Room.text
+    "A small brown bird with a red breast. It hops along the path, and keeps one eye on you."
+}
+
+let exits = {"s*outh" = Room.exit "/r/square"}
+
+-- A robin looks up at whoever comes in.
+let on_enter =
+  Some (fn (ctx: Driver.Context) who ->
+    if ctx.world.player? who then
+      Driver.Reply(actions = [Driver.Tell who "A robin looks up at you from the path."])
+    else Driver.nothing)
 
 let garden =
   Driver.Object(
-    Room.room "The Garden" "A small walled garden. A path leads back south to the Commons.",
-    exits = {south = Room.exit "/r/square"},
-    details = {
-      wall = Room.text "Old brick, warm from the sun, with moss in the joints.",
-      path = Room.text "Gravel, raked smooth."
-    },
-    -- A robin looks up at whoever comes in.
-    on_enter = Some (fn (ctx: Driver.Context) who ->
-      if ctx.world.player? who then Driver.Reply(actions = [Driver.Tell who "A robin looks up at you from the path."])
-      else Driver.nothing)
+    Room.room title description,
+    exits = exits,
+    details = noticeable,
+    on_enter = on_enter
   )
 
 implement Driver.Blueprint =

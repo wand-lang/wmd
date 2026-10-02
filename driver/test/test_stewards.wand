@@ -21,7 +21,7 @@ let {test, group} = import Test
 let guild = `
 uses {Random}
 
-let Driver = import ../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Realm = import ../std/realm
 
 implement Driver.Blueprint =
@@ -39,7 +39,7 @@ implement Driver.Realm =
 let inner = `
 uses {Random}
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Realm = import ../../std/realm
 
 implement Driver.Blueprint =
@@ -56,7 +56,7 @@ implement Driver.Realm =
 let hall = `
 uses {Random}
 
-let Driver = import ../../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Room = import ../../../std/room
 
 implement Driver.Blueprint =

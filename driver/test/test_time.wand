@@ -28,7 +28,7 @@ uses {Random}
 import JSON
 import Result
 
-let Driver = import ../../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 
 type State(beats: Int = 0)
 
@@ -55,7 +55,7 @@ import JSON
 import List
 import Result
 
-let Driver = import ../../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 
 type State(heard: List String = [])
 
@@ -95,7 +95,7 @@ uses {Random}
 import JSON
 import Result
 
-let Driver = import ../../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 
 let thing =
   Driver.Object(

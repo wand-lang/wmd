@@ -1,0 +1,33 @@
+uses {Random}
+
+-- Lesson 1: a room.
+--
+-- A room is an Object. Its short text never changes, so Room.text makes
+-- it from a plain string. Its long text is a function of the Context, so it
+-- can change: here it reads the time from `ctx.time` and puts it into the
+-- text with %{...}. Look, count to five, and look again.
+
+import DateTime
+import JSON
+
+let Driver = import github.com/wand-lang/wmd/driver
+let Room = import ../../std/room
+
+-- Where the pendulum is in a second.
+let side second = if second % 2 == 0 then "left" else "right"
+
+let seconds =
+  Driver.Object(
+    names = [],
+    short = Room.text "Lesson 1: The Room of Seconds",
+    long = fn (ctx: Driver.Context) -> "A small square room with a tall clock. Its pendulum is at the %{side (DateTime.second ctx.time)}, and its face says %{DateTime.time_string ctx.time}. Count to five and look again. This room is the example: /copy here makes it yours. Read /help lesson1.",
+    exits = {hall = Room.exit "/r/learning/hall"},
+    details = {
+      clock = Room.text "A tall clock with a loud tick. It is always right.",
+      pendulum = Room.text "A brass pendulum. It swings from left to right once each second."
+    },
+    save = fn () -> JSON.null
+  )
+
+implement Driver.Blueprint =
+  let create _ _ = Driver.Init(object = seconds)

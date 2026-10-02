@@ -2,7 +2,7 @@ uses {Random}
 
 -- The Learning Hall: the way into the lessons, west of the Commons.
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Room = import ../../std/room
 
 let hall =
@@ -11,13 +11,26 @@ let hall =
       "The Learning Hall"
       "A long hall with six doors, numbered one to six. Behind each door is a lesson in building with Wand, and a working example to try. Type /help guide to begin, then go one.",
     exits = {
-      east = Room.exit "/r/square",
-      one = Room.exit "/r/learning/hours",
-      two = Room.exit "/r/learning/levers",
-      three = Room.exit "/r/learning/cats",
-      four = Room.exit "/r/learning/doors",
-      five = Room.exit "/r/learning/orcs",
-      six = Room.exit "/r/learning/cave"
+      "e*ast" = Room.exit "/r/square",
+      -- What `look one` shows: a hint of the lesson behind each door.
+      one = Driver.Exit(Room.exit "/r/learning/seconds", view = Some "door one, with a loud tick behind it"),
+      two = Driver.Exit(
+        Room.exit "/r/learning/levers",
+        view = Some "door two, and through its keyhole the glint of a brass lever"
+      ),
+      three = Driver.Exit(
+        Room.exit "/r/learning/cats",
+        view = Some "door three, with grey hairs caught at its foot"
+      ),
+      four = Driver.Exit(
+        Room.exit "/r/learning/doors",
+        view = Some "door four, painted the same green as a door inside"
+      ),
+      five = Driver.Exit(
+        Room.exit "/r/learning/orcs",
+        view = Some "door five, and a smell of cabbage under it"
+      ),
+      six = Driver.Exit(Room.exit "/r/learning/cave", view = Some "door six, with only darkness behind it")
     }
   )
 

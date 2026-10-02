@@ -13,7 +13,7 @@
 
 import JSON
 
-let Driver = import ./driver
+let Driver = import github.com/wand-lang/wmd/driver
 
 -- A realm's object: what to call it, and the verbs every room in the realm
 -- answers to after its own. No one stands in it, and it keeps nothing.

@@ -12,7 +12,7 @@ import Option
 import Result
 import String
 
-let Driver = import ./driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Text = import ./text
 
 type State(name: String = "someone")

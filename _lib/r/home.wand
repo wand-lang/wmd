@@ -3,7 +3,7 @@ uses {Random}
 -- The Home realm: every Citizen's home, as /r/home/ann/ for ann. Its
 -- charter, in the Commons, gives each Citizen the files in their own home.
 
-let Driver = import ../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Realm = import ../std/realm
 
 implement Driver.Blueprint =

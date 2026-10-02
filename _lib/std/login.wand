@@ -12,7 +12,7 @@ import Option
 import Regex
 import String
 
-let Driver = import ./driver
+let Driver = import github.com/wand-lang/wmd/driver
 
 -- Where one session is in the dialogue.
 type Stage =

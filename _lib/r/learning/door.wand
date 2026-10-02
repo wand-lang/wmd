@@ -11,7 +11,7 @@ import JSON
 import List
 import Result
 
-let Driver = import ../../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Text = import ../../std/text
 
 type State(open: Bool = false)

@@ -9,7 +9,7 @@ uses {Random}
 import JSON
 import Result
 
-let Driver = import ../std/driver
+let Driver = import github.com/wand-lang/wmd/driver
 let Text = import ../std/text
 
 type State(pulls: Int = 0)
