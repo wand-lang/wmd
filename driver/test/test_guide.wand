@@ -181,13 +181,13 @@ group "/verbs" (fn () -> [
 ])
 
 group "/spawn" (fn () -> [
-  test "makes one of your copy in the room you are in" (fn t ->
+  test "makes one more of your copy in the room you are in" (fn t ->
     copying! [line "west", line "two", line "/copy lever", forget, line "/spawn /r/home/cy/lever"] (fn w ->
       t.eq (Some "/r/learning/levers#0", true) (
-        World.env_of "/r/home/cy/lever#0" w,
+        World.env_of "/r/home/cy/lever#1" w,
         List.any?
           (fn l -> String.starts_with? "You make " l
-          && String.ends_with? "here: /r/home/cy/lever#0." l)
+          && String.ends_with? "here: /r/home/cy/lever#1." l)
           (heard w)
       ))),
   test "says when a path has no thing" (fn t ->
@@ -205,18 +205,13 @@ group "/copy" (fn () -> [
     copying! [line "west", line "two", forget, line "/copy lever"] (fn w ->
       t.eq (true, true, true) (
         heard?
-          `Copied /r/learning/lever to /r/home/cy/lever. Make one with /spawn /r/home/cy/lever, and change it with /edit /r/home/cy/lever.`
+          `Copied /r/learning/lever to /r/home/cy/lever. Change it with /edit /r/home/cy/lever.`
           w,
         FS.exists? (Path.join home ./lever.wand),
         Map.has? "/r/home/cy/lever" w.lib
       ))),
-  test "a copy works as the example does" (fn t ->
-    copying! [
-      line "west",
-      line "two",
-      line "/copy lever",
-      line `/eval [Driver.Spawn "/r/home/cy/lever" ctx.here]`
-    ] (fn w ->
+  test "makes one of a thing here, yours, as /spawn does" (fn t ->
+    copying! [line "west", line "two", line "/copy lever"] (fn w ->
       t.eq (Some "/r/learning/levers#0", Some "cy") (
         World.env_of "/r/home/cy/lever#0" w,
         World.owner_of "/r/home/cy/lever#0" w

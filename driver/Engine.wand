@@ -1782,67 +1782,117 @@ let _files body words (w: World.Current) =
       | _ -> "%{dir}/ is empty."
   )
 
+-- /spawn <path>: make one of a thing in the room you are in, as
+-- /spawn /r/home/ann/lever. It is the action
+-- /eval [Driver.Spawn "<path>" ctx.here] gives, with the same checks and
+-- cost, but it says why when it cannot.
+let _spawn_here body path (tx: Tx) = (
+  let ctx = ctx_for tx.w body body;
+  let action = Driver.Spawn path (room_of body tx.w);
+  let id = "%{path}#%{World.next_number path tx.w}";
+  let room? = List.any? (fn i -> World.env_of i tx.w == None) (World.instances_of path tx.w);
+  if path == "" then
+    change
+      (World.tell body "Spawn what? Give a thing's path, as /spawn /r/home/ann/lever.")
+      tx
+  else if !(Map.has? path tx.w.lib) then
+    change (World.tell body "There is no thing at %{path}.") tx
+  else if room? then
+    change (World.tell body "%{path} is a room. Go there with /move %{path}.") tx
+  else match allowed ctx action tx.w with
+    | Error why -> change (World.tell body "You cannot spawn %{path}: %{why}.") tx
+    | Ok _ -> (
+      let done = _act ctx action tx;
+      if Option.some? (World.instance id done.w) then
+        change (World.tell body "You make %{short_of id done.w} here: %{id}.") done
+      else done
+    )
+)
+
 -- /copy: write the file of a Learning Hall example into the builder's home,
 -- and load it, as a start to change. A file of that name already there is
--- never written over. It is paid for as a save.
+-- never written over. It is paid for as a save. A copy of a thing
+-- also makes one here, as /spawn does; a room is gone into with /move.
 let _copy body words (tx: Tx) =
-  match (_named body words tx.w, World.account_of body tx.w) with
-  | (_, None) -> change (World.tell body "You have no account to copy into.") tx
-  | (Parse.Found id, Some a) -> (
-    let from = World.blueprint_of id;
-    let key = String.lower a.name;
-    let to =
-      "%{home_dir key tx.w}/%{Option.default "" (List.head (List.reverse (String.split "/" from)))}";
-    let room? = World.env_of id tx.w == None;
-    if !(String.starts_with? (learning tx.w) from) then
-      change
-        (World.tell
-          body
-          "Only the examples in the Learning Hall can be copied, and %{short_of id tx.w} is not one.")
-        tx
-    else if Files.exists? tx.w.lib_root to then
-      change (World.tell body "You have %{to} already. Change it with /edit %{to}.") tx
-    else match Option.map (Files.moved from to) (Files.read tx.w.lib_root from) with
-      | None -> change (World.tell body "%{from} has no file to copy.") tx
-      | Some source -> (
-        match budget (Some key) (Driver.Save to source) tx.w with
-        | Error why -> change (World.tell body why) tx
-        | Ok cost -> (
-          let o = Files.save tx.w.lib_root to source;
-          let use =
-            if room? then `Go there with /move %{to}` else `Make one with /spawn %{to}`;
-          match (o.ok, Wand.load Driver.Blueprint.loader (Files.file_of tx.w.lib_root to)) with
-          | (true, Ok b) ->
-            tx
-            |> _charge (Some key) cost "copy"
-            |> _wrote body to
-            |> change (World.set_blueprint to b)
-            |> change (World.set_built to key)
-            |> _event World.Event(
-              at = "",
-              event = "copy",
-              actor = body,
-              object = Some to,
-              text = Some from
+  -- After a copy, the example and the copy stand side by side: of two
+  -- matches, the one from the Learning Hall is the example.
+  (
+    let named =
+      (match _named body words tx.w with
+       | Parse.Ambiguous phrase ids -> (
+         match List.filter
+           (fn id -> String.starts_with? (learning tx.w) (World.blueprint_of id))
+           ids with
+         | [one] -> Parse.Found one
+         | _ -> Parse.Ambiguous phrase ids
+       )
+       | found -> found);
+    match (named, World.account_of body tx.w) with
+    | (_, None) -> change (World.tell body "You have no account to copy into.") tx
+    | (Parse.Found id, Some a) -> (
+      let from = World.blueprint_of id;
+      let key = String.lower a.name;
+      let to =
+        "%{home_dir key tx.w}/%{Option.default "" (List.head (List.reverse (String.split "/" from)))}";
+      let room? = World.env_of id tx.w == None;
+      if !(String.starts_with? (learning tx.w) from) then
+        change
+          (World.tell
+            body
+            "Only the examples in the Learning Hall can be copied, and %{short_of id tx.w} is not one.")
+          tx
+      else if Files.exists? tx.w.lib_root to then
+        change (World.tell body "You have %{to} already. Change it with /edit %{to}.") tx
+      else match Option.map (Files.moved from to) (Files.read tx.w.lib_root from) with
+        | None -> change (World.tell body "%{from} has no file to copy.") tx
+        | Some source -> (
+          match budget (Some key) (Driver.Save to source) tx.w with
+          | Error why -> change (World.tell body why) tx
+          | Ok cost -> (
+            let o = Files.save tx.w.lib_root to source;
+            match (o.ok, Wand.load Driver.Blueprint.loader (Files.file_of tx.w.lib_root to)) with
+            | (true, Ok b) -> (
+              let copied =
+                tx
+                |> _charge (Some key) cost "copy"
+                |> _wrote body to
+                |> change (World.set_blueprint to b)
+                |> change (World.set_built to key)
+                |> _event World.Event(
+                  at = "",
+                  event = "copy",
+                  actor = body,
+                  object = Some to,
+                  text = Some from
+                );
+              if room? then
+                change
+                  (World.tell
+                    body
+                    "Copied %{from} to %{to}. Go there with /move %{to}, and change it with /edit %{to}.")
+                  copied
+              else
+                copied
+                |> change
+                  (World.tell body "Copied %{from} to %{to}. Change it with /edit %{to}.")
+                |> _spawn_here body to
             )
-            |> change
-              (World.tell
-                body
-                "Copied %{from} to %{to}. %{use}, and change it with /edit %{to}.")
-          | (true, Error why) ->
-            tx
-            |> _wrote body to
-            |> change (World.tell body "Copied %{from} to %{to}, but it did not load: %{why}")
-          | (false, _) ->
-            change
-              (World.tell
-                body
-                "%{from} could not be copied: %{String.join "; " (List.map (fn (p: Driver.Problem) -> p.message) o.problems)}")
+            | (true, Error why) ->
               tx
+              |> _wrote body to
+              |> change
+                (World.tell body "Copied %{from} to %{to}, but it did not load: %{why}")
+            | (false, _) ->
+              change
+                (World.tell
+                  body
+                  "%{from} could not be copied: %{String.join "; " (List.map (fn (p: Driver.Problem) -> p.message) o.problems)}")
+                tx
+          )
         )
-      )
+    )
+    | (_, Some _) -> change (World.tell body "You don't see a '%{words}' here.") tx
   )
-  | (_, Some _) -> change (World.tell body "You don't see a '%{words}' here.") tx
 
 -- An account's Capacity and Inspiration, as /stat shows them.
 let _stat_text (a: World.Account) (w: World.Current) =
@@ -2202,33 +2252,6 @@ let _move_to body path (tx: Tx) = (
   else match allowed ctx (Driver.Move body path) tx.w with
     | Error why -> change (World.tell body "You cannot go to %{path}: %{why}.") tx
     | Ok _ -> _act ctx (Driver.Move body path) tx
-)
-
--- /spawn <path>: make one of a thing in the room you are in, as
--- /spawn /r/home/ann/lever. It is the action
--- /eval [Driver.Spawn "<path>" ctx.here] gives, with the same checks and
--- cost, but it says why when it cannot.
-let _spawn_here body path (tx: Tx) = (
-  let ctx = ctx_for tx.w body body;
-  let action = Driver.Spawn path (room_of body tx.w);
-  let id = "%{path}#%{World.next_number path tx.w}";
-  let room? = List.any? (fn i -> World.env_of i tx.w == None) (World.instances_of path tx.w);
-  if path == "" then
-    change
-      (World.tell body "Spawn what? Give a thing's path, as /spawn /r/home/ann/lever.")
-      tx
-  else if !(Map.has? path tx.w.lib) then
-    change (World.tell body "There is no thing at %{path}.") tx
-  else if room? then
-    change (World.tell body "%{path} is a room. Go there with /move %{path}.") tx
-  else match allowed ctx action tx.w with
-    | Error why -> change (World.tell body "You cannot spawn %{path}: %{why}.") tx
-    | Ok _ -> (
-      let done = _act ctx action tx;
-      if Option.some? (World.instance id done.w) then
-        change (World.tell body "You make %{short_of id done.w} here: %{id}.") done
-      else done
-    )
 )
 
 -- /back: return from a visit.

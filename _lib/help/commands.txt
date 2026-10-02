@@ -12,7 +12,8 @@ has not turned them off:
   /move <path>         go to a room by its path, as /move /r/home/ann/hall
   /spawn <path>        make one of a thing here, as /spawn /r/home/ann/lever
   /files [directory]   list the files and directories in your home
-  /copy <thing>        copy an example from the Learning Hall into your home
+  /copy <thing>        copy an example from the Learning Hall into your home,
+                       and make one of a thing here
   /update [path]       load a file's new code
   /reset [thing]       make a thing again from its file
   /eval <expression>   run Wand, as your own body

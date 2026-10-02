@@ -19,9 +19,8 @@ else in the room.
 
 Try it:
 
-  1. /copy lever
-  2. /spawn your copy to make one here. /copy tells you its path.
-  3. Pull your lever. /edit your lever, at the path /copy gave you, make it
+  1. /copy lever. It also makes one of your lever here.
+  2. Pull your lever. /edit your lever, at the path /copy gave you, make it
      say something else, then w. Your lever keeps its count: the driver
      moves it onto the new code with its saved state.
-  4. Add a second verb, push, that counts down.
+  3. Add a second verb, push, that counts down.

@@ -15,11 +15,11 @@ How each lesson works:
 
   1. Go to its room, try the example, and read about it.
   2. /copy the example. That writes its file into your home, as
-     /r/home/<you>/lever, and loads it.
+     /r/home/<you>/lever, and loads it. For a thing, it also makes one here.
   3. /edit your copy, change it, and save it with w. Your change loads at
      once. Type h in the editor for its commands.
-  4. Go into a room with the /move line /copy gives you, or make a thing
-     with its /spawn line.
+  4. For a room, go in with the /move line /copy gives you. For a thing,
+     /spawn makes more of it.
 
 Your home is a directory, /r/home/<you>/, and you can make directories in
 it to keep your rooms in order, as /r/home/<you>/shop/. /edit and /dig make

@@ -26,6 +26,5 @@ you run out, your heartbeats wait until it refills.
 
 Try it:
 
-  1. /copy cat
-  2. /spawn your copy. /copy tells you its path.
-  3. Make it a dog: change its names, its text and what it does.
+  1. /copy cat. It also makes one of your cat here.
+  2. Make it a dog: change its names, its text and what it does.

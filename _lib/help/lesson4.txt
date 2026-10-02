@@ -20,6 +20,5 @@ and the exit's check reads it with ctx.world.prop.
 
 Try it:
 
-  1. /copy door
-  2. /spawn your copy. /copy tells you its path.
-  3. Make it close after 10s, then add a verb knock.
+  1. /copy door. It also makes one of your door here.
+  2. Make it close after 10s, then add a verb knock.
