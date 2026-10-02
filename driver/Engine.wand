@@ -1298,14 +1298,12 @@ and _tell_room room except text (tx: Tx) =
 
 -- ── Commands ───────────────────────────────────────────────────────────
 
--- `"Hello.` is `say Hello.`, `:sits.` is `pose sits.`, and `;'s cat
--- purrs.` is `semipose 's cat purrs.`. The driver rewrites the prefix and
--- nothing else; the commands are the player's verbs.
+-- `"Hello.` is `say Hello.`, and `:sits.` is `pose sits.`. The driver
+-- rewrites the prefix and nothing else; the commands are the player's verbs.
 let _expand line =
   let rest = String.slice 1 (String.length line) line;
   if String.starts_with? `"` line then "say %{rest}"
   else if String.starts_with? ":" line then "pose %{rest}"
-  else if String.starts_with? ";" line then "semipose %{rest}"
   else line
 
 -- Why nothing answered, in words the player can act on.
@@ -2703,7 +2701,7 @@ let _set_paused body words paused (tx: Tx) =
     )
 
 -- The verbs whose lines a report can show.
-let _speech = ["say", "pose", "semipose"]
+let _speech = ["say", "pose"]
 
 -- /pull, for a Keymaster: the git fiber comes up to the game's repo, and
 -- the files that came in load as /update loads them.

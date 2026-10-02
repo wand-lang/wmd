@@ -41,15 +41,20 @@ let _say (s: State) (ctx: Driver.Context) (p: Driver.Parsed) =
     actions = Text.act ctx `You say "%{p.rest}"` `%{s.name} says "%{p.rest}"`
   )
 
--- `pose sits down.` shows "Ann sits down." to everyone, Ann too.
+-- A pose that starts with one of these goes right after the name.
+let _joins = ["'", "’", ",", "-", ".", "!", "?", ":", ";"]
+
+-- `pose sits down.` shows "Ann sits down." to everyone, Ann too, and
+-- `pose 's cat purrs.` shows "Ann's cat purrs.": no space before
+-- punctuation.
 let _pose (s: State) (ctx: Driver.Context) (p: Driver.Parsed) =
   if p.rest == "" then Driver.tell ctx "Pose what?"
-  else Driver.Reply(actions = Text.act ctx "%{s.name} %{p.rest}" "%{s.name} %{p.rest}")
-
--- `semipose 's cat purrs.` shows "Ann's cat purrs.": no space after the name.
-let _semipose (s: State) (ctx: Driver.Context) (p: Driver.Parsed) =
-  if p.rest == "" then Driver.tell ctx "Semipose what?"
-  else Driver.Reply(actions = Text.act ctx "%{s.name}%{p.rest}" "%{s.name}%{p.rest}")
+  else (
+    let space = if List.any? (fn c -> String.starts_with? c p.rest) _joins then "" else " ";
+    Driver.Reply(
+      actions = Text.act ctx "%{s.name}%{space}%{p.rest}" "%{s.name}%{space}%{p.rest}"
+    )
+  )
 
 -- ── socials ────────────────────────────────────────────────────────────
 
@@ -115,7 +120,6 @@ let make (s: State) =
     verbs = [
       _verb ["say"] (_say s),
       _verb ["pose"] (_pose s),
-      _verb ["semipose"] (_semipose s),
       _verb ["home"] (_home s),
       _verb (Map.keys _socials) (_social s)
     ],
