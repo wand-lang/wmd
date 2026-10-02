@@ -181,16 +181,17 @@ group "talk" (fn () -> [
   test "say" (fn t ->
     let w = played (List.concat both_in [line ann "say Hello."]);
     t.eq ([`You say "Hello."`], [`Ann says "Hello."`]) (heard ann w, heard bo w)),
-  test "a quote is say, and a colon pose" (fn t ->
+  test "a quote is say, and a colon or a semicolon pose" (fn t ->
     t.eq
-      [`Ann says "Hi."`, "Ann waves.", "Ann's cat purrs."]
+      [`Ann says "Hi."`, "Ann waves.", "Ann's cat purrs.", "Ann's dog barks."]
       (heard
         bo
         (played
           (List.concat both_in [
             line ann `"Hi.`,
             line ann ":waves.",
-            line ann ":'s cat purrs."
+            line ann ":'s cat purrs.",
+            line ann ";'s dog barks."
           ]))))
 ])
 

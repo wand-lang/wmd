@@ -1298,12 +1298,13 @@ and _tell_room room except text (tx: Tx) =
 
 -- ── Commands ───────────────────────────────────────────────────────────
 
--- `"Hello.` is `say Hello.`, and `:sits.` is `pose sits.`. The driver
+-- `"Hello.` is `say Hello.`, and `:sits.` and `;sits.` are `pose sits.`:
+-- a semicolon is a colon, for the habit of the semi-pose. The driver
 -- rewrites the prefix and nothing else; the commands are the player's verbs.
 let _expand line =
   let rest = String.slice 1 (String.length line) line;
   if String.starts_with? `"` line then "say %{rest}"
-  else if String.starts_with? ":" line then "pose %{rest}"
+  else if String.starts_with? ":" line || String.starts_with? ";" line then "pose %{rest}"
   else line
 
 -- Why nothing answered, in words the player can act on.
