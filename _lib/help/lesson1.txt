@@ -23,7 +23,7 @@ Exits are a map from a name to a place:
 Try it:
 
   1. /copy here
-  2. /eval [Driver.Move ctx.actor "/r/home/<you>/hours"] to go into your copy.
+  2. /move to your copy. /copy tells you its path.
   3. /edit here, find the long text with ,n, change it with c, then w.
   4. look. Your room says what you wrote.
 

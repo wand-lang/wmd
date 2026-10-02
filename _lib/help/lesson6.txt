@@ -21,6 +21,6 @@ themselves. /examine lamp shows the props the cave reads.
 Try it:
 
   1. /copy here and /copy lamp
-  2. Change your cave to spawn your lamp, as in lesson 5, and go in.
+  2. Change your cave to spawn your lamp, as in lesson 5, and /move to it.
   3. Make a second light: a candle that gives light 1 and never runs out.
      Two lit things make the cave brighter; change its text for that.

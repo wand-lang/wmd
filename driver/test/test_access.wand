@@ -103,6 +103,18 @@ group "a private room" (fn () -> [
       where ann_body w,
       refusals w
     )),
+  test "/move takes its owner there" (fn t ->
+    let w = after [line bo "/move /r/garden"];
+    t.eq (Some garden) (where bo_body w)),
+  test "/move says why another builder may not go there" (fn t ->
+    let w = after [line ann "/move /r/garden"];
+    t.eq (["You may not go to /r/garden: it is private."], Some square) (
+      heard ann w,
+      where ann_body w
+    )),
+  test "/move to a path with no room says so" (fn t ->
+    let w = after [line ann "/move /r/nowhere"];
+    t.eq (["There is no room at /r/nowhere."], Some square) (heard ann w, where ann_body w)),
   test "a builder's room starts private, and the Keymasters' are public" (fn t ->
     let w = played (signed_up ann "ann");
     t.eq (true, false, false) (

@@ -1724,7 +1724,7 @@ let _dig body words (tx: Tx) = (
           let hand =
             `Dug a room at %{path}. Add the exit to this room with /edit here: %{Files.exit_line (_exit_key name) path view}`;
           let away =
-            `Dug a room at %{path}. No exit leads there from %{short_of here tx.w}. Go there with /eval [Driver.Move ctx.actor "%{path}"]`;
+            `Dug a room at %{path}. No exit leads there from %{short_of here tx.w}. Go there with /move %{path}`;
           -- The exit goes here only when the new room is in this room's
           -- area, or the player wrote its path out.
           if !(mine && (ours || String.starts_with? "/" rel)) then
@@ -1810,8 +1810,7 @@ let _copy body words (tx: Tx) =
         | Ok cost -> (
           let o = Files.save tx.w.lib_root to source;
           let use =
-            if room? then `Go there with /eval [Driver.Move ctx.actor "%{to}"]`
-            else `Make one with /eval [Driver.Spawn "%{to}" ctx.here]`;
+            if room? then `Go there with /move %{to}` else `Make one with /spawn %{to}`;
           match (o.ok, Wand.load Driver.Blueprint.loader (Files.file_of tx.w.lib_root to)) with
           | (true, Ok b) ->
             tx
@@ -2185,6 +2184,52 @@ let _sent_back body (tx: Tx) =
     let to = if may_enter? body from tx.w then from else home_of body tx.w;
     tx |> change (World.back body) |> _move (ctx_for tx.w body body) body to
   )
+
+-- /move <path>: go to a room by its path, as /move /r/home/ann/hall. It is
+-- the action /eval [Driver.Move ctx.actor "<path>"] gives, with the same
+-- checks, but it says why when it cannot go.
+let _move_to body path (tx: Tx) = (
+  let ctx = ctx_for tx.w body body;
+  let room = World.resolve path;
+  let known =
+    Option.some? (World.instance room tx.w) || Map.has? (World.blueprint_of path) tx.w.lib;
+  if path == "" then
+    change (World.tell body "Move where? Give a room's path, as /move /r/square.") tx
+  else if !known || World.env_of room tx.w != None || realm? room tx.w then
+    change (World.tell body "There is no room at %{path}.") tx
+  else if !(may_enter? body room tx.w) then
+    change (World.tell body "You may not go to %{path}: it is private.") tx
+  else match allowed ctx (Driver.Move body path) tx.w with
+    | Error why -> change (World.tell body "You cannot go to %{path}: %{why}.") tx
+    | Ok _ -> _act ctx (Driver.Move body path) tx
+)
+
+-- /spawn <path>: make one of a thing in the room you are in, as
+-- /spawn /r/home/ann/lever. It is the action
+-- /eval [Driver.Spawn "<path>" ctx.here] gives, with the same checks and
+-- cost, but it says why when it cannot.
+let _spawn_here body path (tx: Tx) = (
+  let ctx = ctx_for tx.w body body;
+  let action = Driver.Spawn path (room_of body tx.w);
+  let id = "%{path}#%{World.next_number path tx.w}";
+  let room? = List.any? (fn i -> World.env_of i tx.w == None) (World.instances_of path tx.w);
+  if path == "" then
+    change
+      (World.tell body "Spawn what? Give a thing's path, as /spawn /r/home/ann/lever.")
+      tx
+  else if !(Map.has? path tx.w.lib) then
+    change (World.tell body "There is no thing at %{path}.") tx
+  else if room? then
+    change (World.tell body "%{path} is a room. Go there with /move %{path}.") tx
+  else match allowed ctx action tx.w with
+    | Error why -> change (World.tell body "You cannot spawn %{path}: %{why}.") tx
+    | Ok _ -> (
+      let done = _act ctx action tx;
+      if Option.some? (World.instance id done.w) then
+        change (World.tell body "You make %{short_of id done.w} here: %{id}.") done
+      else done
+    )
+)
 
 -- /back: return from a visit.
 let _back body (tx: Tx) =
@@ -2789,6 +2834,8 @@ let _command_line sid body at line (tx: Tx) =
         change (World.tell body (_reviews body (_after_verb full) logged.w)) logged
       | "/visit" -> _visit body (_after_verb full) logged
       | "/back" -> _back body logged
+      | "/move" -> _move_to body (_after_verb full) logged
+      | "/spawn" -> _spawn_here body (_after_verb full) logged
       | "/approve" -> _approve body (_after_verb full) logged
       | "/decline" -> _decline body (_after_verb full) logged
       | "/withdraw" -> _withdraw body (_after_verb full) logged

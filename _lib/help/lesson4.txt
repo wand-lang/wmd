@@ -21,5 +21,5 @@ and the exit's check reads it with ctx.world.prop.
 Try it:
 
   1. /copy door
-  2. /eval [Driver.Spawn "/r/home/<you>/door" ctx.here]
+  2. /spawn your copy. /copy tells you its path.
   3. Make it close after 10s, then add a verb knock.

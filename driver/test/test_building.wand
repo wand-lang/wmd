@@ -78,7 +78,7 @@ group "/dig" (fn () -> [
     built! [line "/dig hall hall"] (fn w ->
       t.eq
         [
-          `Dug a room at /r/home/dee/hall. No exit leads there from The Commons. Go there with /eval [Driver.Move ctx.actor "/r/home/dee/hall"]`
+          `Dug a room at /r/home/dee/hall. No exit leads there from The Commons. Go there with /move /r/home/dee/hall`
         ]
         (heard w))),
   test "from your own room, adds the exit and leads back" (fn t ->

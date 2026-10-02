@@ -9,6 +9,8 @@ has not turned them off:
   /edit [path]         edit a file in your home, as /edit /r/home/ann/lamp
   /dig <exit> <path> [view]
                        dig a new room and an exit to it, as /dig east shop/front
+  /move <path>         go to a room by its path, as /move /r/home/ann/hall
+  /spawn <path>        make one of a thing here, as /spawn /r/home/ann/lever
   /files [directory]   list the files and directories in your home
   /copy <thing>        copy an example from the Learning Hall into your home
   /update [path]       load a file's new code

@@ -18,7 +18,8 @@ Capacity: /stat me shows both.
 Try it:
 
   1. /copy here and /copy orc
-  2. /edit /r/home/<you>/orcs, change the Spawn to "/r/home/<you>/orc", then w.
-  3. /eval [Driver.Move ctx.actor "/r/home/<you>/orcs"]. Your room is made the
+  2. /edit your orcs, at the path /copy gave you. Change the Spawn to the
+     path of your orc, then w.
+  3. /move to your orcs. Your room is made the
      first time you go in, and it spawns your orc. /reset here makes it
      again, as new, and it spawns one more.

@@ -180,12 +180,32 @@ group "/verbs" (fn () -> [
       (heard (played [line "west", forget, line "/verbs"])))
 ])
 
+group "/spawn" (fn () -> [
+  test "makes one of your copy in the room you are in" (fn t ->
+    copying! [line "west", line "two", line "/copy lever", forget, line "/spawn /r/home/cy/lever"] (fn w ->
+      t.eq (Some "/r/learning/levers#0", true) (
+        World.env_of "/r/home/cy/lever#0" w,
+        List.any?
+          (fn l -> String.starts_with? "You make " l
+          && String.ends_with? "here: /r/home/cy/lever#0." l)
+          (heard w)
+      ))),
+  test "says when a path has no thing" (fn t ->
+    t.eq
+      ["There is no thing at /r/home/cy/levr."]
+      (heard (played [line "west", forget, line "/spawn /r/home/cy/levr"]))),
+  test "sends a room to /move" (fn t ->
+    t.eq
+      ["/r/learning/hall is a room. Go there with /move /r/learning/hall."]
+      (heard (played [line "west", forget, line "/spawn /r/learning/hall"])))
+])
+
 group "/copy" (fn () -> [
   test "writes an example into your home, and loads it" (fn t ->
     copying! [line "west", line "two", forget, line "/copy lever"] (fn w ->
       t.eq (true, true, true) (
         heard?
-          `Copied /r/learning/lever to /r/home/cy/lever. Make one with /eval [Driver.Spawn "/r/home/cy/lever" ctx.here], and change it with /edit /r/home/cy/lever.`
+          `Copied /r/learning/lever to /r/home/cy/lever. Make one with /spawn /r/home/cy/lever, and change it with /edit /r/home/cy/lever.`
           w,
         FS.exists? (Path.join home ./lever.wand),
         Map.has? "/r/home/cy/lever" w.lib
@@ -201,11 +221,11 @@ group "/copy" (fn () -> [
         World.env_of "/r/home/cy/lever#0" w,
         World.owner_of "/r/home/cy/lever#0" w
       ))),
-  test "a room is copied with here, and gone into with /eval" (fn t ->
+  test "a room is copied with here, and gone into with /move" (fn t ->
     copying! [line "west", line "one", forget, line "/copy here"] (fn w ->
       t.ok
         (heard?
-          `Copied /r/learning/hours to /r/home/cy/hours. Go there with /eval [Driver.Move ctx.actor "/r/home/cy/hours"], and change it with /edit /r/home/cy/hours.`
+          `Copied /r/learning/hours to /r/home/cy/hours. Go there with /move /r/home/cy/hours, and change it with /edit /r/home/cy/hours.`
           w))),
   test "never writes over a file you have" (fn t ->
     copying! [line "west", line "two", line "/copy lever", forget, line "/copy lever"] (fn w ->

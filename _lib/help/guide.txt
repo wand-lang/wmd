@@ -18,7 +18,8 @@ How each lesson works:
      /r/home/<you>/lever, and loads it.
   3. /edit your copy, change it, and save it with w. Your change loads at
      once. Type h in the editor for its commands.
-  4. Make one of it, or go into it, with the /eval line /copy gives you.
+  4. Go into a room with the /move line /copy gives you, or make a thing
+     with its /spawn line.
 
 Your home is a directory, /r/home/<you>/, and you can make directories in
 it to keep your rooms in order, as /r/home/<you>/shop/. /edit and /dig make
@@ -35,6 +36,8 @@ Tools that help:
 
   /verbs <thing>     what a thing answers to
   /examine <thing>   what the driver knows of it: owner, props, call-outs
+  /move <path>       go to a room by its path
+  /spawn <path>      make one of a thing here
   /eval <expr>       run one line of Wand, as your own body
   /stat me           your Capacity and Inspiration
 
