@@ -104,7 +104,7 @@ let check (lib: Path) path source =
 -- Write `text` to the file of `path`, making its directory first.
 let _write (lib: Path) path text =
   let file = file_of lib path;
-  Result.and_then (fn _ -> FS.write_atomic file text) (FS.mkdir (Path.dirname file))
+  Result.and_then (fn _ -> FS.write_atomic file text) (FS.mkdir (Path.parent file))
 
 -- Check, gate, format and save. Nothing is written unless all pass.
 let save (lib: Path) path source = (

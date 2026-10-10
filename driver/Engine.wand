@@ -16,7 +16,9 @@ import ./Password
 import ./Scan
 import ./Snapshot
 import ./World
+import DateTime
 import FS
+import Int
 import JSON
 import List
 
@@ -62,7 +64,7 @@ type Tx(
 -- carries that time, for `ctx.time`.
 let begin (w: World.Current) at =
   Tx(
-    w = World.Current(w, now = Result.default 1970-01-01T00:00:00Z (String.to_datetime at)),
+    w = World.Current(w, now = Result.default 1970-01-01T00:00:00Z (DateTime.of_string at)),
     changes = [],
     at = at
   )
@@ -386,7 +388,7 @@ let rules_version (w: World.Current) = (
       ""
       (Option.and_then (fn t -> List.head (String.lines t)) (Map.get "rules" w.help));
   match Regex.capture r/version (\d+)/ first with
-  | [_, n] -> Result.default 1 (String.to_int n)
+  | [_, n] -> Result.default 1 (Int.of_string n)
   | _ -> 1
 )
 
@@ -2117,7 +2119,7 @@ let _request_named body words (w: World.Current) =
       && Some r.by == _key_of body w
       && List.any? (fn p -> p == World.blueprint_of (room_of body w)) r.rooms)
       w.requests
-  else Option.and_then (fn n -> World.request n w) (Result.to_option (String.to_int words))
+  else Option.and_then (fn n -> World.request n w) (Result.to_option (Int.of_string words))
 
 -- /review here <realm>: ask a realm to take the rooms from the one `body`
 -- is in. Rooms of their own join the realm and stay theirs; rooms they
@@ -2638,7 +2640,7 @@ let _flags body words (w: World.Current) =
             open))
         w
   )
-  else match Option.and_then (fn n -> World.flag n w) (Result.to_option (String.to_int words)) with
+  else match Option.and_then (fn n -> World.flag n w) (Result.to_option (Int.of_string words)) with
     | Some f when _reviews? body f w ->
       (World.tell
         body
@@ -2692,7 +2694,7 @@ let _resolve body words (tx: Tx) = (
       let note = String.join " " rest;
       let said = if note == "" then how else "%{how}: %{note}";
       let why = if note == "" then "" else " %{note}";
-      match Option.and_then (fn k -> World.flag k tx.w) (Result.to_option (String.to_int n)) with
+      match Option.and_then (fn k -> World.flag k tx.w) (Result.to_option (Int.of_string n)) with
       | Some f when !(_reviews? body f tx.w) ->
         change (World.tell body "There is no flag #%{n} for you to review.") tx
       | None -> change (World.tell body "There is no flag #%{n}.") tx
@@ -3164,7 +3166,7 @@ let _restored_account (f: Snapshot.File) (a: World.Account) =
   let made =
     Option.and_then
       (fn (s: Snapshot.Saved) -> Option.and_then
-        (fn c -> Result.to_option (String.to_datetime c))
+        (fn c -> Result.to_option (DateTime.of_string c))
         s.created)
       (List.find (fn (s: Snapshot.Saved) -> s.id == a.body) f.instances);
   World.Account(a, role = role, created = if a.created == None then made else a.created)

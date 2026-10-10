@@ -13,7 +13,7 @@ let {test, group} = import Test
 
 -- A commit in the person's clone `dir`, of `file` with `text`, pushed.
 let _theirs! dir file text = (
-  FS.mkdir! (Path.dirname (Path.join dir file));
+  FS.mkdir! (Path.parent (Path.join dir file));
   FS.write_file! (Path.join dir file) text;
   let _ = Shell.run! (Shell.in_dir dir $*(git add --all));
   let _ =

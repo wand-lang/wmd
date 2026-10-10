@@ -362,7 +362,7 @@ let next_number bp (w: Current) =
   List.fold_left
     (fn n (i: Instance) -> if i.blueprint != bp then n
       else match Result.to_option
-        (String.to_int (Option.default "" (List.get 1 (String.split "#" i.id)))) with
+        (Int.of_string (Option.default "" (List.get 1 (String.split "#" i.id)))) with
         | Some k -> if k + 1 > n then k + 1 else n
         | None -> n
     )

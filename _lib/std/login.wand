@@ -6,6 +6,7 @@ uses {Random}
 -- and the driver checks and keeps the hash.
 
 import DateTime
+import Int
 import JSON
 import Map
 import Option
@@ -59,7 +60,7 @@ let _capitalize name =
 let _date text =
   match Regex.capture r/^(\d{4})-(\d{2})-(\d{2})$/ (String.trim text) with
   | [_, y, m, d] -> (
-    match (String.to_int y, String.to_int m, String.to_int d) with
+    match (Int.of_string y, Int.of_string m, Int.of_string d) with
     | (Ok yy, Ok mm, Ok dd) -> Some(yy, mm, dd)
     | _ -> None
   )

@@ -3,6 +3,7 @@
 -- The driver does the parsing, so builders never parse strings: a verb
 -- says what it takes, and gets objects.
 
+import Int
 import List
 import Option
 import Result
@@ -76,7 +77,7 @@ let resolve (w: World.Current) actor here words =
       (List.map String.lower words);
   let index =
     Option.and_then
-      (fn last -> Result.to_option (String.to_int last))
+      (fn last -> Result.to_option (Int.of_string last))
       (List.head (List.reverse lower));
   let named =
     if Option.some? index then List.reverse (List.drop 1 (List.reverse lower)) else lower;

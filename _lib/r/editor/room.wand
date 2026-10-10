@@ -9,6 +9,7 @@ uses {Random}
 -- `c`, lines are text until a lone `.`. While the editor takes commands,
 -- a line that starts with / goes to the driver, so /who and /quit work.
 
+import Int
 import JSON
 import List
 import Map
@@ -126,7 +127,7 @@ let _line (s: State) a =
   match a with
   | "." -> Ok s.cur
   | "$" -> Ok (List.length s.lines)
-  | n -> Result.map_error (fn _ -> "'%{n}' is not a line number.") (String.to_int n)
+  | n -> Result.map_error (fn _ -> "'%{n}' is not a line number.") (Int.of_string n)
 
 -- The range a command names, or None when it names none.
 let _range (s: State) whole first second =

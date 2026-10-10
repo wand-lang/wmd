@@ -88,7 +88,7 @@ let _commit_saves state (o: Opts) =
 -- Commit the latest world.json. The driver loop writes it; this only
 -- commits what is there.
 let _commit_world (o: Opts) =
-  match Git.commit (Path.dirname o.world) "wmd <wmd>" "The world" [
+  match Git.commit (Path.parent o.world) "wmd <wmd>" "The world" [
     Path.to_string (Path.basename o.world)
   ] with
   | Error why -> IO.println_err "wmd: git did not commit %{o.world}: %{why}"
