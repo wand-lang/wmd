@@ -348,7 +348,7 @@ let _dir path =
 -- How many leading directories two lists share.
 let _common xs ys =
   match (xs, ys) with
-  | ([x :: xt], [y :: yt]) when x == y -> 1 + _common xt yt
+  | ([x :: xt], [y :: yt]) if x == y -> 1 + _common xt yt
   | _ -> 0
 
 -- The relative import from the file of blueprint path `from` to the file

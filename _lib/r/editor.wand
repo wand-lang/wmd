@@ -13,7 +13,7 @@ implement Driver.Blueprint =
 implement Driver.Realm =
   let commands = Realm.anything;
   let allows (ctx: Driver.Context) (a: Driver.Action) = match a with
-  | Driver.Move o _ when ctx.world.player? o && o != ctx.actor ->
+  | Driver.Move o _ if ctx.world.player? o && o != ctx.actor ->
     Error "the editor moves no one but the person at it"
   | _ -> Ok();
   let allowed = Driver.Everyone;

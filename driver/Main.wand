@@ -207,8 +207,8 @@ let _git_start! (o: Opts) = (
   let left = Result.get! (Git.dirty o.lib);
   if left != [] then
     match Git.commit o.lib "wmd <wmd>" "Saves from before the restart" left with
-  | Error why -> IO.println_err "wmd: git did not commit what was left: %{why}"
-  | Ok _ -> ();
+    | Error why -> IO.println_err "wmd: git did not commit what was left: %{why}"
+    | Ok _ -> ();
   match Git.pull o.lib with
   | Ok files -> IO.println "wmd: pulled %{List.length files} changed Library files"
   | Error why -> IO.println_err "wmd: did not pull: %{why}"

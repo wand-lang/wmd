@@ -161,7 +161,7 @@ let read (lib: Path) path =
 -- `s` split at the first `sep`: what is before it and what is after.
 let _split_once sep s =
   match String.split sep s with
-  | [first :: rest] when rest != [] -> Some (first, String.join sep rest)
+  | [first :: rest] if rest != [] -> Some (first, String.join sep rest)
   | _ -> None
 
 -- `v` written as the inside of a Wand string: a backslash, a quote and the

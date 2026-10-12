@@ -85,12 +85,12 @@ let _social (s: State) (ctx: Driver.Context) (p: Driver.Parsed) =
        | Some o -> Some o
        | None -> p.dobj);
     match target with
-    | None when p.prep == Some "at" ->
+    | None if p.prep == Some "at" ->
       Driver.tell
         ctx
         "You don't see a '%{String.trim (String.slice 3 (String.length p.rest) p.rest)}' here."
     | None -> Driver.Reply(actions = Text.act ctx "You %{so.you}." "%{s.name} %{so.them}.")
-    | Some t when t == ctx.actor -> Driver.Reply(
+    | Some t if t == ctx.actor -> Driver.Reply(
       actions =
         Text.act ctx "You %{so.you} at yourself." "%{s.name} %{so.them} at themself."
     )

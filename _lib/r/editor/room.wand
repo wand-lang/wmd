@@ -92,7 +92,7 @@ let _numbered from lines = List.map (fn (i, l) -> "%{from + i}\t%{l}") (List.ind
 let _replace old new all line =
   if all then String.replace old new line
   else match String.split old line with
-    | [before :: after] when after != [] -> "%{before}%{new}%{String.join old after}"
+    | [before :: after] if after != [] -> "%{before}%{new}%{String.join old after}"
     | _ -> line
 
 -- How many lines differ between two versions of a file.

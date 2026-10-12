@@ -300,7 +300,7 @@ let faulted id (w: Current) =
 
 let worked id (w: Current) =
   match instance id w with
-  | Some i when i.faults > 0 -> put Instance(i, faults = 0) w
+  | Some i if i.faults > 0 -> put Instance(i, faults = 0) w
   | _ -> w
 
 -- Who made an object and when, as a snapshot kept them.

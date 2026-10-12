@@ -251,7 +251,7 @@ let contracted? key path (w: World.Current) =
 let room_realms room (w: World.Current) = (
   let bp = World.blueprint_of room;
   match Map.get bp w.adopted with
-  | Some realm when Map.has? realm w.realms && file_owner realm w == None -> realm :: realms_of realm w
+  | Some realm if Map.has? realm w.realms && file_owner realm w == None -> realm :: realms_of realm w
   | _ -> realms_of bp w
 )
 
@@ -409,7 +409,7 @@ let home_of body (w: World.Current) =
   match World.account_of body w with
   | Some a -> (
     match a.home with
-    | Some h when may_enter? body h w -> h
+    | Some h if may_enter? body h w -> h
     | _ -> arrival w
   )
   | None -> arrival w
@@ -715,7 +715,7 @@ let _inspired owner cost (w: World.Current) =
 let budget payer (a: Driver.Action) (w: World.Current) = (
   let (cost, _) = _price a;
   match payer with
-  | Some p when !(_exempt? payer w) -> (
+  | Some p if !(_exempt? payer w) -> (
     match _capacity p a w with
     | Error why -> Error why
     | Ok _ -> Result.map (fn _ -> cost) (_inspired p cost w)
@@ -726,14 +726,13 @@ let budget payer (a: Driver.Action) (w: World.Current) = (
 -- Spend `cost` of the Inspiration of `payer`.
 let _spend payer cost (tx: Tx) =
   match payer with
-  | Some p when cost > 0 && !(_exempt? payer tx.w) ->
-    change (World.spend p cost tx.w.now) tx
+  | Some p if cost > 0 && !(_exempt? payer tx.w) -> change (World.spend p cost tx.w.now) tx
   | _ -> tx
 
 -- Spend `cost` of the Inspiration of `payer` on `what`, and log it.
 let _charge payer cost what (tx: Tx) =
   match payer with
-  | Some p when cost > 0 && !(_exempt? payer tx.w) ->
+  | Some p if cost > 0 && !(_exempt? payer tx.w) ->
     tx
     |> _spend payer cost
     |> _event World.Event(
@@ -756,7 +755,7 @@ let _tell_payer (ctx: Driver.Context) payer why (tx: Tx) =
 let _pay body cost what k (tx: Tx) = (
   let payer = _key_of body tx.w;
   match payer with
-  | Some p when !(_exempt? payer tx.w) -> (
+  | Some p if !(_exempt? payer tx.w) -> (
     match _inspired p cost tx.w with
     | Error why -> change (World.tell body why) tx
     | Ok _ -> k (_charge payer cost what tx)
@@ -1611,7 +1610,7 @@ let _verbs body words (w: World.Current) =
           List.flatten
             (List.filter_map
               (fn r -> match World.instance r w with
-                | Some ri when ri.object.verbs != [] ->
+                | Some ri if ri.object.verbs != [] ->
                   Some
                     ("%{short_of r w} answers to:" :: List.map (fn v -> "  %{_forms ri v}") ri.object.verbs)
                 | _ -> None
@@ -1779,7 +1778,7 @@ let _files body words (w: World.Current) =
       "'%{dir}' is not a Library directory. One looks like %{w.paths.homes}/ann/shop."
     else if !(may_edit? body "%{dir}/x" w) then "You may not list %{dir}."
     else match Files.list w.lib_root dir with
-      | Some names when names != [] ->
+      | Some names if names != [] ->
         String.join "\n" ("%{dir}/:" :: List.map (fn n -> "  %{n}") names)
       | _ -> "%{dir}/ is empty."
   )
@@ -1974,7 +1973,7 @@ let _invite body words yes (tx: Tx) = (
   let room = room_of body tx.w;
   let title = short_of room tx.w;
   match String.words words with
-  | [name :: rest] when rest == [] || rest == ["here"] -> (
+  | [name :: rest] if rest == [] || rest == ["here"] -> (
     if !(_may_change? body room tx.w) then
       change (World.tell body "%{title} is not yours to invite anyone into.") tx
     else if Option.map World.public? (World.instance room tx.w) == Some true then
@@ -2028,9 +2027,9 @@ let _ban body words yes (tx: Tx) =
   | (Some me, [name]) -> (
     match World.account name tx.w with
     | None -> change (World.tell body "There is no one called %{name}.") tx
-    | Some a when String.lower a.name == String.lower me.name ->
+    | Some a if String.lower a.name == String.lower me.name ->
       change (World.tell body "You cannot ban yourself.") tx
-    | Some a when a.role == "keymaster" ->
+    | Some a if a.role == "keymaster" ->
       change
         (World.tell body "A Keymaster may go anywhere, so %{a.name} cannot be banned.")
         tx
@@ -2193,7 +2192,7 @@ let _reviews body words (w: World.Current) = (
     else String.join "\n" (List.map _request_line open)
   )
   else match _request_named body words w with
-    | Some r when mine r ->
+    | Some r if mine r ->
       String.join
         "\n"
         (List.flatten [
@@ -2210,7 +2209,7 @@ let _reviews body words (w: World.Current) = (
 let _visit body words (tx: Tx) = (
   let key = _key_of body tx.w;
   match _request_named body words tx.w with
-  | Some r when r.open && reviewer? key r tx.w -> (
+  | Some r if r.open && reviewer? key r tx.w -> (
     let from = room_of body tx.w;
     let name = short_of body tx.w;
     let entrance = Option.default from (List.head r.rooms);
@@ -2220,7 +2219,7 @@ let _visit body words (tx: Tx) = (
     |> _move (ctx_for tx.w body body) body entrance
     |> change (World.notice r.by "%{name} is reviewing your request #%{r.id}.")
   )
-  | Some r when !r.open ->
+  | Some r if !r.open ->
     change
       (World.tell body "Request #%{r.id} is closed: %{Option.default "" r.outcome}.")
       tx
@@ -2321,7 +2320,7 @@ let _approve body words (tx: Tx) = (
   let view = _rest_of (_rest_of words);
   let here = room_of body tx.w;
   match _request_named body n tx.w with
-  | Some r when r.open && reviewer? key r tx.w -> (
+  | Some r if r.open && reviewer? key r tx.w -> (
     let entrance = Option.default "" (List.head r.rooms);
     let linkable =
       if exit == "" then Ok()
@@ -2373,7 +2372,7 @@ let _decline body words (tx: Tx) = (
   let n = Option.default "" (String.word 0 words);
   let reason = _rest_of words;
   match _request_named body n tx.w with
-  | Some r when r.open && reviewer? key r tx.w -> if reason == "" then change (World.tell body "Say why: /decline %{n} <reason>.") tx
+  | Some r if r.open && reviewer? key r tx.w -> if reason == "" then change (World.tell body "Say why: /decline %{n} <reason>.") tx
     else
       tx
       |> change (World.close_request r.id "declined: %{reason}")
@@ -2514,11 +2513,11 @@ let _hold_if_flagged (f: World.Flag) (tx: Tx) = (
   let held =
     (if List.length by < flags_to_hold then None
      else match World.instance f.target tx.w with
-       | Some i when f.kind == "room" && World.public? i -> Some (
+       | Some i if f.kind == "room" && World.public? i -> Some (
          World.set_allowed f.target (Driver.Only []),
          "is private until a Keymaster has looked at it"
        )
-       | Some i when f.kind == "object" && !i.held -> Some (
+       | Some i if f.kind == "object" && !i.held -> Some (
          World.set_held f.target true,
          "is out of view until a Keymaster has looked at it"
        )
@@ -2571,7 +2570,7 @@ let _file_flag body kind target owner reason evidence (tx: Tx) =
       |> change (World.tell body "Thank you. A Keymaster will look at it.");
     let told =
       (match owner with
-       | Some o when kind != "person" ->
+       | Some o if kind != "person" ->
          change
            (World.notice
              o
@@ -2610,7 +2609,7 @@ let _flag body words (tx: Tx) = (
 let _report body words (tx: Tx) = (
   let reason = _rest_of words;
   match String.word 0 words with
-  | Some name when reason != "" -> (
+  | Some name if reason != "" -> (
     match World.account name tx.w with
     | None -> change (World.tell body "There is no one called %{name}.") tx
     | Some a -> (
@@ -2641,7 +2640,7 @@ let _flags body words (w: World.Current) =
         w
   )
   else match Option.and_then (fn n -> World.flag n w) (Result.to_option (Int.of_string words)) with
-    | Some f when _reviews? body f w ->
+    | Some f if _reviews? body f w ->
       (World.tell
         body
         `#%{f.id} %{_about f}, owned by %{Option.default "the Keymasters" f.owner}
@@ -2984,7 +2983,7 @@ let run_input (i: World.Input) (tx: Tx) =
     | None -> tx
     -- A session that is closing, after /quit say, runs nothing more: the
     -- reader may have queued lines the client sent after it.
-    | Some s when s.closing -> tx
+    | Some s if s.closing -> tx
     | Some s -> (
       match s.body with
       | None -> _to_login sid line tx
@@ -3041,7 +3040,7 @@ let _beat id (tx: Tx) =
   match World.instance id tx.w with
   | Some i -> (
     match i.object.heartbeat with
-    | Some h when _owner_inspired? id tx.w -> _on_its_own id (fn ctx -> h ctx) tx
+    | Some h if _owner_inspired? id tx.w -> _on_its_own id (fn ctx -> h ctx) tx
     | _ -> tx
   )
   | None -> tx
