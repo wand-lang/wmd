@@ -3,11 +3,11 @@
 }
 
 -- DO NOT EDIT: interface, written by `wand p`
-version 0.3.9
+version 0.3.10
 
 type driver/Engine.Tx(
-  w: World.Current,
-  changes: List (World.Current -> World.Current ! {}),
+  w: driver/World.Current,
+  changes: List (driver/World.Current -> driver/World.Current ! {}),
   at: String,
   hooks: Bool = true
 )
@@ -21,9 +21,9 @@ type driver/Init.InitOpts(
 type driver/Inspiration.Inspiration(amount: Int, at: DateTime)
 type driver/Library.Loaded(
   root: Path = ./lib,
-  library: Option Driver.Library = None,
-  lib: Map Driver.Blueprint = {},
-  realms: Map Driver.Realm = {},
+  library: Option driver.Library = None,
+  lib: Map driver.Blueprint = {},
+  realms: Map driver.Realm = {},
   failed: List (String, String) = []
 )
 type driver/Main.Opts(
@@ -39,11 +39,11 @@ type driver/Parse.Split(dobj: List String, prep: Option String, iobj: List Strin
 type driver/Scan.Blueprint(path: String, file: Path, realm: Bool = false)
 type driver/Snapshot.File(
   version: Int = 1,
-  accounts: List World.Account,
+  accounts: List driver/World.Account,
   instances: List Saved,
-  flags: List World.Flag = [],
-  callouts: List World.Callout = [],
-  requests: List World.Request = [],
+  flags: List driver/World.Flag = [],
+  callouts: List driver/World.Callout = [],
+  requests: List driver/World.Request = [],
   adopted: Map String = {},
   built: Map String = {}
 )
@@ -69,7 +69,7 @@ type driver/World.Account(
   created: Option DateTime = None,
   home: Option String = None,
   last_seen: Option String = None,
-  inspiration: Inspiration.Inspiration = Inspiration.Inspiration(amount = 1000, at = 1970-01-01T00:00:00Z),
+  inspiration: driver/Inspiration.Inspiration = driver/Inspiration.Inspiration(amount = 1000, at = 1970-01-01T00:00:00Z),
   explored: Map DateTime = {},
   rules: Option Signed = None,
   notices: List String = [],
@@ -89,11 +89,11 @@ type driver/World.Current(
   snapshot_due: Bool = false,
   now: DateTime = 1970-01-01T00:00:00Z,
   lib_root: Path = ./lib,
-  lib: Map Driver.Blueprint = {},
+  lib: Map driver.Blueprint = {},
   paths: Paths = Paths(),
   dig: Option (String -> String -> String -> String) = None,
-  realms: Map Driver.Realm = {},
-  editor_before: Option Driver.Blueprint = None,
+  realms: Map driver.Realm = {},
+  editor_before: Option driver.Blueprint = None,
   help: Map String = {},
   flags: List Flag = [],
   said: Map (List String) = {},
@@ -139,7 +139,7 @@ type driver/World.Input =
 type driver/World.Instance(
   id: String,
   blueprint: String,
-  object: Driver.Object,
+  object: driver.Object,
   env: Option String = None,
   saved: Option JSON = None,
   creator: Option String = None,
@@ -147,7 +147,7 @@ type driver/World.Instance(
   modified: Option String = None,
   owner: Option String = None,
   size: Int = 0,
-  allowed: Driver.Allowed = Driver.Only [],
+  allowed: driver.Allowed = driver.Only [],
   locked: Bool = true,
   held: Bool = false,
   faults: Int = 0
