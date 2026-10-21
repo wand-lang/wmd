@@ -3,7 +3,7 @@
 }
 
 -- DO NOT EDIT: interface, written by `wand p`
-version 0.3.11
+version 0.3.12
 
 type driver/Engine.Tx(
   w: driver/World.Current,
