@@ -27,7 +27,7 @@ let object short verbs =
   )
 
 -- A rule that allows every command or action.
-let anything _ _ = Ok()
+let anything _ _ = Ok ()
 
 -- The charter of a realm with no realms inside it, or of one the realm
 -- says nothing of: the Keymasters own its files, and it has no Stewards

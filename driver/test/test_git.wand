@@ -136,5 +136,5 @@ group "a push" (fn () -> [
     ))),
   test "with nothing to send is done" (fn t ->
     with FS.temp_dir "wmd_git_" as d ->
-    _repos! d (fn lib _ -> t.eq Git.Pushed(Git.push lib)))
+    _repos! d (fn lib _ -> t.eq Git.Pushed (Git.push lib)))
 ])

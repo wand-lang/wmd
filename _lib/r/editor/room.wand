@@ -136,7 +136,7 @@ let _range (s: State) whole first second =
   else
     Result.and_then
       (fn a -> Result.map
-        (fn b -> Some(a, b))
+        (fn b -> Some (a, b))
         (_line s (if second == "" then first else second)))
       (_line s first)
 
@@ -146,7 +146,7 @@ let _in_buffer (s: State) (from, to) =
   else if from < 1 || to > List.length s.lines || from > to then
     Error
       "There is no line %{if from < 1 || from > List.length s.lines then from else to}; the buffer has %{List.length s.lines}."
-  else Ok(from, to)
+  else Ok (from, to)
 
 -- ── Commands ───────────────────────────────────────────────────────────
 
@@ -163,7 +163,7 @@ let _nothing = Step()
 let _print (s: State) (ctx: Driver.Context) here numbered =
   match _in_buffer s here with
   | Error why -> _tell ctx why
-  | Ok(from, to) -> (
+  | Ok (from, to) -> (
     let lines = _slice from to s.lines;
     _to
       State(s, cur = to)
@@ -172,7 +172,10 @@ let _print (s: State) (ctx: Driver.Context) here numbered =
   )
 
 let _substitute (s: State) (ctx: Driver.Context) here cmd =
-  match (_in_buffer s here, Regex.capture r/^s\/([^\/]+)\/([^\/]*)\/(g?)$/ cmd) with
+  match (
+    _in_buffer s here,
+    Regex.capture r/^s\/([^\/]+)\/([^\/]*)\/(g?)$/ cmd |> Option.default []
+  ) with
   | (Error why, _) -> _tell ctx why
   | (_, [_, old, new, g]) -> (
     let (from, to) = here;
@@ -296,7 +299,7 @@ let _run (s: State) (ctx: Driver.Context) r cmd = (
   )
   | "t" -> if s.eval then _tell ctx "An /eval buffer is checked when w runs it."
     else Step(actions = [Driver.Check s.path (_source s)])
-  | "w" -> if s.eval then Step(actions = [Driver.Run(String.join "\n" s.lines)])
+  | "w" -> if s.eval then Step(actions = [Driver.Run (String.join "\n" s.lines)])
     else Step(actions = [Driver.Save s.path (_source s)])
   | "w!" -> if s.eval then _tell ctx "An /eval buffer has no file. w runs it."
     else Step(actions = [Driver.Draft s.path (_source s)])
@@ -324,7 +327,7 @@ let _input (s: State) (ctx: Driver.Context) line =
       )
     )
   | None -> (
-    match Regex.capture _command (String.trim line) with
+    match Regex.capture _command (String.trim line) |> Option.default [] with
     | [_, whole, first, _, second, rest] -> (
       match _range s whole first second with
       | Error why -> _tell ctx why

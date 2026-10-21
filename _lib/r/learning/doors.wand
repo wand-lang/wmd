@@ -27,7 +27,7 @@ let doors =
       through = Driver.Exit(
         to = "/r/learning/cupboard",
         check = Some (fn ctx ->
-          if _open? ctx then Ok() else Error "The green door is shut.")
+          if _open? ctx then Ok () else Error "The green door is shut.")
       )
     }
   )

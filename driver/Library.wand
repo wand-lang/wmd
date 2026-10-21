@@ -87,7 +87,7 @@ let help! root =
   let dir = Path.join root ./help;
   if !(FS.dir? dir) then Map.empty
   else
-    Map.from_list
+    Map.of_list
       (List.map
         (fn f ->
           let name = Path.to_string (Path.basename f);

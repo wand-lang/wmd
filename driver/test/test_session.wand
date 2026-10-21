@@ -56,7 +56,7 @@ let run! scripts write_ok =
     )
     | Net!write (conn, text) k -> (
       Shared.update sent (Map.update "%{conn}" [] (fn o -> List.concat o (_lines text)));
-      k (if write_ok then Ok() else Error "connection closed")
+      k (if write_ok then Ok () else Error "connection closed")
     );
     Run(sent = Shared.get sent, after = Shared.get state)
   )
@@ -67,7 +67,7 @@ let sent name (r: Run) = Option.default [] (Map.get name r.sent)
 let signup name = [name, "2000-05-01", "%{name}-password", "%{name}-password", "sign rules"]
 
 -- Ann signs up, then sends `lines`.
-let one! lines = run! (Map.from_list [("ann", List.concat (signup "ann") lines)]) true
+let one! lines = run! (Map.of_list [("ann", List.concat (signup "ann") lines)]) true
 
 group "one session" (fn () -> [
   test "logs in and looks" (fn t ->
@@ -84,7 +84,7 @@ group "one session" (fn () -> [
         (sent
           "ann"
           (run!
-            (Map.from_list [
+            (Map.of_list [
               ("ann", List.concat ["\xff\xfb\x01ann\r"] (List.drop 1 (signup "ann")))
             ])
             true)))),
@@ -100,7 +100,7 @@ group "one session" (fn () -> [
 
 group "two sessions" (fn () -> [
   test "each is served" (fn t ->
-    let r = run! (Map.from_list [("ann", signup "ann"), ("bo", signup "bo")]) true;
+    let r = run! (Map.of_list [("ann", signup "ann"), ("bo", signup "bo")]) true;
     t.eq (true, true) (
       List.any? (fn l -> l == "Hello, Ann.") (sent "ann" r),
       List.any? (fn l -> l == "Hello, Bo.") (sent "bo" r)

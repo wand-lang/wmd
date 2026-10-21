@@ -160,14 +160,14 @@ let _look (ctx: Driver.Context) (p: Driver.Parsed) = (
   | _ -> (
     if words == "" || words == "here" then _room ctx
     else match Driver.exit_named (String.lower words) (ctx.world.exits_of ctx.here) with
-      | Some(name, e) -> _through ctx name e
+      | Some (name, e) -> _through ctx name e
       | None -> _detail ctx words
   )
 )
 
 -- ── go ─────────────────────────────────────────────────────────────────
 
-let _opposites = Map.from_list [
+let _opposites = Map.of_list [
   ("north", "the south"),
   ("south", "the north"),
   ("east", "the west"),
@@ -187,8 +187,8 @@ let _go (ctx: Driver.Context) (p: Driver.Parsed) = (
   let typed = String.lower (String.trim p.rest);
   match Driver.exit_named typed (ctx.world.exits_of ctx.here) with
   | None -> Driver.tell ctx (if typed == "" then "Go where?" else "You can't go that way.")
-  | Some(dir, e) -> (
-    let check = Option.default (fn _ -> Ok()) e.check;
+  | Some (dir, e) -> (
+    let check = Option.default (fn _ -> Ok ()) e.check;
     if !(ctx.world.may_enter? ctx.actor e.to) then
       Driver.tell ctx "A force keeps you from going that way."
     else match check ctx with

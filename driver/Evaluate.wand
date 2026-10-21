@@ -91,19 +91,20 @@ let load (lib: Path) driver expr = (
       FS.mkdir! dir;
       let file = Path.join dir ./eval.wand;
       let answer =
-        (match Wand.check_at file "%{_body driver_path expr}run\n" with
-         | Error why -> Error [why]
-         | Ok c -> (
-           match (_errors c, c.type) with
-           | ([], Some t) -> (
-             match FS.write_file file (source driver_path expr (result_type t)) with
-             | Error why -> Error [why]
-             | Ok _ ->
-               Result.map_error (fn why -> [why]) (Wand.load Driver.Evaluation.loader file)
-           )
-           | ([], None) -> Error ["the expression has no type"]
-           | (errors, _) -> Error errors
-         ));
+        match Wand.check_at file "%{_body driver_path expr}run\n" with
+        | Error why -> Error [why]
+        | Ok c -> (
+          match (_errors c, c.type) with
+          | ([], Some t) -> (
+            match FS.write_file file (source driver_path expr (result_type t)) with
+            | Error why -> Error [why]
+            | Ok _ ->
+              Result.map_error (fn why -> [why]) (Wand.load Driver.Evaluation.loader file)
+          )
+          | ([], None) -> Error ["the expression has no type"]
+          | (errors, _) -> Error errors
+        )
+      in
       let _ = FS.delete_tree dir;
       answer
     );

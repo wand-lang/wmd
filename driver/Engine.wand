@@ -105,7 +105,7 @@ let _call body =
 -- `_call`, with the steps the call took, for the event log.
 let _counted body =
   match Wand.limit limits (fn () -> Wand.cost (fn () -> try guarded body)) with
-  | Ok(r, steps) -> (r, steps)
+  | Ok (r, steps) -> (r, steps)
   | Error why -> (Error why, limits.steps)
 
 let _bounded fallback f =
@@ -387,7 +387,7 @@ let rules_version (w: World.Current) = (
     Option.default
       ""
       (Option.and_then (fn t -> List.head (String.lines t)) (Map.get "rules" w.help));
-  match Regex.capture r/version (\d+)/ first with
+  match Regex.capture r/version (\d+)/ first |> Option.default [] with
   | [_, n] -> Result.default 1 (Int.of_string n)
   | _ -> 1
 )
@@ -510,7 +510,7 @@ let _broken? id (w: World.Current) =
 let _too_long text =
   if String.length text > max_line then
     Error "a line of %{String.length text} characters, and the most is %{max_line}"
-  else Ok()
+  else Ok ()
 
 -- Only an object of a realm that grants MayCheckSave may check or save a
 -- file, and only one its actor may edit.
@@ -518,7 +518,7 @@ let _may_file (ctx: Driver.Context) path (w: World.Current) =
   if !(_granted? ctx.self Driver.MayCheckSave w) then
     Error "only the editor may check or save a file"
   else if !(may_edit? ctx.actor path w) then Error "%{ctx.actor} may not edit %{path}"
-  else Ok()
+  else Ok ()
 
 -- A player is told things by their own commands, by what is in the room
 -- with them, and by what their own account owns. A player's own body may
@@ -567,7 +567,7 @@ let _policy (ctx: Driver.Context) (a: Driver.Action) (w: World.Current) =
     -- An editor is private to the one it was opened for.
     else if _editor? d w && Option.and_then (fn (i: World.Instance) -> i.creator) (World.instance d w) != Some o then
       Error "may not move %{o} into %{d}"
-    else Ok()
+    else Ok ()
   )
   | Driver.Spawn bp dest -> (
     let d = World.resolve dest;
@@ -576,13 +576,13 @@ let _policy (ctx: Driver.Context) (a: Driver.Action) (w: World.Current) =
     else if realm? d w then Error "may not spawn into %{d}: a realm is no place"
     else if !(_may_spawn_in? ctx d w) then
       Error "may not spawn into %{d}: it is not here, and not its owner's"
-    else Ok()
+    else Ok ()
   )
-  | Driver.Login _ _ _ -> if _from_login? ctx w then Ok()
+  | Driver.Login _ _ _ -> if _from_login? ctx w then Ok ()
     else Error "only the login may log in"
-  | Driver.Register _ _ _ -> if _from_login? ctx w then Ok()
+  | Driver.Register _ _ _ -> if _from_login? ctx w then Ok ()
     else Error "only the login may register"
-  | Driver.Hangup _ -> if _from_login? ctx w then Ok() else Error "only the login may hang up"
+  | Driver.Hangup _ -> if _from_login? ctx w then Ok () else Error "only the login may hang up"
   | Driver.Remove obj -> (
     let o = World.resolve obj;
     if !(o == ctx.self || World.env_of o w == Some ctx.self) then Error "may not remove %{o}"
@@ -590,19 +590,19 @@ let _policy (ctx: Driver.Context) (a: Driver.Action) (w: World.Current) =
       Error "may not remove %{o}: its owner is not this object's"
     else if player? o w || List.any? (fn x -> player? x w) (World.contents o w) then
       Error "may not remove %{o}: a player is or is in it"
-    else Ok()
+    else Ok ()
   )
   | Driver.Check path _ -> _may_file ctx path w
   | Driver.Save path _ -> _may_file ctx path w
   | Driver.Draft path _ -> _may_file ctx path w
-  | Driver.Run _ -> if _granted? ctx.self Driver.MayCheckSave w then Ok()
+  | Driver.Run _ -> if _granted? ctx.self Driver.MayCheckSave w then Ok ()
     else Error "only the editor may run source"
-  | Driver.Acknowledge body -> if _granted? ctx.self Driver.MayAcknowledge w && body == ctx.actor then Ok()
+  | Driver.Acknowledge body -> if _granted? ctx.self Driver.MayAcknowledge w && body == ctx.actor then Ok ()
     else Error "only the Rules Hall may say the rules were signed"
   | Driver.After _ _ -> (
     let n = List.length (World.callouts_of ctx.self w);
     if n >= max_callouts then Error "%{n} call-outs waiting, and the most is %{max_callouts}"
-    else Ok()
+    else Ok ()
   )
 
 -- What `rule` says of each realm `room` is in, nearest first, given the
@@ -618,7 +618,7 @@ let _realms_say room rule (w: World.Current) =
       )
       | _ -> acc
     )
-    Ok()
+    Ok ()
     (room_realms room w)
 
 -- Whether `ctx.self` may ask for action `a`, and why not: the driver's
@@ -633,7 +633,7 @@ let allowed (ctx: Driver.Context) (a: Driver.Action) (w: World.Current) =
 -- /quit always works.
 let _command_ok body verb (w: World.Current) =
   let here = room_of body w;
-  if verb == "/quit" then Ok()
+  if verb == "/quit" then Ok ()
   else
     _realms_say
       here
@@ -676,7 +676,7 @@ let file_count key (w: World.Current) =
 
 let _file_room owner path (w: World.Current) =
   let n = file_count owner w;
-  if Files.exists? w.lib_root path || n < max_files then Ok()
+  if Files.exists? w.lib_root path || n < max_files then Ok ()
   else
     Error "You have %{n} files, and the most is %{max_files}. Remove one to make another."
 
@@ -691,11 +691,11 @@ let _capacity owner (a: Driver.Action) (w: World.Current) =
     else if bytes >= max_saved_total then
       Error
         "Your objects keep %{_size bytes} of saved state, and the most is %{_size max_saved_total}."
-    else Ok()
+    else Ok ()
   )
   | Driver.Save path _ -> _file_room owner path w
   | Driver.Draft path _ -> _file_room owner path w
-  | _ -> Ok()
+  | _ -> Ok ()
 
 -- Whether the account `owner` has `cost` Inspiration now, and when it
 -- will if not.
@@ -705,7 +705,7 @@ let _inspired owner cost (w: World.Current) =
   | Some acct -> (
     let i = acct.inspiration;
     let have = Inspiration.amount w.now i;
-    if have >= cost then Ok()
+    if have >= cost then Ok ()
     else
       Error
         "That needs %{cost} Inspiration, and you have %{have}. You will have enough in %{Inspiration.wait_text (Inspiration.wait w.now cost i)}."
@@ -1059,7 +1059,7 @@ and reset actor ids (tx: Tx) =
         | Some b -> (
           let saved =
             match World.account_of id acc.w with
-            | Some a -> Some (JSON.of_map (Map.from_list [("name", JSON.of_string a.name)]))
+            | Some a -> Some (JSON.of_map (Map.of_list [("name", JSON.of_string a.name)]))
             | None -> None;
           match _call (fn () -> b.create id saved) with
           | Error why -> change (World.tell actor "%{id} was not reset: %{why}") acc
@@ -1081,7 +1081,7 @@ and reset actor ids (tx: Tx) =
 -- it took, so it needs some Inspiration left to start.
 and eval body expr (tx: Tx) =
   let payer = _key_of body tx.w;
-  let ready = if _exempt? payer tx.w then Ok() else _inspired (Option.default "" payer) 1 tx.w;
+  let ready = if _exempt? payer tx.w then Ok () else _inspired (Option.default "" payer) 1 tx.w;
   match ready with
   | Error why -> change (World.tell body why) tx
   | Ok _ -> _eval body payer expr tx
@@ -1211,7 +1211,7 @@ and verb_with self actor (p: Driver.Parsed) (tx: Tx) =
 and look body (tx: Tx) =
   let here = room_of body tx.w;
   match _find tx.w (_holders body here [] tx.w) "look" Parse.NoWords Parse.NoWords with
-  | Some(h, v) -> (
+  | Some (h, v) -> (
     let ctx = ctx_for tx.w h body;
     run ctx (fn () -> v.run ctx (Driver.Parsed(verb = "look"))) tx
   )
@@ -1245,7 +1245,7 @@ and register sid name typed (tx: Tx) =
     change (World.tell sid "%{name} was taken just now. What is your name?") tx
   else (
     let body = "%{(player_bp tx.w)}#%{World.next_number (player_bp tx.w) tx.w}";
-    let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
+    let saved = JSON.of_map (Map.of_list [("name", JSON.of_string name)]);
     let hashed = Password.hash tx.w.pepper (Random.hex 32) typed;
     tx
     |> _ensure (rules_hall tx.w)
@@ -1339,7 +1339,7 @@ let command body line (tx: Tx) = (
       (List.concat (_list (Parse.found_id dobj)) (_list (Parse.found_id iobj)))
       tx.w;
   match _find tx.w holders verb dobj iobj with
-  | Some(h, v) -> (
+  | Some (h, v) -> (
     let ctx = ctx_for tx.w h body;
     let parsed =
       Driver.Parsed(
@@ -1357,7 +1357,7 @@ let command body line (tx: Tx) = (
     match Option.and_then
       (fn (r: World.Instance) -> Driver.exit_named line r.object.exits)
       (World.instance here tx.w) with
-    | Some(name, _) -> command body "go %{name}" tx
+    | Some (name, _) -> command body "go %{name}" tx
     | None -> change (World.tell body (_unmatched tx.w verb dobj)) tx
   )
 )
@@ -1386,10 +1386,11 @@ let _who_is body name (w: World.Current) =
   | None -> World.tell body "There is no one called %{name}." w
   | Some a -> (
     let seen =
-      (if Option.some? (World.session_of a.body w) then "%{a.name} is awake."
-       else match a.last_seen with
-         | Some at -> "%{a.name} was last seen %{at}."
-         | None -> "%{a.name} has not been seen yet.");
+      if Option.some? (World.session_of a.body w) then "%{a.name} is awake."
+      else match a.last_seen with
+        | Some at -> "%{a.name} was last seen %{at}."
+        | None -> "%{a.name} has not been seen yet."
+    in
     World.tell body "%{seen}\n%{_text w body a.body false}" w
   )
 
@@ -1418,12 +1419,13 @@ let _examine body words (w: World.Current) = (
     | None -> World.tell body "There is no %{id}." w
     | Some i -> (
       let props =
-        (match i.object.props with
-         | Some f ->
-           List.map
-             (fn (k, v) -> "%{k} = %{JSON.stringify v}")
-             (Map.to_list (_bounded Map.empty (fn () -> f (_seen w body i.id))))
-         | None -> []);
+        match i.object.props with
+        | Some f ->
+          List.map
+            (fn (k, v) -> "%{k} = %{JSON.stringify v}")
+            (Map.to_list (_bounded Map.empty (fn () -> f (_seen w body i.id))))
+        | None -> []
+      in
       let lines =
         [
           "%{i.id}: %{short_of i.id w}",
@@ -1462,7 +1464,7 @@ let _edit_target body words (w: World.Current) = (
 
 let _editor_state path lines here evaluating =
   JSON.of_map
-    (Map.from_list [
+    (Map.of_list [
       ("path", JSON.of_string path),
       ("lines", JSON.of_list (List.map JSON.of_string lines)),
       ("cur", JSON.of_int (List.length lines)),
@@ -1515,9 +1517,10 @@ let _edit body words (tx: Tx) =
     else (
       let text = Files.read tx.w.lib_root path;
       let lines =
-        (match text with
-         | Some t -> String.lines t
-         | None -> []);
+        match text with
+        | Some t -> String.lines t
+        | None -> []
+      in
       let state = _editor_state path lines (room_of body tx.w) false;
       let opened =
         if text == None then "%{path} is a new file."
@@ -1819,15 +1822,16 @@ let _copy body words (tx: Tx) =
   -- matches, the one from the Learning Hall is the example.
   (
     let named =
-      (match _named body words tx.w with
-       | Parse.Ambiguous phrase ids -> (
-         match List.filter
-           (fn id -> String.starts_with? (learning tx.w) (World.blueprint_of id))
-           ids with
-         | [one] -> Parse.Found one
-         | _ -> Parse.Ambiguous phrase ids
-       )
-       | found -> found);
+      match _named body words tx.w with
+      | Parse.Ambiguous phrase ids -> (
+        match List.filter
+          (fn id -> String.starts_with? (learning tx.w) (World.blueprint_of id))
+          ids with
+        | [one] -> Parse.Found one
+        | _ -> Parse.Ambiguous phrase ids
+      )
+      | found -> found
+    in
     match (named, World.account_of body tx.w) with
     | (_, None) -> change (World.tell body "You have no account to copy into.") tx
     | (Parse.Found id, Some a) -> (
@@ -1915,15 +1919,16 @@ let _stat_text (a: World.Account) (w: World.Current) =
 let _stat body words (tx: Tx) = (
   let me = World.account_of body tx.w;
   let found =
-    (if words == "" || words == "me" then
-       match me with
-       | Some a -> Ok a
-       | None -> Error "You have no account."
-     else if Option.map (fn (a: World.Account) -> a.role) me != Some "keymaster" then
-       Error "Only a Keymaster may see another's. Try /stat me."
-     else match World.account words tx.w with
-       | Some a -> Ok a
-       | None -> Error "There is no one called %{words}.");
+    if words == "" || words == "me" then
+      match me with
+      | Some a -> Ok a
+      | None -> Error "You have no account."
+    else if Option.map (fn (a: World.Account) -> a.role) me != Some "keymaster" then
+      Error "Only a Keymaster may see another's. Try /stat me."
+    else match World.account words tx.w with
+      | Some a -> Ok a
+      | None -> Error "There is no one called %{words}."
+  in
   match found with
   | Error why -> change (World.tell body why) tx
   | Ok a -> (let text = _stat_text a tx.w; change (World.tell body text) tx)
@@ -2079,14 +2084,15 @@ let _walk dir (seen: List String) todo (tx: Tx) =
     else (
       let made = _ensure p tx;
       let next =
-        (match World.instance p made.w with
-         | Some i ->
-           List.filter
-             (fn q -> String.starts_with? dir q)
-             (List.map
-               (fn (e: Driver.Exit) -> World.blueprint_of (World.resolve e.to))
-               (Map.values i.object.exits))
-         | None -> []);
+        match World.instance p made.w with
+        | Some i ->
+          List.filter
+            (fn q -> String.starts_with? dir q)
+            (List.map
+              (fn (e: Driver.Exit) -> World.blueprint_of (World.resolve e.to))
+              (Map.values i.object.exits))
+        | None -> []
+      in
       _walk dir (List.concat seen [p]) (List.concat rest next) made
     )
 
@@ -2323,7 +2329,7 @@ let _approve body words (tx: Tx) = (
   | Some r if r.open && reviewer? key r tx.w -> (
     let entrance = Option.default "" (List.head r.rooms);
     let linkable =
-      if exit == "" then Ok()
+      if exit == "" then Ok ()
       else if !(List.any? (fn p -> p == r.realm) (room_realms here tx.w)) then
         Error
           "Stand in a room of %{short_of (realm_id r.realm) tx.w} to connect it from there."
@@ -2333,7 +2339,7 @@ let _approve body words (tx: Tx) = (
         (fn (i: World.Instance) -> Driver.exit_named exit i.object.exits)
         (World.instance here tx.w) != None then
         Error "%{short_of here tx.w} has an exit %{exit} already."
-      else Ok();
+      else Ok ();
     match linkable with
     | Error why -> change (World.tell body why) tx
     | Ok _ -> (
@@ -2511,24 +2517,26 @@ let _hold_if_flagged (f: World.Flag) (tx: Tx) = (
   let by =
     List.unique (List.map (fn (g: World.Flag) -> g.by) (World.open_flags f.target tx.w));
   let held =
-    (if List.length by < flags_to_hold then None
-     else match World.instance f.target tx.w with
-       | Some i if f.kind == "room" && World.public? i -> Some (
-         World.set_allowed f.target (Driver.Only []),
-         "is private until a Keymaster has looked at it"
-       )
-       | Some i if f.kind == "object" && !i.held -> Some (
-         World.set_held f.target true,
-         "is out of view until a Keymaster has looked at it"
-       )
-       | _ -> None);
+    if List.length by < flags_to_hold then None
+    else match World.instance f.target tx.w with
+      | Some i if f.kind == "room" && World.public? i -> Some (
+        World.set_allowed f.target (Driver.Only []),
+        "is private until a Keymaster has looked at it"
+      )
+      | Some i if f.kind == "object" && !i.held -> Some (
+        World.set_held f.target true,
+        "is out of view until a Keymaster has looked at it"
+      )
+      | _ -> None
+  in
   match held with
   | None -> tx
-  | Some(hold, why) -> (
+  | Some (hold, why) -> (
     let told =
-      (match f.owner with
-       | Some o -> change (World.notice o "Your %{f.kind} %{f.target} %{why}.") tx
-       | None -> tx);
+      match f.owner with
+      | Some o -> change (World.notice o "Your %{f.kind} %{f.target} %{why}.") tx
+      | None -> tx
+    in
     told
     |> change hold
     |> _event World.Event(
@@ -2569,14 +2577,15 @@ let _file_flag body kind target owner reason evidence (tx: Tx) =
       )
       |> change (World.tell body "Thank you. A Keymaster will look at it.");
     let told =
-      (match owner with
-       | Some o if kind != "person" ->
-         change
-           (World.notice
-             o
-             "Your %{kind} %{target} was flagged: %{reason}. A Keymaster will look at it.")
-           filed
-       | _ -> filed);
+      match owner with
+      | Some o if kind != "person" ->
+        change
+          (World.notice
+            o
+            "Your %{kind} %{target} was flagged: %{reason}. A Keymaster will look at it.")
+          filed
+      | _ -> filed
+    in
     _hold_if_flagged f told
   )
 
@@ -2896,13 +2905,14 @@ let _input_of body line (w: World.Current) =
     | None -> None
     | Some f -> (
       let raw =
-        (match i.object.props with
-         | Some p -> (
-           match Map.get "raw" (p (_seen w body i.id)) with
-           | Some j -> Result.default false (JSON.get_bool j)
-           | None -> false
-         )
-         | None -> false);
+        match i.object.props with
+        | Some p -> (
+          match Map.get "raw" (p (_seen w body i.id)) with
+          | Some j -> Result.default false (JSON.get_bool j)
+          | None -> false
+        )
+        | None -> false
+      in
       if raw || !(String.starts_with? "/" (String.trim line)) then Some (i.id, f) else None
     )
   )
@@ -2911,7 +2921,7 @@ let _input_of body line (w: World.Current) =
 -- gets it as typed, spaces and all; anything else is a command.
 let _play sid body at line (tx: Tx) =
   match _input_of body line tx.w with
-  | Some(room, f) -> (let ctx = ctx_for tx.w room body; run ctx (fn () -> f ctx line) tx)
+  | Some (room, f) -> (let ctx = ctx_for tx.w room body; run ctx (fn () -> f ctx line) tx)
   | None -> _command_line sid body at (String.trim line) tx
 
 -- A line from a session that has not logged in goes to /std/login, whole.
@@ -3206,7 +3216,7 @@ let restore state (f: Snapshot.File) at =
 let make_account state name typed role at =
   let t = begin (Shared.get state) at;
   let body = "%{player_bp t.w}#%{World.next_number (player_bp t.w) t.w}";
-  let saved = JSON.of_map (Map.from_list [("name", JSON.of_string name)]);
+  let saved = JSON.of_map (Map.of_list [("name", JSON.of_string name)]);
   let hashed = Password.hash t.w.pepper (Random.hex 32) typed;
   let tx =
     t

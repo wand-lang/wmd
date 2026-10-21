@@ -28,7 +28,8 @@ type InitOpts(
 )
 
 let _capitalize name =
-  String.upper (String.slice 0 1 name) ++ String.lower (String.slice 1 (String.length name) name)
+  String.upper (String.slice 0 1 name)
+  ++ String.lower (String.slice 1 (String.length name) name)
 
 -- The prompt shows what is typed: wand cannot turn off a terminal's echo,
 -- and running `stty -echo` would mean a program in another language.
@@ -99,7 +100,7 @@ let run! (o: InitOpts) =
           Engine.make_account state name typed "keymaster" at;
           Engine.snapshot! state o.world at;
           IO.println "Made %{o.world}, with %{name} as Keymaster.";
-          Ok()
+          Ok ()
         )
       )
   )

@@ -36,7 +36,7 @@ let _whither (ctx: Driver.Context) name (e: Driver.Exit) =
 -- arrives.
 let _wander (ctx: Driver.Context) =
   match Random.choose (_ways ctx) with
-  | Some(name, e) -> Driver.Reply(
+  | Some (name, e) -> Driver.Reply(
     actions = [
       Driver.Say "The grey cat pads off %{_whither ctx name e}.",
       Driver.Move ctx.self e.to,

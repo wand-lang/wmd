@@ -54,14 +54,15 @@ let _banner = `
 let _valid? name = Regex.match? r/^[A-Za-z]{2,16}$/ name
 
 let _capitalize name =
-  String.upper (String.slice 0 1 name) ++ String.lower (String.slice 1 (String.length name) name)
+  String.upper (String.slice 0 1 name)
+  ++ String.lower (String.slice 1 (String.length name) name)
 
 -- A date as written, YYYY-MM-DD, into its three numbers.
 let _date text =
-  match Regex.capture r/^(\d{4})-(\d{2})-(\d{2})$/ (String.trim text) with
+  match Regex.capture r/^(\d{4})-(\d{2})-(\d{2})$/ (String.trim text) |> Option.default [] with
   | [_, y, m, d] -> (
     match (Int.of_string y, Int.of_string m, Int.of_string d) with
-    | (Ok yy, Ok mm, Ok dd) -> Some(yy, mm, dd)
+    | (Ok yy, Ok mm, Ok dd) -> Some (yy, mm, dd)
     | _ -> None
   )
   | _ -> None

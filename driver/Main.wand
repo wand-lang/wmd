@@ -150,7 +150,7 @@ let _pulls state (o: Opts) came = (
       now.stopped;
   let _ = Shared.update state (World.pulling (List.length asked));
   if asked == [] && came != [] then (
-    let _ = Shared.update state (World.queue (World.Pulled(_now ()) None came));
+    let _ = Shared.update state (World.queue (World.Pulled (_now ()) None came));
     ()
   );
   let _ =
@@ -160,9 +160,10 @@ let _pulls state (o: Opts) came = (
         let _ =
           (
             let pulled =
-              (match why_not with
-               | Some why -> Error why
-               | None -> Git.pull o.lib);
+              match why_not with
+              | Some why -> Error why
+              | None -> Git.pull o.lib
+            in
             match pulled with
             | Ok files ->
               Shared.update

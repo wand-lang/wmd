@@ -15,7 +15,7 @@ implement Driver.Realm =
   let allows (ctx: Driver.Context) (a: Driver.Action) = match a with
   | Driver.Move o _ if ctx.world.player? o && o != ctx.actor ->
     Error "the editor moves no one but the person at it"
-  | _ -> Ok();
+  | _ -> Ok ();
   let allowed = Driver.Everyone;
   let contracts = [];
   let charter = Realm.no_charter

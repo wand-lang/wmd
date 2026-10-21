@@ -629,7 +629,7 @@ let invite id name (w: Current) =
     (fn i -> match i.allowed with
       | Driver.Only names -> Instance(
         i,
-        allowed = Driver.Only(List.unique (List.concat names [String.lower name]))
+        allowed = Driver.Only (List.unique (List.concat names [String.lower name]))
       )
       | Driver.Everyone -> i
     )
@@ -641,7 +641,7 @@ let uninvite id name (w: Current) =
     (fn i -> match i.allowed with
       | Driver.Only names -> Instance(
         i,
-        allowed = Driver.Only(List.filter (fn n -> n != String.lower name) names)
+        allowed = Driver.Only (List.filter (fn n -> n != String.lower name) names)
       )
       | Driver.Everyone -> i
     )
