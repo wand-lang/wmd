@@ -429,7 +429,7 @@ let view (w: World.Current) viewer =
     players = fn () -> _players w,
     account? = fn name -> Option.some? (World.account name w),
     detail_of = fn id name -> match World.instance id w with
-      | Some i when i.held -> None
+      | Some i if i.held -> None
       | Some i ->
         _bounded None (fn () -> Option.map (fn f -> f (_seen w viewer i.id)) (Map.get (String.lower name) i.object.details))
       | None -> None,
@@ -449,7 +449,7 @@ and _seen (w: World.Current) viewer id =
 and _text (w: World.Current) viewer id short =
   match World.instance id w with
   | None -> "nothing"
-  | Some i when i.held -> "something waiting for a Keymaster"
+  | Some i if i.held -> "something waiting for a Keymaster"
   | Some i ->
     _bounded
       "something that is not working"
@@ -891,7 +891,7 @@ and _move (ctx: Driver.Context) obj dest (tx: Tx) =
   let looked = if player? obj tx.w then look obj moved else moved;
   let explored =
     match target with
-    | Some t when player? obj tx.w -> _explore obj (World.resolve t) looked
+    | Some t if player? obj tx.w -> _explore obj (World.resolve t) looked
     | _ -> looked;
   let left =
     match from with
@@ -918,7 +918,7 @@ and _explore body room (tx: Tx) =
     | Some b -> Some b
     | None -> World.owner_of room tx.w;
   match (World.account_of body tx.w, builder) with
-  | (Some a, Some o) when World.env_of room tx.w == None
+  | (Some a, Some o) if World.env_of room tx.w == None
     && Option.map World.public? (World.instance room tx.w) == Some true
     && o != String.lower a.name
     && !(Map.has? room a.explored)
@@ -998,7 +998,7 @@ and _save (ctx: Driver.Context) path source (tx: Tx) =
 and _saved actor path fresh (tx: Tx) =
   let noted = tx |> change (World.touched path) |> _wrote actor path;
   match _key_of actor tx.w with
-  | Some key when fresh -> change (World.set_built path key) noted
+  | Some key if fresh -> change (World.set_built path key) noted
   | _ -> noted
 
 -- Load the file of `path` again, and move every instance of it onto the
@@ -1225,7 +1225,7 @@ and look body (tx: Tx) =
 -- logged, with the name tried and never the password.
 and login sid name typed (tx: Tx) =
   match World.account name tx.w with
-  | Some acct when Password.matches? tx.w.pepper acct.password typed ->
+  | Some acct if Password.matches? tx.w.pepper acct.password typed ->
     if acct.paused then
       tx
       |> _event (World.Event(at = "", event = "login_paused", actor = sid, name = Some acct.name))
@@ -1275,7 +1275,7 @@ and _to_hall body (tx: Tx) =
 
 and _tell_notices body (tx: Tx) =
   match World.account_of body tx.w with
-  | Some a when a.notices != [] ->
+  | Some a if a.notices != [] ->
     tx |> change (World.tell body (String.join "\n" a.notices)) |> change (World.noticed a.name)
   | _ -> tx
 
@@ -2401,7 +2401,7 @@ let _withdraw body words (tx: Tx) =
   let key = _key_of body tx.w;
   let bp = World.blueprint_of (room_of body tx.w);
   match _request_named body words tx.w with
-  | Some r when r.open && Some r.by == key ->
+  | Some r if r.open && Some r.by == key ->
     tx
     |> change (World.close_request r.id "withdrawn")
     |> _event World.Event(at = "", event = "withdraw", actor = body, text = Some "#%{r.id}")
@@ -2419,7 +2419,7 @@ let _withdraw body words (tx: Tx) =
         && Map.get bp tx.w.adopted == Some r.realm)
         tx.w.requests;
     match joined with
-    | Some r when words == "here" ->
+    | Some r if words == "here" ->
       tx
       |> change (World.unadopt r.rooms)
       |> _event World.Event(at = "", event = "leave", actor = body, text = Some "#%{r.id} %{r.realm}")
@@ -2703,10 +2703,10 @@ let _resolve body words (tx: Tx) = (
       let said = if note == "" then how else "%{how}: %{note}";
       let why = if note == "" then "" else " %{note}";
       match Option.and_then (fn k -> World.flag k tx.w) (Result.to_option (Int.of_string n)) with
-      | Some f when !(_reviews? body f tx.w) ->
+      | Some f if !(_reviews? body f tx.w) ->
         change (World.tell body "There is no flag #%{n} for you to review.") tx
       | None -> change (World.tell body "There is no flag #%{n}.") tx
-      | Some f when !f.open ->
+      | Some f if !f.open ->
         change (World.tell body "Flag #%{f.id} is resolved already: %{Option.default "" f.resolution}.") tx
       | Some f -> (
         -- A flag's owner is the person reported, or the owner of the work.
@@ -2741,7 +2741,7 @@ let _resolve body words (tx: Tx) = (
           tx
           |> change (World.notice o "A Keymaster warns you about %{_about f}: %{f.reason}.%{why}")
           |> _close body f said "%{o} is warned."
-        | ("pause", Some _) when !(_keymaster? body tx.w) ->
+        | ("pause", Some _) if !(_keymaster? body tx.w) ->
           change (World.tell body "Only a Keymaster pauses an account.") tx
         | ("pause", Some o) ->
           tx
