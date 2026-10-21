@@ -172,10 +172,10 @@ let _print (s: State) (ctx: Driver.Context) here numbered =
   )
 
 let _substitute (s: State) (ctx: Driver.Context) here cmd =
-  match ((
+  match (
     _in_buffer s here,
     Regex.capture r/^s\/([^\/]+)\/([^\/]*)\/(g?)$/ cmd |> Option.default []
-  )) with
+  ) with
   | (Error why, _) -> _tell ctx why
   | (_, [_, old, new, g]) -> (
     let (from, to) = here;
